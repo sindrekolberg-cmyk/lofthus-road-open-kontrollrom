@@ -4,6 +4,7 @@ import unicodedata
 from difflib import SequenceMatcher
 from typing import Any
 from pathlib import Path
+from datetime import datetime
 
 import pandas as pd
 import requests
@@ -17,7 +18,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-kontrollrom-v13-csv-refactor"
+APP_VERSION = "lofthus-road-open-kontrollrom-v14-launch-polish"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -30,46 +31,149 @@ if st.session_state.get("_app_version") != APP_VERSION:
 st.markdown(
     """
     <style>
-        .block-container {padding-top: 2.2rem;}
+        :root {
+            --lro-bg: #0b1220;
+            --lro-card: #111827;
+            --lro-card-soft: #f8fafc;
+            --lro-border: #e5e7eb;
+            --lro-gold: #fbbf24;
+            --lro-red: #b91c1c;
+            --lro-muted: #6b7280;
+        }
+
+        .block-container {padding-top: 1.8rem; padding-bottom: 3rem;}
+
         div[data-testid="stMetric"] {
             background: #f8fafc;
             border: 1px solid #e5e7eb;
             padding: 14px 16px;
             border-radius: 16px;
+            box-shadow: 0 6px 18px rgba(15, 23, 42, 0.05);
         }
+
         .lro-hero {
-            background: linear-gradient(135deg, #111827 0%, #1f2937 55%, #7f1d1d 100%);
-            border-radius: 24px;
-            padding: 30px 34px;
+            background:
+                radial-gradient(circle at 92% 18%, rgba(251, 191, 36, 0.22), transparent 24%),
+                linear-gradient(135deg, #0b1220 0%, #111827 48%, #7f1d1d 100%);
+            border-radius: 28px;
+            padding: 32px 36px;
             color: white;
             margin-bottom: 22px;
-            box-shadow: 0 14px 35px rgba(15, 23, 42, 0.18);
+            box-shadow: 0 16px 42px rgba(15, 23, 42, 0.22);
+            border: 1px solid rgba(255, 255, 255, 0.08);
         }
+
         .lro-hero h1 {
-            font-size: 2.65rem;
-            line-height: 1.05;
-            margin: 0 0 8px 0;
+            font-size: clamp(2rem, 4vw, 3.35rem);
+            line-height: 1.02;
+            margin: 0 0 10px 0;
             color: white;
+            letter-spacing: -0.04em;
         }
+
         .lro-eyebrow {
-            font-size: 0.82rem;
+            display: inline-block;
+            font-size: 0.78rem;
             letter-spacing: 0.16em;
             text-transform: uppercase;
             color: #fecaca;
-            font-weight: 700;
-            margin-bottom: 10px;
+            font-weight: 800;
+            margin-bottom: 12px;
         }
+
         .lro-hero p {
             margin: 0;
             color: #e5e7eb;
-            font-size: 1.02rem;
+            font-size: 1.03rem;
         }
+
+        .lro-beta {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 11px;
+            border-radius: 999px;
+            background: rgba(251, 191, 36, 0.14);
+            color: #fde68a;
+            border: 1px solid rgba(251, 191, 36, 0.32);
+            font-size: 0.78rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 16px;
+        }
+
+        .lro-card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+            gap: 14px;
+            margin: 14px 0 24px 0;
+        }
+
+        .lro-card {
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 18px;
+            padding: 18px 18px 16px 18px;
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+        }
+
+        .lro-card.dark {
+            background: linear-gradient(135deg, #111827 0%, #1f2937 100%);
+            color: white;
+            border-color: rgba(255,255,255,0.12);
+        }
+
+        .lro-card-label {
+            color: #6b7280;
+            font-size: 0.82rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 8px;
+        }
+        .lro-card.dark .lro-card-label {color: #d1d5db;}
+
+        .lro-card-value {
+            font-size: 1.45rem;
+            line-height: 1.1;
+            font-weight: 850;
+            letter-spacing: -0.025em;
+        }
+
+        .lro-card-caption {
+            margin-top: 8px;
+            color: #6b7280;
+            font-size: 0.92rem;
+        }
+        .lro-card.dark .lro-card-caption {color: #e5e7eb;}
+
+        .lro-note {
+            border-radius: 18px;
+            padding: 16px 18px;
+            margin: 12px 0 18px 0;
+            border: 1px solid #e5e7eb;
+            background: #f8fafc;
+        }
+        .lro-note strong {display:block; margin-bottom: 4px;}
+        .lro-note.gold {background: #fffbeb; border-color: #fde68a;}
+        .lro-note.red {background: #fef2f2; border-color: #fecaca;}
+        .lro-note.dark {background: #111827; border-color: #1f2937; color:white;}
+        .lro-note.dark span {color:#e5e7eb;}
+
         .small-muted {color: #6b7280; font-size: 0.92rem;}
+
+        @media (max-width: 760px) {
+            .lro-hero {padding: 24px 22px; border-radius: 22px;}
+            .lro-hero h1 {font-size: 2.05rem;}
+            .lro-card-grid {grid-template-columns: 1fr;}
+        }
     </style>
     <div class="lro-hero">
+        <div class="lro-beta">Beta · lanseringsklar prototype</div>
         <div class="lro-eyebrow">Lofthus Road Open</div>
         <h1>Lofthus Road Open - Kontrollrom</h1>
-        <p>Ligatabell · Historikk · H2H · Hall of Fame · Sesongradar · Norgeskart</p>
+        <p>Live tabell · historikk · H2H · Hall of Fame · månedskonger · sesongradar · norgeskart</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -78,15 +182,18 @@ st.markdown(
 with st.sidebar:
     st.header("Kontrollrom")
     st.caption(f"Liga-ID: {DEFAULT_LEAGUE_ID}")
+    if st.session_state.get("last_updated"):
+        st.caption(f"Sist hentet: {st.session_state['last_updated']}")
     if st.button("Oppdater fra FPL nå"):
-        get_json.clear()
-        get_entry_history.clear()
-        try:
-            get_league_managers.clear()
-        except NameError:
-            pass
+        for cached_func in ["get_json", "get_entry_history", "get_league_managers"]:
+            try:
+                globals()[cached_func].clear()
+            except Exception:
+                pass
         st.session_state.clear()
         st.rerun()
+    st.markdown("---")
+    st.caption("Beta fram mot 1. august. Meld feil i gruppa, særlig på gamle meritter, navn og bosted.")
 
 
 # -----------------------------
@@ -185,6 +292,35 @@ def csv_bytes(df: pd.DataFrame, columns: list[str], labels: dict[str, str]) -> b
     display_df = df[existing].rename(columns={column: labels.get(column, column) for column in existing})
     return display_df.to_csv(index=False).encode("utf-8")
 
+
+def lro_note(title: str, text: str, tone: str = ""):
+    tone_class = f" {tone}" if tone else ""
+    st.markdown(
+        f'''
+        <div class="lro-note{tone_class}">
+            <strong>{title}</strong>
+            <span>{text}</span>
+        </div>
+        ''',
+        unsafe_allow_html=True,
+    )
+
+
+def lro_cards(cards: list[dict]):
+    html = ['<div class="lro-card-grid">']
+    for card in cards:
+        variant = " dark" if card.get("dark") else ""
+        html.append(
+            f'''
+            <div class="lro-card{variant}">
+                <div class="lro-card-label">{card.get('label', '')}</div>
+                <div class="lro-card-value">{card.get('value', '')}</div>
+                <div class="lro-card-caption">{card.get('caption', '')}</div>
+            </div>
+            '''
+        )
+    html.append('</div>')
+    st.markdown("".join(html), unsafe_allow_html=True)
 
 
 # -----------------------------
@@ -1671,6 +1807,7 @@ def ensure_managers_loaded(league_id: int):
         st.session_state["managers"] = managers
         st.session_state["debug"] = debug
         st.session_state["loaded_league_id"] = league_id
+        st.session_state["last_updated"] = datetime.now().strftime("%d.%m %H:%M")
 
 
 def ensure_history_loaded(league_id: int):
@@ -1851,7 +1988,8 @@ NUMERIC_CONFIG = {
 # UI
 # -----------------------------
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "Forside",
     "Ligatabell",
     "Historikk",
     "H2H",
@@ -1861,8 +1999,73 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 ])
 
 
+with tab0:
+    st.header("Velkommen til kontrollrommet")
+    lro_note(
+        "Beta fram mot 1. august",
+        "Dette er første lanserbare prototype. Målet er at ligaen skal finne feil i gamle meritter, navn, bosted og historikk før sesongen starter.",
+        "gold",
+    )
+
+    hof_df_front = build_hof_people()
+    place_df_front = build_place_data()
+    monthly_df_front = build_monthly_podium_df()
+
+    cards = [
+        {
+            "label": "Status",
+            "value": "Beta",
+            "caption": "Klar til intern test i gruppa.",
+            "dark": True,
+        },
+        {
+            "label": "Påmeldte lag",
+            "value": str(len(st.session_state.get("managers", []))) if st.session_state.get("managers") else "Hent FPL-data",
+            "caption": "Trykk Hent ligadata i Ligatabell-fanen.",
+        },
+        {
+            "label": "Hall of Fame",
+            "value": f"{len(HOF_OVERALL)} sesonger",
+            "caption": "Sammenlagt, cup og gamle meritter.",
+        },
+        {
+            "label": "Månedshistorikk",
+            "value": f"{len(monthly_df_front)} podier" if not monthly_df_front.empty else "Ikke lastet",
+            "caption": "Grunnlaget for månedskonger og månedsliga.",
+        },
+        {
+            "label": "Norgeskart",
+            "value": f"{int(place_df_front['Antall'].sum())} personer" if not place_df_front.empty else "Ikke lastet",
+            "caption": "Geografien i Lofthus Road Open.",
+        },
+        {
+            "label": "Mest merittert",
+            "value": hof_df_front.iloc[0]["display_name"] if not hof_df_front.empty else "—",
+            "caption": f"{int(hof_df_front.iloc[0]['hof_score'])} merittpoeng" if not hof_df_front.empty else "Kommer fra Hall of Fame-data.",
+        },
+    ]
+    lro_cards(cards)
+
+    st.subheader("Hva ligger her?")
+    lro_cards([
+        {"label": "Ligatabell", "value": "Nåtid", "caption": "Påmeldte lag, odds før sesongstart, beste historiske plassering og merknad."},
+        {"label": "Historikk", "value": "Fortid", "caption": "Tidligere FPL-sesonger, beste plassering, siste tre sesonger og meritter."},
+        {"label": "H2H", "value": "Rivaler", "caption": "Skriv inn dueller eller grupper og få banter-odds basert på historikk."},
+        {"label": "Hall of Fame", "value": "Historiebok", "caption": "Sammenlagt, cup, månedsseiere, månedskonger og merittpoeng."},
+        {"label": "Sesongradar", "value": "Live fortelling", "caption": "Klatrere, fall, form siste tre runder og over/underprestasjon mot odds."},
+        {"label": "Norgeskart", "value": "Ligaidentitet", "caption": "Hvor folk i ligaen hører hjemme."},
+    ])
+
+    lro_note(
+        "Meld feil i gruppa",
+        "Gamle månedspremier, cupfinaler og bosted er hentet fra notater og gruppa. Finner du feil, meld det inn, så fikser vi før sesongstart.",
+        "",
+    )
+
+
 with tab1:
     st.header("Ligatabell")
+    lro_note("Sesongens inngang", "Her ligger påmeldte lag, odds før sesongstart og historisk merknad. Oddsene er banter/prognose, ikke fasit.", "")
 
     league_id = st.number_input("Liga-ID", value=DEFAULT_LEAGUE_ID, step=1, key="league_table_id_v11")
 
@@ -1982,6 +2185,7 @@ with tab1:
 
 with tab2:
     st.header("Historikk")
+    lro_note("Fortid, ikke framtid", "Historikken viser tidligere FPL-sesonger, beste plassering, siste tre sesonger og meritter fra Lofthus Road Open. Odds er flyttet til Ligatabell.", "")
 
     league_id_history = st.number_input("Liga-ID", value=DEFAULT_LEAGUE_ID, step=1, key="history_id_v11")
 
@@ -2079,6 +2283,7 @@ with tab2:
 
 with tab3:
     st.header("H2H")
+    lro_note("Rivalgenerator", "Skriv én duell eller gruppe per linje. H2H-oddsen bygger på historikk, form og dokumentert toppnivå.", "")
 
     st.write("Skriv én duell eller gruppe per linje. Bruk `vs` mellom navnene.")
 
@@ -2112,6 +2317,7 @@ with tab3:
 
 with tab4:
     st.header("Hall of Fame")
+    lro_note("Ligaens pokalskap", "Sammenlagtseier vektes tyngst, cupgull deretter, månedsseiere lavere. Månedspodier gir ekstra historisk krydder.", "gold")
 
     hof_df = build_hof_people()
 
@@ -2236,6 +2442,7 @@ with tab4:
 
 with tab5:
     st.header("Sesongradar")
+    lro_note("Blir best når sesongen er i gang", "Her kommer største klatrere, største fall, form siste tre runder og hvem som over-/underpresterer mot før-sesong-odds.", "")
 
     league_id_radar = st.number_input("Liga-ID", value=DEFAULT_LEAGUE_ID, step=1, key="season_radar_id_v11")
 
@@ -2247,7 +2454,7 @@ with tab5:
         radar = build_season_radar_tables(st.session_state["managers"], summary_df)
 
         if not radar:
-            st.warning("Fant ingen sesongdata ennå.")
+            st.info("Sesongradaren våkner for alvor når FPL-sesongen er i gang og ligaen har live plasseringer/rundedata.")
         else:
             c1, c2 = st.columns(2)
 
@@ -2290,8 +2497,7 @@ with tab5:
 
 with tab6:
     st.header("Norgeskart")
-
-    st.write("Geografisk fordeling av managerne i ligaen.")
+    lro_note("Ligaen på kartet", "Geografisk fordeling av managerne i ligaen. Meld fra hvis bosted/sted er feil.", "")
 
     place_df = build_place_data()
 
