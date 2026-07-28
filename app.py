@@ -21,7 +21,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-kontrollrom-v19-odds-polish"
+APP_VERSION = "lofthus-road-open-kontrollrom-v21-map-history-fix"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -319,20 +319,29 @@ def lro_note(title: str, text: str, tone: str = ""):
 
 
 def lro_cards(cards: list[dict]):
-    html = ['<div class="lro-card-grid">']
-    for card in cards:
-        variant = " dark" if card.get("dark") else ""
-        html.append(
-            f'''
-            <div class="lro-card{variant}">
-                <div class="lro-card-label">{card.get('label', '')}</div>
-                <div class="lro-card-value">{card.get('value', '')}</div>
-                <div class="lro-card-caption">{card.get('caption', '')}</div>
-            </div>
-            '''
-        )
-    html.append('</div>')
-    st.markdown("".join(html), unsafe_allow_html=True)
+    """Render cards with native Streamlit components.
+
+    This avoids raw HTML leaking into the page if Streamlit/Markdown parsing
+    gets fussy about multi-card HTML blocks.
+    """
+    if not cards:
+        return
+
+    cols = st.columns(len(cards))
+
+    for col, card in zip(cols, cards):
+        with col:
+            with st.container(border=True):
+                label = str(card.get("label", ""))
+                value = str(card.get("value", ""))
+                caption = str(card.get("caption", ""))
+
+                if label:
+                    st.caption(label.upper())
+                if value:
+                    st.markdown(f"**{value}**")
+                if caption:
+                    st.caption(caption)
 
 
 # -----------------------------
@@ -463,6 +472,23 @@ def load_aliases() -> dict:
 
 
 HOF_ALIASES = load_aliases()
+
+# Ekstra alias som gjør at FPL-navn, korte navn og lokale navn peker mot samme person.
+# Disse ligger også fint å flytte permanent til data/aliases.csv, men ligger her som trygg fallback
+# for at kart og meritter ikke skal bomme hvis CSV-en ikke er oppdatert ennå.
+FALLBACK_ALIASES = {
+    "Adrian Auke": ["Adrian Auke", "Adrian Tangen Auke"],
+    "Kevin Jørgensen": ["Kevin Jørgensen", "Kevin Andre Dybfest Jørgensen"],
+    "Mattias Pettersen": ["Mattias Pettersen", "Matias Pettersen"],
+    "Oskar Brun": ["Oskar Brun", "Oskar Kristensen Brun"],
+    "Anders Hole": ["Anders Hole"],
+}
+
+for canonical, aliases in FALLBACK_ALIASES.items():
+    HOF_ALIASES.setdefault(canonical, [])
+    for alias in aliases:
+        if alias not in HOF_ALIASES[canonical]:
+            HOF_ALIASES[canonical].append(alias)
 
 
 TAG_SORT = {
@@ -1710,6 +1736,14 @@ def add_podium_column(df: pd.DataFrame, column_name: str = "podium") -> pd.DataF
     return df
 
 
+def add_medal_columns(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy().reset_index(drop=True)
+    df["gold_col"] = ["🥇" if index == 0 else "" for index in range(len(df))]
+    df["silver_col"] = ["🥈" if index == 1 else "" for index in range(len(df))]
+    df["bronze_col"] = ["🥉" if index == 2 else "" for index in range(len(df))]
+    return df
+
+
 def format_rank_with_season(rank: int | float | None, season: str | None = None) -> str:
     formatted = format_rank(rank)
     if not formatted:
@@ -1998,7 +2032,7 @@ def build_place_data() -> pd.DataFrame:
     df = read_csv_file("places.csv", ["manager", "place", "lat", "lon"])
 
     if df.empty:
-        return pd.DataFrame(columns=["By", "lat", "lon", "Antall", "Deltakere", "DeltakereHtml", "Label", "radius"])
+        return pd.DataFrame(columns=["By", "lat", "lon", "Antall", "Deltakere", "Label", "radius"])
 
     df = df[(df["manager"] != "") & (df["place"] != "")].copy()
     df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
@@ -2011,17 +2045,15 @@ def build_place_data() -> pd.DataFrame:
         people = sorted(place_df["manager"].dropna().astype(str).unique().tolist())
         count = len(people)
         people_text = ", ".join(people)
-        people_html = "<br/>".join(html.escape(person) for person in people)
-
         rows.append({
             "By": place,
             "lat": float(lat),
             "lon": float(lon),
             "Antall": count,
             "Deltakere": people_text,
-            "DeltakereHtml": people_html,
             "Label": f"{place} ({count})",
-            "radius": 8_000 + count * 3_000,
+            # Små, faste prikker. Antall vises i tooltip/kort, ikke som enorme kartbobler.
+            "radius": 6_000,
         })
 
     return pd.DataFrame(rows)
@@ -2077,10 +2109,10 @@ HISTORY_LABELS = {
     "manager": "Manager",
     "team": "Lag",
     "seasons": "Sesonger spilt",
-    "last_season_rank_numeric": "Plassering sist",
+    "last_season_rank_display": "Plassering forrige sesong",
     "best_rank_numeric": "Beste FPL-plassering gjennom tidene",
     "best_season": "Beste sesong",
-    "avg_rank_last_3_numeric": "Siste tre sesonger",
+    "avg_rank_last_3_display": "Snitt siste tre sesonger",
     "trend": "Utvikling siste tre sesonger",
     "monthly_titles": "Månedstitler",
     "hof_score": "Merittpoeng",
@@ -2108,6 +2140,9 @@ ERROR_LABELS = {
 
 HOF_LABELS = {
     "podium": "",
+    "gold_col": "Gull",
+    "silver_col": "Sølv",
+    "bronze_col": "Bronse",
     "hof_rank": "Hall of Fame-rangering",
     "display_name": "Manager",
     "hof_score": "Merittpoeng",
@@ -2207,8 +2242,8 @@ RADAR_LABELS = {
 NUMERIC_CONFIG = {
     "odds_before": st.column_config.NumberColumn("Vinnerodds før sesongstart", format="%.2f"),
     "best_rank_numeric": st.column_config.NumberColumn("Beste FPL-plassering gjennom tidene", format="%d"),
-    "last_season_rank_numeric": st.column_config.NumberColumn("Plassering sist", format="%d"),
-    "avg_rank_last_3_numeric": st.column_config.NumberColumn("Siste tre sesonger", format="%d"),
+    "last_season_rank_display": st.column_config.TextColumn("Plassering forrige sesong", width="medium"),
+    "avg_rank_last_3_display": st.column_config.TextColumn("Snitt siste tre sesonger", width="medium"),
     "event_total_num": st.column_config.NumberColumn("Rundepoeng", format="%d"),
     "total_num": st.column_config.NumberColumn("Poeng", format="%d"),
     "rank_num": st.column_config.NumberColumn("Plassering", format="%d"),
@@ -2296,9 +2331,6 @@ with tab1:
                 mime="text/csv",
             )
 
-    if "debug" in st.session_state:
-        with st.expander("Debug"):
-            st.json(st.session_state["debug"])
 
 
 with tab2:
@@ -2324,6 +2356,8 @@ with tab2:
             summary = summary.sort_values(["best_rank_numeric", "manager"], ascending=[True, True], na_position="last").reset_index(drop=True)
             summary = add_podium_column(summary)
             summary["best_rank_with_season"] = summary.apply(lambda row: format_rank_with_season(row.get("best_rank_num"), row.get("best_season")), axis=1)
+            summary["last_season_rank_display"] = summary["last_season_rank_num"].apply(format_rank)
+            summary["avg_rank_last_3_display"] = summary["avg_rank_last_3_num"].apply(format_rank)
             summary["merits"] = summary["merits"].fillna("")
 
             columns = [
@@ -2331,9 +2365,9 @@ with tab2:
                 "manager",
                 "team",
                 "seasons",
-                "last_season_rank_numeric",
+                "last_season_rank_display",
                 "best_rank_with_season",
-                "avg_rank_last_3_numeric",
+                "avg_rank_last_3_display",
                 "hof_score",
                 "merits",
                 "tag_display",
@@ -2344,6 +2378,8 @@ with tab2:
                 "merits": st.column_config.TextColumn("Meritter", width="large"),
                 "hof_score": st.column_config.NumberColumn("Merittpoeng", format="%d"),
                 "best_rank_with_season": st.column_config.TextColumn("Beste FPL-plassering gjennom tidene", width="medium"),
+                "last_season_rank_display": st.column_config.TextColumn("Plassering forrige sesong", width="medium"),
+                "avg_rank_last_3_display": st.column_config.TextColumn("Snitt siste tre sesonger", width="medium"),
                 "manager": st.column_config.TextColumn("Manager", width="medium"),
                 "team": st.column_config.TextColumn("Lag", width="medium"),
             })
@@ -2453,7 +2489,7 @@ with tab3:
                     "team": "Lag",
                     "odds_float": "Vinnerodds før sesongstart",
                     "top3_odds_float": "Topp 3-odds før sesongstart",
-                    "avg_rank_last_3": "Siste tre sesonger",
+                    "avg_rank_last_3": "Snitt siste tre sesonger",
                     "best_rank": "Beste FPL-plassering",
                     "tag_display": "Merknad",
                 },
@@ -2507,21 +2543,13 @@ with tab4:
     if hof_df.empty:
         st.warning("Fant ingen Hall of Fame-data.")
     else:
-        hof_df = add_podium_column(hof_df)
-        most_decorated = hof_df.sort_values("hof_score", ascending=False).iloc[0]
-        monthly_king = hof_df.sort_values("monthly_titles", ascending=False).iloc[0]
-        overall_king = hof_df.sort_values("overall_count", ascending=False).iloc[0]
-
-        lro_cards([
-            {"label": "Mest merittert", "value": most_decorated["display_name"], "caption": f"{int(most_decorated['hof_score'])} merittpoeng", "dark": True},
-            {"label": "Flest månedsseiere", "value": monthly_king["display_name"], "caption": f"{int(monthly_king['monthly_titles'])} månedsseiere"},
-            {"label": "Flest sammenlagtseiere", "value": overall_king["display_name"], "caption": f"{int(overall_king['overall_count'])} sammenlagtseiere"},
-        ])
-
+        hof_df = add_medal_columns(hof_df)
         st.subheader("Meritt-tabell")
 
         hof_columns = [
-            "podium",
+            "gold_col",
+            "silver_col",
+            "bronze_col",
             "hof_rank",
             "display_name",
             "hof_score",
@@ -2533,6 +2561,9 @@ with tab4:
         ]
 
         hof_config = {
+            "gold_col": st.column_config.TextColumn("Gull", width="small"),
+            "silver_col": st.column_config.TextColumn("Sølv", width="small"),
+            "bronze_col": st.column_config.TextColumn("Bronse", width="small"),
             "display_name": st.column_config.TextColumn("Manager", width="large"),
             "merits": st.column_config.TextColumn("Meritter", width="large"),
         }
@@ -2547,7 +2578,9 @@ with tab4:
 
         with st.expander("Detaljert meritt-tabell"):
             detailed_hof_columns = [
-                "podium",
+                "gold_col",
+                "silver_col",
+                "bronze_col",
                 "hof_rank",
                 "display_name",
                 "total_titles",
@@ -2722,19 +2755,23 @@ with tab6:
         raw_places = read_csv_file("places.csv", ["manager", "place", "lat", "lon"])
         mapped_keys = set(raw_places["manager"].map(hof_key).tolist()) if not raw_places.empty else set()
 
-        if "managers" in st.session_state:
-            missing = []
-            for manager in st.session_state.get("managers", []):
-                manager_name = manager.get("player_name", "")
-                if manager_name and hof_key(manager_name) not in mapped_keys:
-                    missing.append(manager_name)
+        with st.expander("Kartdata-kontroll"):
+            if "managers" in st.session_state:
+                missing = []
+                for manager in st.session_state.get("managers", []):
+                    manager_name = manager.get("player_name", "")
+                    if manager_name and hof_key(manager_name) not in mapped_keys:
+                        missing.append(manager_name)
 
-            if missing:
-                st.warning("Mangler kartplassering for: " + ", ".join(sorted(set(missing))))
-            elif total_people != len(st.session_state.get("managers", [])):
-                st.info(f"Kartet har {total_people} personer, mens FPL-lista har {len(st.session_state.get('managers', []))}. Sjekk mulige alias/duplikater.")
-        else:
-            st.info("Trykk Hent ligadata i Ligatabell for å sjekke om noen påmeldte mangler kartplassering.")
+                if missing:
+                    st.warning("Mangler kartplassering/alias for: " + ", ".join(sorted(set(missing))))
+                    st.caption("Hvis personen egentlig finnes på kartet, legg navnevarianten inn i data/aliases.csv. Hvis personen mangler helt, legg vedkommende inn i data/places.csv.")
+                elif total_people != len(st.session_state.get("managers", [])):
+                    st.info(f"Kartet har {total_people} personer, mens FPL-lista har {len(st.session_state.get('managers', []))}. Sjekk mulige alias/duplikater.")
+                else:
+                    st.success("Kartdata matcher FPL-lista.")
+            else:
+                st.info("Trykk Hent ligadata i Ligatabell for å sjekke om noen påmeldte mangler kartplassering.")
 
         if pdk is not None:
             layer = pdk.Layer(
@@ -2742,7 +2779,7 @@ with tab6:
                 data=place_df,
                 get_position="[lon, lat]",
                 get_radius="radius",
-                get_fill_color="[185, 28, 28, 150]",
+                get_fill_color="[185, 28, 28, 210]",
                 get_line_color="[15, 23, 42]",
                 line_width_min_pixels=1,
                 pickable=True,
@@ -2756,7 +2793,14 @@ with tab6:
                 layers=[layer],
                 tooltip={
                     "text": "{By}\n{Antall} managere\n{Deltakere}",
-                    "style": {"backgroundColor": "white", "color": "black", "padding": "12px", "borderRadius": "10px", "maxWidth": "640px"},
+                    "style": {
+                        "backgroundColor": "white",
+                        "color": "black",
+                        "padding": "14px",
+                        "borderRadius": "12px",
+                        "maxWidth": "760px",
+                        "fontSize": "13px",
+                    },
                 },
             )
 
