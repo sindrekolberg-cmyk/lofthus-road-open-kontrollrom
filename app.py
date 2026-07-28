@@ -3,6 +3,7 @@ import re
 import unicodedata
 from difflib import SequenceMatcher
 from typing import Any
+from pathlib import Path
 
 import pandas as pd
 import requests
@@ -16,7 +17,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-kontrollrom-v12-resend"
+APP_VERSION = "lofthus-road-open-kontrollrom-v13-csv-refactor"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -185,314 +186,135 @@ def csv_bytes(df: pd.DataFrame, columns: list[str], labels: dict[str, str]) -> b
     return display_df.to_csv(index=False).encode("utf-8")
 
 
+
 # -----------------------------
-# Hall of Fame-data
+# Datafiler
 # -----------------------------
 
-HOF_OVERALL = [
-    {
-        "season": "2025/26",
-        "winner": "Simen Ulriksen",
-        "runner_up": "Matz Andreas Håheim",
-        "third_place": "Rasmus Grytvik-Skoglund",
-        "note": "",
-    },
-    {
-        "season": "2024/25",
-        "winner": "Mats Øyvind Jacobsen Arntzen",
-        "runner_up": "Robin Andersen",
-        "third_place": "",
-        "note": "",
-    },
-    {
-        "season": "2023/24",
-        "winner": "Øyvind Nordmo Sivertsen",
-        "runner_up": "Sindre Krognes",
-        "third_place": "Nickolai Macpherson",
-        "note": "",
-    },
-    {
-        "season": "2022/23",
-        "winner": "Kristoffer W Pettersen",
-        "runner_up": "Nils Åsheim Megård",
-        "third_place": "Robin Andersen",
-        "note": "",
-    },
-    {
-        "season": "2021/22",
-        "winner": "Rasmus Grytvik-Skoglund",
-        "runner_up": "Håkon Juliussen",
-        "third_place": "Øyvind Nordmo Sivertsen",
-        "note": "",
-    },
-    {
-        "season": "2020/21",
-        "winner": "Øyvind Nordmo Sivertsen",
-        "runner_up": "Rasmus Grytvik-Skoglund",
-        "third_place": "Adrian Johansen",
-        "note": "",
-    },
-]
-
-HOF_CUP = [
-    {
-        "season": "2025/26",
-        "winner": "Morten Pedersen",
-        "runner_up": "Sindre Krognes",
-    },
-    {
-        "season": "2024/25",
-        "winner": "Stian Laastad",
-        "runner_up": "Robin Andersen",
-    },
-    {
-        "season": "2023/24",
-        "winner": "Remi Andre Kristiansen",
-        "runner_up": "Øyvind Nordmo Sivertsen",
-    },
-    {
-        "season": "2022/23",
-        "winner": "Robin Andersen",
-        "runner_up": "Øyvind Sørensen",
-    },
-    {
-        "season": "2021/22",
-        "winner": "Robin Andersen",
-        "runner_up": "",
-    },
-]
-
-HOF_RANDOM = [
-    {"season": "2025/26", "winner": "Andreas Nikolai Løkås", "placement": "23. plass"},
-]
-
-MONTHLY_PODIUMS = []
+DATA_DIR = Path(__file__).resolve().parent / "data"
 
 
-def add_podium(season: str, month: str, place: int, *managers: str):
-    for manager in managers:
-        MONTHLY_PODIUMS.append({
-            "season": season,
-            "month": month,
-            "place": place,
-            "manager": manager,
-        })
+def clean_cell(value: Any) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    return str(value).strip()
 
 
-# 2020/21
-add_podium("2020/21", "September", 1, "Sindre Kolberg")
-add_podium("2020/21", "September", 2, "Mats Øyvind Jacobsen Arntzen")
-add_podium("2020/21", "September", 3, "Robin Andersen")
-add_podium("2020/21", "Oktober", 1, "Simen Pedersen")
-add_podium("2020/21", "Oktober", 2, "Mats Rydland")
-add_podium("2020/21", "Oktober", 3, "Nils Åsheim Megård")
-add_podium("2020/21", "November", 1, "Rasmus Grytvik-Skoglund")
-add_podium("2020/21", "November", 2, "Mattias Skoglund")
-add_podium("2020/21", "November", 3, "Øyvind Nordmo Sivertsen")
-add_podium("2020/21", "Desember", 1, "Fredrik Stellander")
-add_podium("2020/21", "Desember", 2, "Rasmus Grytvik-Skoglund")
-add_podium("2020/21", "Desember", 3, "Øyvind Nordmo Sivertsen")
-add_podium("2020/21", "Januar", 1, "Remi Andre Kristiansen")
-add_podium("2020/21", "Januar", 2, "Sindre Krognes")
-add_podium("2020/21", "Januar", 3, "Øyvind Nordmo Sivertsen")
-add_podium("2020/21", "Februar", 1, "Mats Øyvind Jacobsen Arntzen")
-add_podium("2020/21", "Februar", 2, "Mats Rydland")
-add_podium("2020/21", "Februar", 3, "Rasmus Grytvik-Skoglund")
-add_podium("2020/21", "Mars", 1, "Sindre Kolberg")
-add_podium("2020/21", "Mars", 2, "Rasmus Grytvik-Skoglund")
-add_podium("2020/21", "Mars", 3, "Robin Andersen", "Adrian Johansen")
-add_podium("2020/21", "April", 1, "Øyvind Nordmo Sivertsen")
-add_podium("2020/21", "April", 2, "Fredrik Stellander")
-add_podium("2020/21", "April", 3, "Nils Åsheim Megård")
-add_podium("2020/21", "Mai", 1, "Rasmus Grytvik-Skoglund")
-add_podium("2020/21", "Mai", 2, "Fredrik Stellander")
-add_podium("2020/21", "Mai", 3, "Julio Iversen")
+def read_csv_file(filename: str, columns: list[str]) -> pd.DataFrame:
+    path = DATA_DIR / filename
 
-# 2021/22
-add_podium("2021/22", "August", 1, "Nickolai Macpherson")
-add_podium("2021/22", "August", 2, "Andreas Nikolai Løkås")
-add_podium("2021/22", "August", 3, "Vegard Bjelland")
-add_podium("2021/22", "September", 1, "Mats Øyvind Jacobsen Arntzen")
-add_podium("2021/22", "September", 2, "Nickolai Macpherson")
-add_podium("2021/22", "September", 3, "Rasmus Grytvik-Skoglund")
-add_podium("2021/22", "Oktober", 1, "Edward Stenlund")
-add_podium("2021/22", "November", 1, "Mats Øyvind Jacobsen Arntzen")
-add_podium("2021/22", "November", 2, "Rasmus Grytvik-Skoglund")
-add_podium("2021/22", "November", 3, "Nickolai Macpherson")
-add_podium("2021/22", "Desember", 1, "Nickolai Macpherson")
-add_podium("2021/22", "Desember", 2, "Mattias Skoglund")
-add_podium("2021/22", "Desember", 3, "Håkon Juliussen")
-add_podium("2021/22", "Januar", 1, "Andreas Nikolai Løkås")
-add_podium("2021/22", "Januar", 2, "Nickolai Macpherson")
-add_podium("2021/22", "Januar", 3, "Simen Pedersen")
-add_podium("2021/22", "Februar", 1, "Adrian Johansen")
-add_podium("2021/22", "Mars", 1, "Remi Andre Kristiansen")
-add_podium("2021/22", "April", 1, "Håkon Juliussen")
+    if not path.exists():
+        return pd.DataFrame(columns=columns)
 
-# 2022/23
-add_podium("2022/23", "August", 1, "Adrian Drage Valla")
-add_podium("2022/23", "August", 2, "Lars Egil Karlsen Furebotten")
-add_podium("2022/23", "September", 1, "Sindre Jakobsen")
-add_podium("2022/23", "September", 2, "Lars Arnold Nermark", "Lars Egil Karlsen Furebotten")
-add_podium("2022/23", "Oktober", 1, "Rasmus Grytvik-Skoglund")
-add_podium("2022/23", "Oktober", 2, "Henrik Drage Hagane")
-add_podium("2022/23", "Oktober", 3, "Remi Andre Kristiansen")
-add_podium("2022/23", "November", 1, "Kristoffer W Pettersen")
-add_podium("2022/23", "November", 2, "Daniel Eriksson")
-add_podium("2022/23", "Desember", 1, "Sindre Jakobsen")
-add_podium("2022/23", "Januar", 1, "Mats Rydland")
-add_podium("2022/23", "Januar", 2, "Øyvind Nordmo Sivertsen")
-add_podium("2022/23", "Januar", 3, "Kristoffer W Pettersen")
-add_podium("2022/23", "Februar", 1, "Daniel Eriksson")
-add_podium("2022/23", "Februar", 2, "Sindre Kolberg")
-add_podium("2022/23", "Februar", 3, "Mattias Skoglund")
-add_podium("2022/23", "Mars", 1, "Øyvind Sørensen")
-add_podium("2022/23", "Mars", 2, "Edward Stenlund")
-add_podium("2022/23", "Mars", 3, "Adrian Drage Valla")
-add_podium("2022/23", "April", 1, "Rasmus Grytvik-Skoglund")
-add_podium("2022/23", "April", 2, "Adrian Johansen")
-add_podium("2022/23", "April", 3, "Edward Stenlund")
-add_podium("2022/23", "Mai", 1, "Kristoffer W Pettersen")
+    try:
+        df = pd.read_csv(path, dtype=str, keep_default_na=False)
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame(columns=columns)
 
-# 2023/24
-add_podium("2023/24", "August", 1, "Remi Andre Kristiansen")
-add_podium("2023/24", "August", 2, "Sindre Krognes", "Adrian Auke", "Robin Andersen")
-add_podium("2023/24", "September", 1, "August Sandnes Sollund")
-add_podium("2023/24", "September", 2, "Robin Andersen")
-add_podium("2023/24", "September", 3, "Lars Egil Karlsen Furebotten")
-add_podium("2023/24", "Oktober", 1, "Adrian Johansen")
-add_podium("2023/24", "Oktober", 2, "Nickolai Macpherson")
-add_podium("2023/24", "Oktober", 3, "Nils Åsheim Megård")
-add_podium("2023/24", "November", 1, "Nickolai Macpherson")
-add_podium("2023/24", "November", 2, "Simen Pedersen")
-add_podium("2023/24", "November", 3, "Kristoffer W Pettersen")
-add_podium("2023/24", "Desember", 1, "Mikael Dearsley")
-add_podium("2023/24", "Desember", 2, "Mats Rydland")
-add_podium("2023/24", "Januar", 1, "Henrik Drage Hagane")
-add_podium("2023/24", "Januar", 2, "Daniel Eriksson")
-add_podium("2023/24", "Februar", 1, "Thomas Byrkjedal Karlsrud")
-add_podium("2023/24", "Februar", 2, "Sindre Krognes")
-add_podium("2023/24", "Mars", 1, "Nickolai Macpherson")
-add_podium("2023/24", "April", 1, "Mats Øyvind Jacobsen Arntzen")
-add_podium("2023/24", "Mai", 1, "Remi Andre Kristiansen")
-add_podium("2023/24", "Mai", 2, "Sindre Krognes")
+    for column in columns:
+        if column not in df.columns:
+            df[column] = ""
 
-# 2024/25
-add_podium("2024/25", "August", 1, "Andreas Nikolai Løkås")
-add_podium("2024/25", "September", 1, "Nils Åsheim Megård")
-add_podium("2024/25", "September", 2, "Kristoffer W Pettersen")
-add_podium("2024/25", "September", 3, "Remi Andre Kristiansen")
-add_podium("2024/25", "Oktober", 1, "Robin Andersen")
-add_podium("2024/25", "Oktober", 2, "August Sandnes Sollund")
-add_podium("2024/25", "Oktober", 3, "Joakim André Bødker")
-add_podium("2024/25", "November", 1, "Robin Andersen")
-add_podium("2024/25", "November", 2, "Andreas Nikolai Løkås")
-add_podium("2024/25", "November", 3, "Nickolai Macpherson")
-add_podium("2024/25", "Desember", 1, "Adrian Johansen")
-add_podium("2024/25", "Desember", 2, "Mats Rydland")
-add_podium("2024/25", "Desember", 3, "Morten Pedersen")
-add_podium("2024/25", "Januar", 1, "Andreas Hjelmseth")
-add_podium("2024/25", "Januar", 2, "Nils Åsheim Megård")
-add_podium("2024/25", "Januar", 3, "Morten Pedersen")
-add_podium("2024/25", "Februar", 1, "Joakim André Bødker")
-add_podium("2024/25", "Februar", 2, "Mats Øyvind Jacobsen Arntzen")
-add_podium("2024/25", "Februar", 3, "Sindre Krognes")
-add_podium("2024/25", "Mars", 1, "Andreas Hjelmseth")
-add_podium("2024/25", "April", 1, "Robin Andersen")
-add_podium("2024/25", "Mai", 1, "Andreas Nikolai Løkås")
+    df = df[columns].copy()
 
-# 2025/26
-add_podium("2025/26", "August", 1, "Sindre Jakobsen")
-add_podium("2025/26", "August", 2, "Peter Skarheim")
-add_podium("2025/26", "August", 3, "Adrian Johansen")
-add_podium("2025/26", "September", 1, "Sindre Jakobsen")
-add_podium("2025/26", "September", 2, "Stian Bjørsvik")
-add_podium("2025/26", "Oktober", 1, "Lars Egil Karlsen Furebotten")
-add_podium("2025/26", "Oktober", 2, "Jørgen Hatten")
-add_podium("2025/26", "Oktober", 3, "Mikael Dearsley")
-add_podium("2025/26", "November", 1, "Simen Ulriksen")
-add_podium("2025/26", "November", 2, "Rasmus Grytvik-Skoglund")
-add_podium("2025/26", "November", 3, "Sindre Krognes")
-add_podium("2025/26", "Desember", 1, "Andreas Hjelmseth")
-add_podium("2025/26", "Desember", 2, "Sindre Jakobsen")
-add_podium("2025/26", "Desember", 3, "Joakim André Bødker")
-add_podium("2025/26", "Januar", 1, "Morten Pedersen")
-add_podium("2025/26", "Januar", 2, "Vegard Røstby")
-add_podium("2025/26", "Januar", 3, "Michael Jensen Olafsen")
-add_podium("2025/26", "Februar", 1, "Matz Andreas Håheim")
-add_podium("2025/26", "Mars", 1, "Mats Øyvind Jacobsen Arntzen")
-add_podium("2025/26", "April", 1, "Simen Ulriksen")
-add_podium("2025/26", "Mai", 1, "Andreas Nikolai Løkås")
+    for column in columns:
+        df[column] = df[column].map(clean_cell)
+
+    return df
 
 
-OFFICIAL_MONTHLY_TITLES_RAW = {
-    "Mats Øyvind Jacobsen Arntzen": 5,
-    "Andreas Nikolai Løkås": 4,
-    "Nickolai Macpherson": 4,
-    "Rasmus Grytvik-Skoglund": 4,
-    "Remi Andre Kristiansen": 4,
-    "Sindre Jakobsen": 4,
-    "Adrian Johansen": 3,
-    "Andreas Hjelmseth": 3,
-    "Robin Andersen": 3,
-    "Kristoffer W Pettersen": 2,
-    "Simen Ulriksen": 2,
-    "Sindre Kolberg": 2,
-    "Adrian Drage Valla": 1,
-    "August Sandnes Sollund": 1,
-    "Daniel Eriksson": 1,
-    "Edward Stenlund": 1,
-    "Fredrik Stellander": 1,
-    "Henrik Drage Hagane": 1,
-    "Håkon Juliussen": 1,
-    "Joakim André Bødker": 1,
-    "Lars Egil Karlsen Furebotten": 1,
-    "Mats Rydland": 1,
-    "Matz Andreas Håheim": 1,
-    "Mikael Dearsley": 1,
-    "Morten Pedersen": 1,
-    "Nils Åsheim Megård": 1,
-    "Simen Pedersen": 1,
-    "Thomas Byrkjedal Karlsrud": 1,
-    "Øyvind Nordmo Sivertsen": 1,
-    "Øyvind Sørensen": 1,
-}
+def records_from_csv(filename: str, columns: list[str], required: str | None = None) -> list[dict]:
+    df = read_csv_file(filename, columns)
 
-HOF_ALIASES = {
-    "Mats Øyvind Jacobsen Arntzen": ["Mats Arntzen", "Arntzen", "Mats Øyvind Jacobsen Arntzen"],
-    "Rasmus Grytvik-Skoglund": ["Rasmus Skoglund", "Rasmus", "Rasmus Grytvik-Skoglund"],
-    "Remi Andre Kristiansen": ["Remi", "Remi Kristiansen", "Remi Andre Kristiansen"],
-    "Andreas Nikolai Løkås": ["Andreas Løkås", "Løkås", "Andreas Nikolai Løkås"],
-    "Joakim André Bødker": ["Joakim Bødker", "Joakim André Bødker"],
-    "Lars Egil Karlsen Furebotten": [
-        "Lars Egil Furebotten",
-        "Lars Erik Furebotten",
-        "Furebotten",
-        "Lars Egil Karlsen Furebotten",
-    ],
-    "Matz Andreas Håheim": ["Matz Håheim", "Håheim", "Matz Andreas Håheim"],
-    "Henrik Drage Hagane": ["Henrik Hagane", "Henrik Drage Hagane"],
-    "Sindre Krognes": ["Krognes", "Sindre Krognes"],
-    "Sindre Kolberg": ["Kolberg", "Sindre Kolberg"],
-    "Øyvind Nordmo Sivertsen": [
-        "Nordmo Sivertsen",
-        "Øyvind Nordmo",
-        "Øyvind Normo Sivertsen",
-        "Øyvind Nordmo Sivertsen",
-    ],
-    "Nils Åsheim Megård": ["Nils Megård", "Nils Åsheim Megård"],
-    "Mikael Dearsley": ["Mikael Dearsley", "Michael Dearsley"],
-    "Michael Jensen Olafsen": ["Michael Jensen Olafsen", "Michael Olafsen", "Michael Jensen"],
-    "Adrian Drage Valla": ["Adrian Drage Valla", "Adrian Valla"],
-    "Adrian Johansen": ["Adrian Johansen"],
-    "Mats Rydland": ["Mats Rydland", "Rydland"],
-    "Kristoffer W Pettersen": ["Kristoffer W Pettersen", "W Pettersen", "Kristoffer Pettersen"],
-    "Simen Ulriksen": ["Simen Ulriksen"],
-    "Simen Pedersen": ["Simen Pedersen"],
-    "Nickolai Macpherson": ["Nickolai", "Nickolai Macpherson", "Nikolai Macpherson"],
-    "Håkon Juliussen": ["Håkon Juliussen", "Juliussen"],
-    "Øyvind Sørensen": ["Øyvind Sørensen"],
-}
+    if required and required in df.columns:
+        df = df[df[required].astype(str).str.strip() != ""]
+
+    return df.to_dict("records")
+
+
+HOF_OVERALL = records_from_csv(
+    "overall_results.csv",
+    ["season", "winner", "runner_up", "third_place", "note", "status", "source"],
+    required="winner",
+)
+
+HOF_CUP = records_from_csv(
+    "cup_results.csv",
+    ["season", "winner", "runner_up", "note", "status", "source"],
+    required="winner",
+)
+
+HOF_RANDOM = records_from_csv(
+    "random_results.csv",
+    ["season", "winner", "placement", "note", "status", "source"],
+    required="winner",
+)
+
+
+def load_monthly_podiums() -> list[dict]:
+    df = read_csv_file(
+        "monthly_podiums.csv",
+        ["season", "month", "place", "manager", "status", "source"],
+    )
+
+    if df.empty:
+        return []
+
+    df = df[(df["season"] != "") & (df["month"] != "") & (df["manager"] != "")]
+    df["place"] = pd.to_numeric(df["place"], errors="coerce").fillna(0).astype(int)
+    df = df[df["place"] > 0]
+
+    return df.to_dict("records")
+
+
+MONTHLY_PODIUMS = load_monthly_podiums()
+
+
+def load_official_monthly_titles() -> dict:
+    df = read_csv_file(
+        "official_monthly_titles.csv",
+        ["manager", "monthly_titles", "status", "source"],
+    )
+
+    out = {}
+
+    for _, row in df.iterrows():
+        manager = clean_cell(row.get("manager"))
+
+        if not manager:
+            continue
+
+        try:
+            out[manager] = int(float(row.get("monthly_titles") or 0))
+        except (TypeError, ValueError):
+            out[manager] = 0
+
+    return out
+
+
+OFFICIAL_MONTHLY_TITLES_RAW = load_official_monthly_titles()
+
+
+def load_aliases() -> dict:
+    df = read_csv_file("aliases.csv", ["canonical_name", "alias"])
+    out: dict[str, list[str]] = {}
+
+    for _, row in df.iterrows():
+        canonical = clean_cell(row.get("canonical_name"))
+        alias = clean_cell(row.get("alias"))
+
+        if not canonical or not alias:
+            continue
+
+        out.setdefault(canonical, [])
+
+        if alias not in out[canonical]:
+            out[canonical].append(alias)
+
+    return out
+
+
+HOF_ALIASES = load_aliases()
 
 
 TAG_SORT = {
@@ -1808,140 +1630,29 @@ def build_season_radar_tables(managers: list[dict], summary_df: pd.DataFrame) ->
 # -----------------------------
 
 def build_place_data() -> pd.DataFrame:
-    places = [
-        {
-            "By": "Bodø",
-            "lat": 67.2804,
-            "lon": 14.4049,
-            "Folk": [
-                "Sindre Kolberg",
-                "Remi Kristiansen",
-                "Rachel Antonsen",
-                "Simen Pedersen",
-                "Roger Westblikk",
-                "Rasmus Skoglund",
-                "Stian Laastad",
-                "Simon Berg Jacobsen",
-            ],
-        },
-        {
-            "By": "Rognan",
-            "lat": 67.0953,
-            "lon": 15.3878,
-            "Folk": [
-                "Andreas Løkås",
-                "Henrik Hagane",
-                "Peter Skarheim",
-                "Joakim Bødker",
-            ],
-        },
-        {
-            "By": "Oslo",
-            "lat": 59.9139,
-            "lon": 10.7522,
-            "Folk": [
-                "Andreas Almli",
-                "Mats Arntzen",
-                "Edward Stenlund",
-            ],
-        },
-        {
-            "By": "Korgen",
-            "lat": 66.0771,
-            "lon": 13.8153,
-            "Folk": [
-                "Jørgen Hatten",
-                "Adrian Drage Valla",
-            ],
-        },
-        {
-            "By": "Mo i Rana",
-            "lat": 66.3128,
-            "lon": 14.1420,
-            "Folk": [
-                "Oskar Brun",
-                "Tobias Nygård",
-                "Sindre Krognes",
-            ],
-        },
-        {
-            "By": "Sarpsborg",
-            "lat": 59.2841,
-            "lon": 11.1094,
-            "Folk": [
-                "Kevin Jørgensen",
-            ],
-        },
-        {
-            "By": "Tromsø",
-            "lat": 69.6492,
-            "lon": 18.9553,
-            "Folk": [
-                "Robin Andersen",
-                "Nickolai Macpherson",
-                "Mikael Dearsley",
-            ],
-        },
-        {
-            "By": "Trondheim",
-            "lat": 63.4305,
-            "lon": 10.3951,
-            "Folk": [
-                "Martin Hatling",
-                "Sindre Samset",
-                "Erik Johnsen",
-            ],
-        },
-        {
-            "By": "Kristiansand",
-            "lat": 58.1467,
-            "lon": 7.9956,
-            "Folk": [
-                "Sander Maxwell Frøyså",
-            ],
-        },
-        {
-            "By": "Bergen",
-            "lat": 60.3913,
-            "lon": 5.3221,
-            "Folk": [
-                "Adrian Auke",
-            ],
-        },
-        {
-            "By": "Narvik",
-            "lat": 68.4385,
-            "lon": 17.4273,
-            "Folk": [
-                "Øyvind Sørensen",
-                "Matz Håheim",
-                "Daniel Eriksson",
-            ],
-        },
-        {
-            "By": "Fauske",
-            "lat": 67.2588,
-            "lon": 15.3918,
-            "Folk": [
-                "Jens Vangen",
-                "Mattias Pettersen",
-                "Michael Jensen Olafsen",
-            ],
-        },
-    ]
+    df = read_csv_file("places.csv", ["manager", "place", "lat", "lon"])
+
+    if df.empty:
+        return pd.DataFrame(columns=["By", "lat", "lon", "Antall", "Deltakere", "Label", "radius"])
+
+    df = df[(df["manager"] != "") & (df["place"] != "")].copy()
+    df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
+    df["lon"] = pd.to_numeric(df["lon"], errors="coerce")
+    df = df.dropna(subset=["lat", "lon"])
 
     rows = []
 
-    for place in places:
-        count = len(place["Folk"])
+    for (place, lat, lon), place_df in df.groupby(["place", "lat", "lon"], dropna=False):
+        people = sorted(place_df["manager"].dropna().astype(str).unique().tolist())
+        count = len(people)
 
         rows.append({
-            "By": place["By"],
-            "lat": place["lat"],
-            "lon": place["lon"],
+            "By": place,
+            "lat": float(lat),
+            "lon": float(lon),
             "Antall": count,
-            "Deltakere": ", ".join(place["Folk"]),
-            "Label": f"{place['By']} ({count})",
+            "Deltakere": ", ".join(people),
+            "Label": f"{place} ({count})",
             "radius": 12_000 + count * 5_500,
         })
 
