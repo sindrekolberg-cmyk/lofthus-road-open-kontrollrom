@@ -18,7 +18,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-kontrollrom-v14-launch-polish"
+APP_VERSION = "lofthus-road-open-kontrollrom-v15-launch-fix"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -41,7 +41,7 @@ st.markdown(
             --lro-muted: #6b7280;
         }
 
-        .block-container {padding-top: 1.8rem; padding-bottom: 3rem;}
+        .block-container {padding-top: 1.6rem; padding-bottom: 3rem;}
 
         div[data-testid="stMetric"] {
             background: #f8fafc;
@@ -53,38 +53,22 @@ st.markdown(
 
         .lro-hero {
             background:
-                radial-gradient(circle at 92% 18%, rgba(251, 191, 36, 0.22), transparent 24%),
-                linear-gradient(135deg, #0b1220 0%, #111827 48%, #7f1d1d 100%);
-            border-radius: 28px;
-            padding: 32px 36px;
+                radial-gradient(circle at 92% 18%, rgba(251, 191, 36, 0.18), transparent 22%),
+                linear-gradient(135deg, #0b1220 0%, #111827 52%, #7f1d1d 100%);
+            border-radius: 24px;
+            padding: 30px 34px;
             color: white;
-            margin-bottom: 22px;
-            box-shadow: 0 16px 42px rgba(15, 23, 42, 0.22);
+            margin-bottom: 20px;
+            box-shadow: 0 14px 36px rgba(15, 23, 42, 0.20);
             border: 1px solid rgba(255, 255, 255, 0.08);
         }
 
         .lro-hero h1 {
-            font-size: clamp(2rem, 4vw, 3.35rem);
-            line-height: 1.02;
-            margin: 0 0 10px 0;
-            color: white;
-            letter-spacing: -0.04em;
-        }
-
-        .lro-eyebrow {
-            display: inline-block;
-            font-size: 0.78rem;
-            letter-spacing: 0.16em;
-            text-transform: uppercase;
-            color: #fecaca;
-            font-weight: 800;
-            margin-bottom: 12px;
-        }
-
-        .lro-hero p {
+            font-size: clamp(2.2rem, 4.3vw, 4.1rem);
+            line-height: 1.0;
             margin: 0;
-            color: #e5e7eb;
-            font-size: 1.03rem;
+            color: white;
+            letter-spacing: -0.05em;
         }
 
         .lro-beta {
@@ -100,7 +84,7 @@ st.markdown(
             font-weight: 800;
             text-transform: uppercase;
             letter-spacing: 0.08em;
-            margin-bottom: 16px;
+            margin-bottom: 14px;
         }
 
         .lro-card-grid {
@@ -135,10 +119,11 @@ st.markdown(
         .lro-card.dark .lro-card-label {color: #d1d5db;}
 
         .lro-card-value {
-            font-size: 1.45rem;
-            line-height: 1.1;
+            font-size: 1.3rem;
+            line-height: 1.12;
             font-weight: 850;
             letter-spacing: -0.025em;
+            word-break: normal;
         }
 
         .lro-card-caption {
@@ -163,17 +148,26 @@ st.markdown(
 
         .small-muted {color: #6b7280; font-size: 0.92rem;}
 
+        .city-card {
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 16px;
+            padding: 14px 16px;
+            margin-bottom: 10px;
+            box-shadow: 0 6px 16px rgba(15, 23, 42, 0.04);
+        }
+        .city-title {font-weight: 850; font-size: 1.04rem; margin-bottom: 4px;}
+        .city-people {color: #374151; line-height: 1.45;}
+
         @media (max-width: 760px) {
-            .lro-hero {padding: 24px 22px; border-radius: 22px;}
-            .lro-hero h1 {font-size: 2.05rem;}
+            .lro-hero {padding: 24px 22px; border-radius: 20px;}
+            .lro-hero h1 {font-size: 2.4rem;}
             .lro-card-grid {grid-template-columns: 1fr;}
         }
     </style>
     <div class="lro-hero">
         <div class="lro-beta">Beta · lanseringsklar prototype</div>
-        <div class="lro-eyebrow">Lofthus Road Open</div>
-        <h1>Lofthus Road Open - Kontrollrom</h1>
-        <p>Live tabell · historikk · H2H · Hall of Fame · månedskonger · sesongradar · norgeskart</p>
+        <h1>Lofthus Road Open</h1>
     </div>
     """,
     unsafe_allow_html=True,
@@ -493,26 +487,20 @@ def build_official_monthly_map() -> dict:
 def merit_text(row: dict) -> str:
     parts = []
 
-    if row.get("overall_count", 0):
-        parts.append(f"{int(row['overall_count'])}x sammenlagt")
+    def add_piece(key: str, singular: str, plural: str | None = None):
+        value = int(row.get(key, 0) or 0)
+        if not value:
+            return
+        label = singular if value == 1 else (plural or singular)
+        parts.append(f"{value} {label}")
 
-    if row.get("overall_runner_up_count", 0):
-        parts.append(f"{int(row['overall_runner_up_count'])}x sølv sammenlagt")
-
-    if row.get("overall_third_count", 0):
-        parts.append(f"{int(row['overall_third_count'])}x bronse sammenlagt")
-
-    if row.get("cup_count", 0):
-        parts.append(f"{int(row['cup_count'])}x cupgull")
-
-    if row.get("cup_runner_up_count", 0):
-        parts.append(f"{int(row['cup_runner_up_count'])}x cupsølv")
-
-    if row.get("random_count", 0):
-        parts.append(f"{int(row['random_count'])}x random")
-
-    if row.get("monthly_titles", 0):
-        parts.append(f"{int(row['monthly_titles'])}x måned")
+    add_piece("overall_count", "sammenlagtseier", "sammenlagtseiere")
+    add_piece("overall_runner_up_count", "sølv sammenlagt")
+    add_piece("overall_third_count", "bronse sammenlagt")
+    add_piece("cup_count", "cupgull")
+    add_piece("cup_runner_up_count", "cupsølv")
+    add_piece("random_count", "random")
+    add_piece("monthly_titles", "månedsseier", "månedsseiere")
 
     return ", ".join(parts)
 
@@ -1654,15 +1642,26 @@ TIER_SORT = {
 def add_sortable_display_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
+    # Usynlige sorteringsprefikser: gir riktig sortering ved kolonneklikk uten synlige 01/02-tall.
+    invisible_prefixes = {
+        1: "\u200b",
+        2: "\u200c",
+        3: "\u200d",
+        4: "\u2060",
+        5: "\u2061",
+        6: "\u2062",
+        99: "\uffff",
+    }
+
     def tag_value(value: str) -> str:
         if not value or pd.isna(value):
             return ""
-        return f"{TAG_SORT.get(str(value), 99):02d} · {value}"
+        return f"{invisible_prefixes.get(TAG_SORT.get(str(value), 99), '')}{value}"
 
     def tier_value(value: str) -> str:
         if not value or pd.isna(value):
             return ""
-        return f"{TIER_SORT.get(str(value), 99):02d} · {value}"
+        return f"{invisible_prefixes.get(TIER_SORT.get(str(value), 99), '')}{value}"
 
     if "tag" in df.columns:
         df["tag_display"] = df["tag"].apply(tag_value)
@@ -1671,6 +1670,29 @@ def add_sortable_display_columns(df: pd.DataFrame) -> pd.DataFrame:
         df["tier_display"] = df["tier"].apply(tier_value)
 
     return df
+
+
+def clean_invisible(value: Any) -> str:
+    return str(value or "").replace("\u200b", "").replace("\u200c", "").replace("\u200d", "").replace("\u2060", "").replace("\u2061", "").replace("\u2062", "").replace("\uffff", "")
+
+
+def medal_for_position(position: int) -> str:
+    return {1: "🥇", 2: "🥈", 3: "🥉"}.get(int(position), "")
+
+
+def add_podium_column(df: pd.DataFrame, column_name: str = "podium") -> pd.DataFrame:
+    df = df.copy().reset_index(drop=True)
+    df[column_name] = [medal_for_position(index + 1) for index in range(len(df))]
+    return df
+
+
+def format_rank_with_season(rank: int | float | None, season: str | None = None) -> str:
+    formatted = format_rank(rank)
+    if not formatted:
+        return ""
+    if season:
+        return f"{formatted} ({season})"
+    return formatted
 
 
 def make_numeric_display(df: pd.DataFrame, source: str, target: str) -> pd.DataFrame:
@@ -1789,7 +1811,7 @@ def build_place_data() -> pd.DataFrame:
             "Antall": count,
             "Deltakere": ", ".join(people),
             "Label": f"{place} ({count})",
-            "radius": 12_000 + count * 5_500,
+            "radius": 8_000 + count * 3_000,
         })
 
     return pd.DataFrame(rows)
@@ -1828,27 +1850,30 @@ def ensure_history_loaded(league_id: int):
 # -----------------------------
 
 LIGATABELL_LABELS = {
+    "podium": "",
     "rank_display": "Plassering",
     "form_curve": "Formkurve",
     "player_name": "Manager",
     "entry_name": "Lag",
     "event_total_num": "Rundepoeng",
     "total_num": "Poeng",
-    "odds_before": "Odds før sesongstart",
-    "best_rank_numeric": "Beste plassering",
+    "odds_before": "Vinnerodds før sesongstart",
+    "best_rank_numeric": "Beste FPL-plassering gjennom tidene",
     "tag_display": "Merknad",
     "tier_display": "Nivå",
 }
 
 HISTORY_LABELS = {
+    "podium": "",
+    "best_rank_with_season": "Beste FPL-plassering gjennom tidene",
     "manager": "Manager",
     "team": "Lag",
     "seasons": "Sesonger spilt",
     "last_season_rank_numeric": "Plassering sist",
-    "best_rank_numeric": "Beste plassering",
+    "best_rank_numeric": "Beste FPL-plassering gjennom tidene",
     "best_season": "Beste sesong",
     "avg_rank_last_3_numeric": "Siste tre sesonger",
-    "trend": "Utvikling siste 3",
+    "trend": "Utvikling siste tre sesonger",
     "monthly_titles": "Månedstitler",
     "merits": "Meritter",
     "top_100k_seasons": "Topp 100k",
@@ -1873,6 +1898,7 @@ ERROR_LABELS = {
 }
 
 HOF_LABELS = {
+    "podium": "",
     "hof_rank": "Hall of Fame-rangering",
     "display_name": "Manager",
     "hof_score": "Merittpoeng",
@@ -1969,14 +1995,14 @@ RADAR_LABELS = {
 }
 
 NUMERIC_CONFIG = {
-    "odds_before": st.column_config.NumberColumn("Odds før sesongstart", format="%.2f"),
-    "best_rank_numeric": st.column_config.NumberColumn("Beste plassering", format="%d"),
+    "odds_before": st.column_config.NumberColumn("Vinnerodds før sesongstart", format="%.2f"),
+    "best_rank_numeric": st.column_config.NumberColumn("Beste FPL-plassering gjennom tidene", format="%d"),
     "last_season_rank_numeric": st.column_config.NumberColumn("Plassering sist", format="%d"),
     "avg_rank_last_3_numeric": st.column_config.NumberColumn("Siste tre sesonger", format="%d"),
     "event_total_num": st.column_config.NumberColumn("Rundepoeng", format="%d"),
     "total_num": st.column_config.NumberColumn("Poeng", format="%d"),
     "rank_num": st.column_config.NumberColumn("Plassering", format="%d"),
-    "odds": st.column_config.NumberColumn("Odds før sesongstart", format="%.2f"),
+    "odds": st.column_config.NumberColumn("Vinnerodds før sesongstart", format="%.2f"),
     "odds_rank": st.column_config.NumberColumn("Odds-rangering", format="%d"),
     "performance_vs_odds": st.column_config.NumberColumn("Avvik mot odds", format="%d"),
     "last_three_points": st.column_config.NumberColumn("Poeng siste tre runder", format="%d"),
@@ -1988,8 +2014,7 @@ NUMERIC_CONFIG = {
 # UI
 # -----------------------------
 
-tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "Forside",
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Ligatabell",
     "Historikk",
     "H2H",
@@ -1998,76 +2023,11 @@ tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Norgeskart",
 ])
 
-
-with tab0:
-    st.header("Velkommen til kontrollrommet")
-    lro_note(
-        "Beta fram mot 1. august",
-        "Dette er første lanserbare prototype. Målet er at ligaen skal finne feil i gamle meritter, navn, bosted og historikk før sesongen starter.",
-        "gold",
-    )
-
-    hof_df_front = build_hof_people()
-    place_df_front = build_place_data()
-    monthly_df_front = build_monthly_podium_df()
-
-    cards = [
-        {
-            "label": "Status",
-            "value": "Beta",
-            "caption": "Klar til intern test i gruppa.",
-            "dark": True,
-        },
-        {
-            "label": "Påmeldte lag",
-            "value": str(len(st.session_state.get("managers", []))) if st.session_state.get("managers") else "Hent FPL-data",
-            "caption": "Trykk Hent ligadata i Ligatabell-fanen.",
-        },
-        {
-            "label": "Hall of Fame",
-            "value": f"{len(HOF_OVERALL)} sesonger",
-            "caption": "Sammenlagt, cup og gamle meritter.",
-        },
-        {
-            "label": "Månedshistorikk",
-            "value": f"{len(monthly_df_front)} podier" if not monthly_df_front.empty else "Ikke lastet",
-            "caption": "Grunnlaget for månedskonger og månedsliga.",
-        },
-        {
-            "label": "Norgeskart",
-            "value": f"{int(place_df_front['Antall'].sum())} personer" if not place_df_front.empty else "Ikke lastet",
-            "caption": "Geografien i Lofthus Road Open.",
-        },
-        {
-            "label": "Mest merittert",
-            "value": hof_df_front.iloc[0]["display_name"] if not hof_df_front.empty else "—",
-            "caption": f"{int(hof_df_front.iloc[0]['hof_score'])} merittpoeng" if not hof_df_front.empty else "Kommer fra Hall of Fame-data.",
-        },
-    ]
-    lro_cards(cards)
-
-    st.subheader("Hva ligger her?")
-    lro_cards([
-        {"label": "Ligatabell", "value": "Nåtid", "caption": "Påmeldte lag, odds før sesongstart, beste historiske plassering og merknad."},
-        {"label": "Historikk", "value": "Fortid", "caption": "Tidligere FPL-sesonger, beste plassering, siste tre sesonger og meritter."},
-        {"label": "H2H", "value": "Rivaler", "caption": "Skriv inn dueller eller grupper og få banter-odds basert på historikk."},
-        {"label": "Hall of Fame", "value": "Historiebok", "caption": "Sammenlagt, cup, månedsseiere, månedskonger og merittpoeng."},
-        {"label": "Sesongradar", "value": "Live fortelling", "caption": "Klatrere, fall, form siste tre runder og over/underprestasjon mot odds."},
-        {"label": "Norgeskart", "value": "Ligaidentitet", "caption": "Hvor folk i ligaen hører hjemme."},
-    ])
-
-    lro_note(
-        "Meld feil i gruppa",
-        "Gamle månedspremier, cupfinaler og bosted er hentet fra notater og gruppa. Finner du feil, meld det inn, så fikser vi før sesongstart.",
-        "",
-    )
-
-
 with tab1:
     st.header("Ligatabell")
-    lro_note("Sesongens inngang", "Her ligger påmeldte lag, odds før sesongstart og historisk merknad. Oddsene er banter/prognose, ikke fasit.", "")
+    lro_note("Sesongens inngang", "Her ligger påmeldte lag, vinnerodds før sesongstart og historisk merknad. Oddsene er banter/prognose, ikke fasit.", "")
 
-    league_id = st.number_input("Liga-ID", value=DEFAULT_LEAGUE_ID, step=1, key="league_table_id_v11")
+    league_id = st.number_input("Liga-ID", value=DEFAULT_LEAGUE_ID, step=1, key="league_table_id_v15")
 
     if st.button("Hent ligadata"):
         ensure_history_loaded(int(league_id))
@@ -2112,9 +2072,7 @@ with tab1:
             table_df["best_rank_numeric"] = pd.to_numeric(table_df["best_rank_num"], errors="coerce")
             table_df.loc[table_df["best_rank_numeric"] >= 999_999_999, "best_rank_numeric"] = pd.NA
             table_df["odds_before"] = pd.to_numeric(table_df["odds_float"], errors="coerce")
-
             table_df["rank_display"] = table_df["rank_num"].apply(format_rank)
-
             table_df["form_delta"] = table_df["last_rank_num"] - table_df["rank_num"]
 
             def form_curve(row):
@@ -2141,7 +2099,10 @@ with tab1:
             else:
                 table_df = table_df.sort_values(["odds_before", "best_rank_numeric", "player_name"], ascending=[True, True, True], na_position="last")
 
+            table_df = add_podium_column(table_df)
+
             columns = [
+                "podium",
                 "rank_display",
                 "form_curve",
                 "player_name",
@@ -2154,18 +2115,70 @@ with tab1:
                 "tier_display",
             ]
 
-            display_table(table_df, columns, LIGATABELL_LABELS, column_config=NUMERIC_CONFIG)
+            existing = [column for column in columns if column in table_df.columns]
+            display_df = table_df[existing].rename(columns={column: LIGATABELL_LABELS.get(column, column) for column in existing})
 
-            if not has_live_table:
-                st.caption("Før sesongstart sorteres tabellen først etter odds. Trykk på kolonneoverskriftene for å sortere selv.")
-            else:
-                st.caption("Trykk på kolonneoverskriftene for å sortere tabellen.")
+            translated_config = {}
+            for source_column, config in NUMERIC_CONFIG.items():
+                if source_column in existing:
+                    translated_config[LIGATABELL_LABELS.get(source_column, source_column)] = config
+
+            table_event = st.dataframe(
+                display_df.reset_index(drop=True),
+                use_container_width=True,
+                hide_index=True,
+                column_config=translated_config,
+                on_select="rerun",
+                selection_mode="single-row",
+            )
+
+            st.caption("Trykk på en kolonneoverskrift for å sortere. Klikk på en rad for å se hele FPL-historikken til manageren.")
+
+            selected_rows = []
+            try:
+                selected_rows = table_event.selection.rows
+            except Exception:
+                if isinstance(table_event, dict):
+                    selected_rows = table_event.get("selection", {}).get("rows", [])
+
+            if selected_rows:
+                selected_idx = selected_rows[0]
+                selected = table_df.reset_index(drop=True).iloc[selected_idx]
+                selected_name = selected.get("player_name", "Ukjent")
+                selected_team = selected.get("entry_name", "")
+                selected_entry = str(selected.get("entry", ""))
+
+                with st.expander(f"Historikk: {selected_name} · {selected_team}", expanded=True):
+                    seasons_df = st.session_state.get("seasons_df", pd.DataFrame())
+
+                    if seasons_df.empty:
+                        st.info("Fant ikke tidligere sesonger for denne manageren ennå.")
+                    else:
+                        history_view = seasons_df[seasons_df["entry"].astype(str) == selected_entry].copy()
+
+                        if history_view.empty:
+                            st.info("Fant ikke tidligere sesonger for denne manageren ennå.")
+                        else:
+                            history_view["rank_num"] = pd.to_numeric(history_view.get("rank_num"), errors="coerce")
+                            history_view = history_view.sort_values("season_name")
+                            display_table(
+                                history_view,
+                                ["season_name", "total_points", "rank"],
+                                SEASON_LABELS,
+                            )
 
             with st.expander("Hva betyr Merknad og Nivå?"):
                 st.write(
                     """
-                    **Merknad** er en praktisk vurdering av managerprofilen: 01 · Tittelkandidat, 02 · Outsider, 03 · Dark horse, 04 · Stabil traver, 05 · Usikkert kort, 06 · Rookie. Tallene står der for at sortering ved kolonneklikk skal bli riktig.  
-                    **Nivå** er en ren historikk-rating basert på tidligere FPL-ranker. 01 · Elite er best, deretter Meget sterk, Sterk, Solid, Midtable og Rookie.
+                    **Merknad** er en praktisk vurdering av managerprofilen:  
+                    **Tittelkandidat** = sterk historikk/lav odds.  
+                    **Outsider** = dokumentert høyt nivå, men ikke helt favoritt.  
+                    **Dark horse** = høy peak eller fersk framgang, men mer usikker profil.  
+                    **Stabil traver** = jevnt OK over tid.  
+                    **Usikkert kort** = svakere/mer uavklart historikk.  
+                    **Rookie** = for få sesonger til å si så mye.
+
+                    **Nivå** er en ren historikk-rating basert på tidligere FPL-ranker: Elite, Meget sterk, Sterk, Solid, Midtable og Rookie.
                     """
                 )
 
@@ -2185,9 +2198,9 @@ with tab1:
 
 with tab2:
     st.header("Historikk")
-    lro_note("Fortid, ikke framtid", "Historikken viser tidligere FPL-sesonger, beste plassering, siste tre sesonger og meritter fra Lofthus Road Open. Odds er flyttet til Ligatabell.", "")
+    lro_note("Fortid, ikke framtid", "Historikken viser tidligere FPL-sesonger, beste plassering, siste tre sesonger og meritter fra Lofthus Road Open. Odds ligger i Ligatabell.", "")
 
-    league_id_history = st.number_input("Liga-ID", value=DEFAULT_LEAGUE_ID, step=1, key="history_id_v11")
+    league_id_history = st.number_input("Liga-ID", value=DEFAULT_LEAGUE_ID, step=1, key="history_id_v15")
 
     if st.button("Hent historikk"):
         ensure_history_loaded(int(league_id_history))
@@ -2206,16 +2219,18 @@ with tab2:
             summary = make_numeric_display(summary, "avg_rank_last_3_num", "avg_rank_last_3_numeric")
             summary = add_sortable_display_columns(summary)
             summary = summary.sort_values(["best_rank_numeric", "manager"], ascending=[True, True], na_position="last").reset_index(drop=True)
+            summary = add_podium_column(summary)
+            summary["best_rank_with_season"] = summary.apply(lambda row: format_rank_with_season(row.get("best_rank_num"), row.get("best_season")), axis=1)
+            summary["merits"] = summary["merits"].fillna("")
 
             columns = [
+                "podium",
                 "manager",
                 "team",
                 "seasons",
                 "last_season_rank_numeric",
-                "best_rank_numeric",
-                "best_season",
+                "best_rank_with_season",
                 "avg_rank_last_3_numeric",
-                "trend",
                 "monthly_titles",
                 "merits",
                 "top_100k_seasons",
@@ -2224,7 +2239,15 @@ with tab2:
                 "tag_display",
             ]
 
-            display_table(summary, columns, HISTORY_LABELS, column_config=NUMERIC_CONFIG)
+            history_config = dict(NUMERIC_CONFIG)
+            history_config.update({
+                "merits": st.column_config.TextColumn("Meritter", width="large"),
+                "best_rank_with_season": st.column_config.TextColumn("Beste FPL-plassering gjennom tidene", width="medium"),
+                "manager": st.column_config.TextColumn("Manager", width="medium"),
+                "team": st.column_config.TextColumn("Lag", width="medium"),
+            })
+
+            display_table(summary, columns, HISTORY_LABELS, column_config=history_config)
 
             st.download_button(
                 label="Last ned historikk som CSV",
@@ -2233,25 +2256,23 @@ with tab2:
                 mime="text/csv",
             )
 
-            st.subheader("Radar")
+            with st.expander("Utvikling siste tre sesonger"):
+                trend_columns = ["manager", "team", "trend"]
+                display_table(summary, trend_columns, HISTORY_LABELS)
 
-            radar_cols = st.columns(4)
-
-            with radar_cols[0]:
-                peak = summary_df.sort_values("best_rank_num").iloc[0]
-                st.metric("Beste all-time plassering", peak["manager"], peak["best_rank"])
-
-            with radar_cols[1]:
-                form = summary_df.sort_values("last_season_rank_num").iloc[0]
-                st.metric("Best sist sesong", form["manager"], form["last_season_rank"])
-
-            with radar_cols[2]:
-                proven = summary_df.sort_values("top_100k_seasons", ascending=False).iloc[0]
-                st.metric("Flest topp 100k", proven["manager"], int(proven["top_100k_seasons"]))
-
-            with radar_cols[3]:
-                hof = summary_df.sort_values("hof_score", ascending=False).iloc[0]
-                st.metric("Mest merittert", hof["manager"], int(hof["hof_score"]))
+            with st.expander("Hvordan regnes merittpoeng?"):
+                weights = pd.DataFrame([
+                    {"Meritt": "Sammenlagtseier", "Poeng": 60},
+                    {"Meritt": "2. plass sammenlagt", "Poeng": 30},
+                    {"Meritt": "3. plass sammenlagt", "Poeng": 16},
+                    {"Meritt": "Cupgull", "Poeng": 20},
+                    {"Meritt": "Cupsølv", "Poeng": 8},
+                    {"Meritt": "Månedsseier", "Poeng": 6},
+                    {"Meritt": "Månedssølv", "Poeng": 2},
+                    {"Meritt": "Månedsbronse", "Poeng": 1},
+                    {"Meritt": "Random plassering", "Poeng": 4},
+                ])
+                st.dataframe(weights, use_container_width=True, hide_index=True)
 
             with st.expander("Merknad-forklaring"):
                 st.write(
@@ -2324,6 +2345,7 @@ with tab4:
     if hof_df.empty:
         st.warning("Fant ingen Hall of Fame-data.")
     else:
+        hof_df = add_podium_column(hof_df)
         most_decorated = hof_df.sort_values("hof_score", ascending=False).iloc[0]
         monthly_king = hof_df.sort_values("monthly_titles", ascending=False).iloc[0]
         overall_king = hof_df.sort_values("overall_count", ascending=False).iloc[0]
@@ -2342,6 +2364,7 @@ with tab4:
         st.subheader("Meritt-tabell")
 
         hof_columns = [
+            "podium",
             "hof_rank",
             "display_name",
             "hof_score",
@@ -2358,7 +2381,11 @@ with tab4:
             "merits",
         ]
 
-        display_table(hof_df, hof_columns, HOF_LABELS)
+        hof_config = {
+            "display_name": st.column_config.TextColumn("Manager", width="large"),
+            "merits": st.column_config.TextColumn("Meritter", width="large"),
+        }
+        display_table(hof_df, hof_columns, HOF_LABELS, column_config=hof_config)
 
         st.download_button(
             label="Last ned Hall of Fame som CSV",
@@ -2367,17 +2394,16 @@ with tab4:
             mime="text/csv",
         )
 
-        with st.expander("Sesongdetaljer per manager"):
-            detail_columns = [
-                "display_name",
-                "overall_seasons",
-                "overall_runner_up_seasons",
-                "overall_third_seasons",
-                "cup_seasons",
-                "cup_runner_up_seasons",
-                "random_notes",
-            ]
-            display_table(hof_df, detail_columns, HOF_LABELS)
+        st.subheader("Sesongdetaljer per manager")
+        detail_columns = [
+            "display_name",
+            "overall_seasons",
+            "overall_runner_up_seasons",
+            "overall_third_seasons",
+            "cup_seasons",
+            "cup_runner_up_seasons",
+        ]
+        display_table(hof_df, detail_columns, HOF_LABELS, column_config={"display_name": st.column_config.TextColumn("Manager", width="large")})
 
         st.subheader("Månedskonger")
 
@@ -2398,7 +2424,7 @@ with tab4:
 
             display_table(month_specialists, month_specialist_columns, MONTH_SPECIALIST_LABELS)
 
-        st.subheader("Månedsliga")
+        st.subheader("Hvem gjør det best i hvilken måned?")
 
         monthly_df = build_monthly_podium_df()
 
@@ -2407,11 +2433,17 @@ with tab4:
         else:
             seasons = ["Alle"] + sorted(monthly_df["season"].dropna().unique().tolist())
 
-            selected_season = st.selectbox("Velg sesong", seasons, key="monthly_season_filter_v11")
+            selected_season = st.selectbox("Velg sesong", seasons, key="monthly_season_filter_v15")
             monthly_medals = build_monthly_medal_table(selected_season)
 
             medal_columns = ["monthly_rank", "manager", "month_points", "gold", "silver", "bronze", "podiums"]
             display_table(monthly_medals, medal_columns, MONTHLY_MEDAL_LABELS)
+
+            lro_note(
+                "Ufullstendig sølv/bronse-historikk",
+                "Jeg har alle månedsvinnerne, men ikke full oversikt over 2. og 3. plass i hver eneste måned tilbake til september 2020. Tabellen under viser det som er dokumentert.",
+                "gold",
+            )
 
             with st.expander("Måned for måned"):
                 calendar_df = build_monthly_calendar_table(selected_season)
@@ -2429,7 +2461,7 @@ with tab4:
 
         st.subheader("Sammenlagtvinnere")
         overall_df = pd.DataFrame(HOF_OVERALL)
-        display_table(overall_df, ["season", "winner", "runner_up", "third_place", "note"], OVERALL_LABELS)
+        display_table(overall_df, ["season", "winner", "runner_up", "third_place"], OVERALL_LABELS)
 
         st.subheader("Cupvinnere")
         cup_df = pd.DataFrame(HOF_CUP)
@@ -2497,72 +2529,85 @@ with tab5:
 
 with tab6:
     st.header("Norgeskart")
-    lro_note("Ligaen på kartet", "Geografisk fordeling av managerne i ligaen. Meld fra hvis bosted/sted er feil.", "")
+    lro_note("Ligaen på kartet", "Geografisk fordeling av managerne i ligaen. Kartet viser klynger; bruk tabellen under for full navneliste.", "")
 
     place_df = build_place_data()
 
-    total_people = int(place_df["Antall"].sum())
-    top_city = place_df.sort_values("Antall", ascending=False).iloc[0]
-
-    c1, c2, c3 = st.columns(3)
-
-    with c1:
-        st.metric("Registrerte på kartet", total_people)
-
-    with c2:
-        st.metric("Byer/steder", len(place_df))
-
-    with c3:
-        st.metric("Største miljø", top_city["By"], int(top_city["Antall"]))
-
-    if total_people != 37:
-        st.info(f"Kartlista summerer til {total_people}. Sjekk om noen mangler sted i lista.")
-
-    if pdk is not None:
-        layer = pdk.Layer(
-            "ScatterplotLayer",
-            data=place_df,
-            get_position="[lon, lat]",
-            get_radius="radius",
-            get_fill_color="[255, 70, 70, 170]",
-            get_line_color="[80, 0, 0]",
-            line_width_min_pixels=1,
-            pickable=True,
-        )
-
-        text_layer = pdk.Layer(
-            "TextLayer",
-            data=place_df,
-            get_position="[lon, lat]",
-            get_text="Label",
-            get_size=16,
-            get_color="[30, 30, 30]",
-            get_text_anchor='"middle"',
-            get_alignment_baseline='"bottom"',
-        )
-
-        view_state = pdk.ViewState(latitude=64.9, longitude=13.5, zoom=4.0, pitch=25)
-
-        deck = pdk.Deck(
-            map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
-            initial_view_state=view_state,
-            layers=[layer, text_layer],
-            tooltip={
-                "html": "<b>{By}</b><br/>{Antall} managers<br/>{Deltakere}",
-                "style": {"backgroundColor": "white", "color": "black"},
-            },
-        )
-
-        st.pydeck_chart(deck, use_container_width=True)
-
+    if place_df.empty:
+        st.warning("Fant ingen steder i data/places.csv.")
     else:
-        map_df = place_df.rename(columns={"lat": "latitude", "lon": "longitude"})
-        st.map(map_df, latitude="latitude", longitude="longitude")
+        total_people = int(place_df["Antall"].sum())
+        top_city = place_df.sort_values("Antall", ascending=False).iloc[0]
 
-    st.subheader("Byranking")
+        c1, c2, c3 = st.columns(3)
 
-    city_rank = place_df.sort_values(["Antall", "By"], ascending=[False, True]).copy()
+        with c1:
+            st.metric("Registrerte på kartet", total_people)
 
-    st.bar_chart(city_rank.set_index("By")["Antall"])
+        with c2:
+            st.metric("Byer/steder", len(place_df))
 
-    st.dataframe(city_rank[["By", "Antall", "Deltakere"]], use_container_width=True, hide_index=True)
+        with c3:
+            st.metric("Største miljø", top_city["By"], int(top_city["Antall"]))
+
+        raw_places = read_csv_file("places.csv", ["manager", "place", "lat", "lon"])
+        mapped_keys = set(raw_places["manager"].map(hof_key).tolist()) if not raw_places.empty else set()
+
+        if "managers" in st.session_state:
+            missing = []
+            for manager in st.session_state.get("managers", []):
+                manager_name = manager.get("player_name", "")
+                if manager_name and hof_key(manager_name) not in mapped_keys:
+                    missing.append(manager_name)
+
+            if missing:
+                st.warning("Mangler kartplassering for: " + ", ".join(sorted(set(missing))))
+            elif total_people != len(st.session_state.get("managers", [])):
+                st.info(f"Kartet har {total_people} personer, mens FPL-lista har {len(st.session_state.get('managers', []))}. Sjekk mulige alias/duplikater.")
+        else:
+            st.info("Trykk Hent ligadata i Ligatabell for å sjekke om noen påmeldte mangler kartplassering.")
+
+        if pdk is not None:
+            layer = pdk.Layer(
+                "ScatterplotLayer",
+                data=place_df,
+                get_position="[lon, lat]",
+                get_radius="radius",
+                get_fill_color="[185, 28, 28, 150]",
+                get_line_color="[15, 23, 42]",
+                line_width_min_pixels=1,
+                pickable=True,
+            )
+
+            view_state = pdk.ViewState(latitude=64.9, longitude=13.5, zoom=3.85, pitch=20)
+
+            deck = pdk.Deck(
+                map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+                initial_view_state=view_state,
+                layers=[layer],
+                tooltip={
+                    "html": "<b>{By}</b><br/>{Antall} managers<br/>{Deltakere}",
+                    "style": {"backgroundColor": "white", "color": "black"},
+                },
+            )
+
+            st.pydeck_chart(deck, use_container_width=True)
+
+        else:
+            map_df = place_df.rename(columns={"lat": "latitude", "lon": "longitude"})
+            st.map(map_df, latitude="latitude", longitude="longitude")
+
+        st.subheader("Steder og deltakere")
+
+        city_rank = place_df.sort_values(["Antall", "By"], ascending=[False, True]).copy()
+        city_config = {
+            "Deltakere": st.column_config.TextColumn("Deltakere", width="large"),
+            "By": st.column_config.TextColumn("Sted", width="medium"),
+            "Antall": st.column_config.NumberColumn("Antall", format="%d"),
+        }
+        st.dataframe(
+            city_rank[["By", "Antall", "Deltakere"]],
+            use_container_width=True,
+            hide_index=True,
+            column_config=city_config,
+        )
