@@ -21,7 +21,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-kontrollrom-v17-map-cards-fix"
+APP_VERSION = "lofthus-road-open-kontrollrom-v19-odds-polish"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -1356,6 +1356,16 @@ def build_preseason_odds(summary_df: pd.DataFrame) -> pd.DataFrame:
     df["odds_float"] = df["odds_float"].clip(lower=2.00, upper=max_outright_odds)
     df["odds"] = df["odds_float"].apply(format_odds)
 
+    # Topp 3-odds må henge logisk sammen med vinneroddsen:
+    # Alle skal ha lavere topp 3-odds enn vinnerodds, men favorittene skal ikke bli helt gratis.
+    implied_win = 1 / df["odds_float"]
+    max_implied = implied_win.max() if len(implied_win) else 1
+    relative_strength = (implied_win / max_implied).clip(lower=0, upper=1)
+    top3_multiplier = 3.85 - 1.20 * relative_strength
+    top3_probability = (implied_win * top3_multiplier).clip(upper=0.88)
+    df["top3_odds_float"] = (1 / top3_probability).clip(lower=1.12, upper=51.00)
+    df["top3_odds"] = df["top3_odds_float"].apply(format_odds)
+
     df = df.sort_values("odds_float", ascending=True).reset_index(drop=True)
     df.insert(0, "odds_rank", range(1, len(df) + 1))
 
@@ -1738,31 +1748,14 @@ def form_curve_badge(delta: Any, big_threshold: int = 5) -> tuple[str, int]:
     return "⚪ ━", 0
 
 
-def render_league_table_component(table_df: pd.DataFrame, seasons_df: pd.DataFrame, has_live_table: bool):
+def render_league_table_component(table_df: pd.DataFrame, has_live_table: bool):
     rows = []
     n = max(len(table_df), 1)
     big_threshold = max(5, round(n * 0.15))
 
-    seasons_lookup: dict[str, list[dict]] = {}
-    if not seasons_df.empty and "entry" in seasons_df.columns:
-        temp = seasons_df.copy()
-        temp["entry"] = temp["entry"].astype(str)
-        for entry, group in temp.groupby("entry"):
-            group = group.sort_values("season_name", ascending=False)
-            seasons_lookup[str(entry)] = [
-                {
-                    "season": clean_cell(row.get("season_name")),
-                    "points": clean_cell(row.get("total_points")),
-                    "rank": clean_cell(row.get("rank")),
-                }
-                for _, row in group.iterrows()
-            ]
-
     for _, row in table_df.reset_index(drop=True).iterrows():
-        entry = str(row.get("entry", ""))
         form_text, form_sort = form_curve_badge(row.get("form_delta"), big_threshold)
         rows.append({
-            "entry": entry,
             "rank": clean_cell(row.get("rank_display")),
             "rankValue": None if pd.isna(row.get("rank_num")) else float(row.get("rank_num")),
             "manager": clean_cell(row.get("player_name")),
@@ -1771,17 +1764,15 @@ def render_league_table_component(table_df: pd.DataFrame, seasons_df: pd.DataFra
             "totalPoints": None if pd.isna(row.get("total_num")) else int(row.get("total_num")),
             "form": form_text,
             "formSort": form_sort,
-            "odds": None if pd.isna(row.get("odds_before")) else float(row.get("odds_before")),
-            "history": seasons_lookup.get(entry, []),
         })
 
     rows_json = json.dumps(rows, ensure_ascii=False)
-    default_sort = "rankValue" if has_live_table else "odds"
+    default_sort = "rankValue" if has_live_table else "manager"
     default_dir = "asc"
 
     component_html = f'''
     <div id="lro-league-table" class="lro-table-wrap">
-      <div class="lro-table-note">Trykk på kolonneoverskriftene for å sortere. Klikk på managernavn for full FPL-historikk.</div>
+      <div class="lro-table-note">Trykk på kolonneoverskriftene for å sortere.</div>
       <table class="lro-table">
         <thead>
           <tr>
@@ -1791,7 +1782,6 @@ def render_league_table_component(table_df: pd.DataFrame, seasons_df: pd.DataFra
             <th data-key="eventPoints" class="sortable col-gw">Rundepoeng</th>
             <th data-key="totalPoints" class="sortable col-total">Poeng totalt</th>
             <th data-key="formSort" class="sortable">Formkurve</th>
-            <th data-key="odds" class="sortable">Vinnerodds før sesongstart</th>
           </tr>
         </thead>
         <tbody id="lro-table-body"></tbody>
@@ -1808,55 +1798,33 @@ def render_league_table_component(table_df: pd.DataFrame, seasons_df: pd.DataFra
       .lro-table .col-total {{background: #fff7ed;}}
       .lro-table td.col-gw {{background: #dbeafe; font-weight: 800;}}
       .lro-table td.col-total {{background: #ffedd5; font-weight: 800;}}
-      .manager-button {{border: 0; background: transparent; padding: 0; color: #b91c1c; font-weight: 850; cursor: pointer; font-size: 14px; text-align: left;}}
-      .manager-button:hover {{text-decoration: underline;}}
       .rank-cell {{font-weight: 850; white-space: nowrap;}}
-      .history-cell {{background: #f8fafc !important; padding: 16px 18px !important;}}
-      .history-box {{border: 1px solid #e5e7eb; border-radius: 14px; background: white; padding: 12px 14px;}}
-      .history-title {{font-weight: 850; margin-bottom: 8px;}}
-      .mini-history {{border-collapse: collapse; width: 100%; font-size: 13px;}}
-      .mini-history th, .mini-history td {{padding: 7px 8px; border-bottom: 1px solid #eef2f7;}}
-      .sort-mark {{font-size: 11px; color: #94a3b8; margin-left: 4px;}}
-      @media (max-width: 760px) {{
-        .lro-table-wrap {{overflow-x: auto;}}
-        .lro-table {{min-width: 820px;}}
-      }}
+      .sort-mark {{margin-left: 6px; font-size: 11px; color: #b91c1c;}}
     </style>
     <script>
       const rows = {rows_json};
-      let sortKey = "{default_sort}";
-      let sortDir = "{default_dir}";
-      let openEntry = null;
-      const numericKeys = new Set(["rankValue", "eventPoints", "totalPoints", "formSort", "odds"]);
+      let sortKey = '{default_sort}';
+      let sortDir = '{default_dir}';
       const tbody = document.getElementById('lro-table-body');
 
       function esc(value) {{
         if (value === null || value === undefined) return '';
-        return String(value)
-          .replaceAll('&', '&amp;')
-          .replaceAll('<', '&lt;')
-          .replaceAll('>', '&gt;')
-          .replaceAll('"', '&quot;')
-          .replaceAll("'", '&#039;');
+        return String(value).replace(/[&<>"']/g, m => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[m]));
       }}
 
       function fmtNum(value) {{
         if (value === null || value === undefined || Number.isNaN(value)) return '';
-        return Number(value).toLocaleString('nb-NO').replace(/\u00a0/g, ' ');
-      }}
-
-      function fmtOdds(value) {{
-        if (value === null || value === undefined || Number.isNaN(value)) return '';
-        return Number(value).toFixed(2);
+        return Number(value).toLocaleString('nb-NO');
       }}
 
       function compareRows(a, b) {{
+        const numericKeys = new Set(["rankValue", "eventPoints", "totalPoints", "formSort"]);
         let av = a[sortKey];
         let bv = b[sortKey];
         if (numericKeys.has(sortKey)) {{
           const aMissing = av === null || av === undefined || Number.isNaN(av);
           const bMissing = bv === null || bv === undefined || Number.isNaN(bv);
-          if (aMissing && bMissing) return a.manager.localeCompare(b.manager, 'nb');
+          if (aMissing && bMissing) return String(a.manager).localeCompare(String(b.manager), 'nb');
           if (aMissing) return 1;
           if (bMissing) return -1;
           return sortDir === 'asc' ? av - bv : bv - av;
@@ -1866,49 +1834,27 @@ def render_league_table_component(table_df: pd.DataFrame, seasons_df: pd.DataFra
         return sortDir === 'asc' ? av.localeCompare(bv, 'nb') : bv.localeCompare(av, 'nb');
       }}
 
-      function rankCell(index, row) {{
-        const medals = ['🥇', '🥈', '🥉'];
-        const medal = index < 3 ? medals[index] + ' ' : '';
-        const label = row.rank || String(index + 1);
+      function rankCell(row) {{
+        const rankNumber = Number(row.rankValue);
+        const medal = rankNumber === 1 ? '🥇 ' : rankNumber === 2 ? '🥈 ' : rankNumber === 3 ? '🥉 ' : '';
+        const label = row.rank || '';
         return `<span class="rank-cell">${{medal}}${{esc(label)}}</span>`;
-      }}
-
-      function historyHtml(row) {{
-        if (!row.history || row.history.length === 0) {{
-          return '<div class="history-box"><div class="history-title">Historikk: ' + esc(row.manager) + '</div><div>Fant ikke tidligere sesonger for denne manageren ennå.</div></div>';
-        }}
-        const trs = row.history.map(h => `<tr><td>${{esc(h.season)}}</td><td>${{esc(h.points)}}</td><td>${{esc(h.rank)}}</td></tr>`).join('');
-        return `<div class="history-box"><div class="history-title">Historikk: ${{esc(row.manager)}} · ${{esc(row.team)}}</div><table class="mini-history"><thead><tr><th>Sesong</th><th>Poeng</th><th>Plassering</th></tr></thead><tbody>${{trs}}</tbody></table></div>`;
       }}
 
       function render() {{
         const sorted = [...rows].sort(compareRows);
         tbody.innerHTML = '';
-        sorted.forEach((row, index) => {{
+        sorted.forEach((row) => {{
           const tr = document.createElement('tr');
           tr.innerHTML = `
-            <td>${{rankCell(index, row)}}</td>
-            <td><button class="manager-button" data-entry="${{esc(row.entry)}}">${{esc(row.manager)}}</button></td>
+            <td>${{rankCell(row)}}</td>
+            <td><strong>${{esc(row.manager)}}</strong></td>
             <td>${{esc(row.team)}}</td>
             <td class="col-gw">${{fmtNum(row.eventPoints)}}</td>
             <td class="col-total">${{fmtNum(row.totalPoints)}}</td>
             <td>${{esc(row.form)}}</td>
-            <td>${{fmtOdds(row.odds)}}</td>
           `;
           tbody.appendChild(tr);
-          if (openEntry === row.entry) {{
-            const hist = document.createElement('tr');
-            hist.innerHTML = `<td colspan="7" class="history-cell">${{historyHtml(row)}}</td>`;
-            tbody.appendChild(hist);
-          }}
-        }});
-        document.querySelectorAll('.manager-button').forEach(btn => {{
-          btn.addEventListener('click', (e) => {{
-            e.stopPropagation();
-            const entry = btn.getAttribute('data-entry');
-            openEntry = openEntry === entry ? null : entry;
-            render();
-          }});
         }});
         document.querySelectorAll('th.sortable').forEach(th => {{
           const key = th.getAttribute('data-key');
@@ -1937,7 +1883,7 @@ def render_league_table_component(table_df: pd.DataFrame, seasons_df: pd.DataFra
       render();
     </script>
     '''
-    components.html(component_html, height=980, scrolling=True)
+    components.html(component_html, height=860, scrolling=True)
 
 
 def render_city_cards(place_df: pd.DataFrame):
@@ -2121,6 +2067,8 @@ LIGATABELL_LABELS = {
     "total_num": "Poeng totalt",
     "form_curve": "Formkurve",
     "odds_before": "Vinnerodds før sesongstart",
+    "top3_odds": "Topp 3-odds før sesongstart",
+    "top3_odds_float": "Topp 3-odds før sesongstart",
 }
 
 HISTORY_LABELS = {
@@ -2247,7 +2195,8 @@ RADAR_LABELS = {
     "form_curve": "Formkurve",
     "event_total_num": "Rundepoeng",
     "total_num": "Poeng",
-    "odds": "Odds før sesongstart",
+    "odds": "Vinnerodds før sesongstart",
+    "top3_odds": "Topp 3-odds før sesongstart",
     "odds_rank": "Odds-rangering",
     "performance_vs_odds": "Avvik mot odds",
     "last_three_points": "Poeng siste tre runder",
@@ -2264,6 +2213,7 @@ NUMERIC_CONFIG = {
     "total_num": st.column_config.NumberColumn("Poeng", format="%d"),
     "rank_num": st.column_config.NumberColumn("Plassering", format="%d"),
     "odds": st.column_config.NumberColumn("Vinnerodds før sesongstart", format="%.2f"),
+    "top3_odds_float": st.column_config.NumberColumn("Topp 3-odds før sesongstart", format="%.2f"),
     "odds_rank": st.column_config.NumberColumn("Odds-rangering", format="%d"),
     "performance_vs_odds": st.column_config.NumberColumn("Avvik mot odds", format="%d"),
     "last_three_points": st.column_config.NumberColumn("Poeng siste tre runder", format="%d"),
@@ -2278,7 +2228,7 @@ NUMERIC_CONFIG = {
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Ligatabell",
     "Historikk",
-    "H2H",
+    "Odds",
     "Hall of Fame",
     "Sesongradar",
     "Norgeskart",
@@ -2286,7 +2236,7 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 
 with tab1:
     st.header("Ligatabell")
-    lro_note("Sesongens inngang", "Påmeldte lag, rundepoeng, totalpoeng, formkurve og vinnerodds før sesongstart. Klikk på et managernavn for full FPL-historikk.", "")
+    lro_note("Sesongens inngang", "Påmeldte lag, rundepoeng, totalpoeng og formkurve. Odds og dueller ligger i Odds-fanen.", "")
 
     if st.button("Hent ligadata"):
         ensure_history_loaded(DEFAULT_LEAGUE_ID)
@@ -2301,30 +2251,19 @@ with tab1:
             summary_df = st.session_state.get("summary_df", pd.DataFrame())
 
             if not summary_df.empty:
-                odds_df = build_preseason_odds(summary_df)
                 table_df = table_df.merge(
                     summary_df[["entry", "tier", "tag"]],
                     on="entry",
                     how="left",
                 )
-                if not odds_df.empty:
-                    table_df = table_df.merge(
-                        odds_df[["entry", "odds_float"]],
-                        on="entry",
-                        how="left",
-                    )
-                else:
-                    table_df["odds_float"] = pd.NA
             else:
                 table_df["tier"] = ""
                 table_df["tag"] = ""
-                table_df["odds_float"] = pd.NA
 
             table_df["rank_num"] = pd.to_numeric(table_df["rank"], errors="coerce")
             table_df["last_rank_num"] = pd.to_numeric(table_df["last_rank"], errors="coerce")
             table_df["event_total_num"] = pd.to_numeric(table_df["event_total"], errors="coerce")
             table_df["total_num"] = pd.to_numeric(table_df["total"], errors="coerce")
-            table_df["odds_before"] = pd.to_numeric(table_df["odds_float"], errors="coerce")
             table_df["rank_display"] = table_df["rank_num"].apply(format_rank)
             table_df["form_delta"] = table_df["last_rank_num"] - table_df["rank_num"]
 
@@ -2332,10 +2271,9 @@ with tab1:
             if has_live_table:
                 table_df = table_df.sort_values(["rank_num", "player_name"], ascending=[True, True], na_position="last")
             else:
-                table_df = table_df.sort_values(["odds_before", "player_name"], ascending=[True, True], na_position="last")
+                table_df = table_df.sort_values(["player_name"], ascending=[True], na_position="last")
 
-            seasons_df = st.session_state.get("seasons_df", pd.DataFrame())
-            render_league_table_component(table_df, seasons_df, has_live_table)
+            render_league_table_component(table_df, has_live_table)
 
             with st.expander("Hva betyr formkurven?"):
                 st.write(
@@ -2350,7 +2288,7 @@ with tab1:
 
             st.caption(f"Fant {len(table_df)} lag.")
 
-            download_columns = ["rank_display", "player_name", "entry_name", "event_total_num", "total_num", "form_delta", "odds_before"]
+            download_columns = ["rank_display", "player_name", "entry_name", "event_total_num", "total_num", "form_delta"]
             st.download_button(
                 label="Last ned ligadata som CSV",
                 data=csv_bytes(table_df, download_columns, LIGATABELL_LABELS),
@@ -2365,7 +2303,7 @@ with tab1:
 
 with tab2:
     st.header("Historikk")
-    lro_note("Fortid, ikke framtid", "Historikken viser tidligere FPL-sesonger, beste plassering, siste tre sesonger og meritter fra Lofthus Road Open. Odds ligger i Ligatabell.", "")
+    lro_note("Fortid, ikke framtid", "Historikken viser tidligere FPL-sesonger, beste plassering, siste tre sesonger og meritter fra Lofthus Road Open. Odds ligger i Odds-fanen.", "")
 
     if st.button("Hent historikk"):
         ensure_history_loaded(DEFAULT_LEAGUE_ID)
@@ -2396,12 +2334,8 @@ with tab2:
                 "last_season_rank_numeric",
                 "best_rank_with_season",
                 "avg_rank_last_3_numeric",
-                "monthly_titles",
                 "hof_score",
                 "merits",
-                "top_100k_seasons",
-                "top_500k_seasons",
-                "tier_display",
                 "tag_display",
             ]
 
@@ -2426,6 +2360,18 @@ with tab2:
             with st.expander("Utvikling siste tre sesonger"):
                 trend_columns = ["manager", "team", "trend"]
                 display_table(summary, trend_columns, HISTORY_LABELS)
+
+            with st.expander("Full FPL-historikk per manager"):
+                manager_options = summary["manager"].dropna().sort_values().tolist()
+                if manager_options:
+                    selected_manager = st.selectbox("Velg manager", manager_options, key="full_history_manager_v19")
+                    selected_entry = summary.loc[summary["manager"] == selected_manager, "entry"].iloc[0]
+                    manager_history = seasons_df[seasons_df["entry"].astype(str) == str(selected_entry)].copy()
+                    if manager_history.empty:
+                        st.info("Fant ikke tidligere sesonger for valgt manager.")
+                    else:
+                        manager_history = manager_history.sort_values("season_name", ascending=False)
+                        display_table(manager_history, ["season_name", "total_points", "rank"], SEASON_LABELS)
 
             with st.expander("Hvordan regnes merittpoeng?"):
                 weights = pd.DataFrame([
@@ -2470,28 +2416,78 @@ with tab2:
 
 
 with tab3:
-    st.header("H2H")
-    lro_note("Rivalgenerator", "Skriv én duell eller gruppe per linje. H2H-oddsen bygger på historikk, form og dokumentert toppnivå.", "")
+    st.header("Odds")
+    lro_note("Før sesongstart", "Her ligger vinnerodds, topp 3-odds og egen duellgenerator. Oddsene er laget for intern banter, ikke som fasit.", "")
 
+    if st.button("Hent oddsgrunnlag"):
+        ensure_history_loaded(DEFAULT_LEAGUE_ID)
+
+    if "summary_df" in st.session_state:
+        summary_df = st.session_state["summary_df"]
+        if summary_df.empty:
+            st.warning("Fant ingen historikk å lage odds fra.")
+        else:
+            odds_df = build_preseason_odds(summary_df)
+            odds_view = odds_df.copy()
+            odds_view = add_podium_column(odds_view)
+            odds_view["top3_odds_float"] = pd.to_numeric(odds_view["top3_odds_float"], errors="coerce")
+            odds_view = add_sortable_display_columns(odds_view)
+            odds_columns = [
+                "podium",
+                "odds_rank",
+                "manager",
+                "team",
+                "odds_float",
+                "top3_odds_float",
+                "avg_rank_last_3",
+                "best_rank",
+                "tag_display",
+            ]
+            display_table(
+                odds_view,
+                odds_columns,
+                {
+                    "podium": "",
+                    "odds_rank": "Odds-rangering",
+                    "manager": "Manager",
+                    "team": "Lag",
+                    "odds_float": "Vinnerodds før sesongstart",
+                    "top3_odds_float": "Topp 3-odds før sesongstart",
+                    "avg_rank_last_3": "Siste tre sesonger",
+                    "best_rank": "Beste FPL-plassering",
+                    "tag_display": "Merknad",
+                },
+                column_config={
+                    "odds_float": st.column_config.NumberColumn("Vinnerodds før sesongstart", format="%.2f"),
+                    "top3_odds_float": st.column_config.NumberColumn("Topp 3-odds før sesongstart", format="%.2f"),
+                    "manager": st.column_config.TextColumn("Manager", width="medium"),
+                    "team": st.column_config.TextColumn("Lag", width="medium"),
+                },
+            )
+
+            st.download_button(
+                label="Last ned odds som CSV",
+                data=odds_view[["odds_rank", "manager", "team", "odds", "top3_odds"]].to_csv(index=False).encode("utf-8"),
+                file_name="lro_odds.csv",
+                mime="text/csv",
+            )
+
+    st.subheader("Lag egne dueller")
     st.write("Skriv én duell eller gruppe per linje. Bruk `vs` mellom navnene.")
+    market_text = st.text_area("Dueller/grupper", value="", height=260)
 
-    market_text = st.text_area("Dueller/grupper", value="", height=320)
-
-    if st.button("Lag H2H-odds"):
+    if st.button("Lag duellodds"):
         ensure_history_loaded(DEFAULT_LEAGUE_ID)
         summary_df = st.session_state["summary_df"]
 
         market_df, missing_df = analyze_markets(summary_df, market_text)
 
         if not market_df.empty:
-            st.subheader("Odds")
-
             st.dataframe(market_df, use_container_width=True, hide_index=True)
-
             st.download_button(
-                label="Last ned H2H-odds som CSV",
+                label="Last ned duellodds som CSV",
                 data=market_df.to_csv(index=False).encode("utf-8"),
-                file_name="lro_h2h_odds.csv",
+                file_name="lro_duellodds.csv",
                 mime="text/csv",
             )
         else:
@@ -2516,16 +2512,11 @@ with tab4:
         monthly_king = hof_df.sort_values("monthly_titles", ascending=False).iloc[0]
         overall_king = hof_df.sort_values("overall_count", ascending=False).iloc[0]
 
-        c1, c2, c3 = st.columns(3)
-
-        with c1:
-            st.metric("Mest merittert", most_decorated["display_name"], int(most_decorated["hof_score"]))
-
-        with c2:
-            st.metric("Flest månedsseiere", monthly_king["display_name"], int(monthly_king["monthly_titles"]))
-
-        with c3:
-            st.metric("Flest sammenlagtseiere", overall_king["display_name"], int(overall_king["overall_count"]))
+        lro_cards([
+            {"label": "Mest merittert", "value": most_decorated["display_name"], "caption": f"{int(most_decorated['hof_score'])} merittpoeng", "dark": True},
+            {"label": "Flest månedsseiere", "value": monthly_king["display_name"], "caption": f"{int(monthly_king['monthly_titles'])} månedsseiere"},
+            {"label": "Flest sammenlagtseiere", "value": overall_king["display_name"], "caption": f"{int(overall_king['overall_count'])} sammenlagtseiere"},
+        ])
 
         st.subheader("Meritt-tabell")
 
@@ -2534,16 +2525,10 @@ with tab4:
             "hof_rank",
             "display_name",
             "hof_score",
-            "total_titles",
             "overall_count",
-            "overall_runner_up_count",
-            "overall_third_count",
             "cup_count",
             "cup_runner_up_count",
             "monthly_titles",
-            "monthly_silver",
-            "monthly_bronze",
-            "monthly_podiums",
             "merits",
         ]
 
@@ -2559,6 +2544,26 @@ with tab4:
             file_name="lro_hall_of_fame.csv",
             mime="text/csv",
         )
+
+        with st.expander("Detaljert meritt-tabell"):
+            detailed_hof_columns = [
+                "podium",
+                "hof_rank",
+                "display_name",
+                "total_titles",
+                "overall_count",
+                "overall_runner_up_count",
+                "overall_third_count",
+                "cup_count",
+                "cup_runner_up_count",
+                "monthly_titles",
+                "monthly_silver",
+                "monthly_bronze",
+                "monthly_podiums",
+                "random_count",
+                "merits",
+            ]
+            display_table(hof_df, detailed_hof_columns, HOF_LABELS, column_config=hof_config)
 
         st.subheader("Sesongdetaljer per manager")
         detail_columns = [
@@ -2750,8 +2755,8 @@ with tab6:
                 initial_view_state=view_state,
                 layers=[layer],
                 tooltip={
-                    "html": "<div style='min-width:320px; max-width:520px; white-space:normal; line-height:1.35;'><b>{By}</b><br/>{Antall} managere<br/><br/>{DeltakereHtml}</div>",
-                    "style": {"backgroundColor": "white", "color": "black", "padding": "12px", "borderRadius": "10px"},
+                    "text": "{By}\n{Antall} managere\n{Deltakere}",
+                    "style": {"backgroundColor": "white", "color": "black", "padding": "12px", "borderRadius": "10px", "maxWidth": "640px"},
                 },
             )
 
