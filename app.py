@@ -1,0 +1,2524 @@
+import math
+import re
+import unicodedata
+from difflib import SequenceMatcher
+from typing import Any
+
+import pandas as pd
+import requests
+import streamlit as st
+
+try:
+    import pydeck as pdk
+except ImportError:
+    pdk = None
+
+
+BASE_URL = "https://fantasy.premierleague.com/api"
+DEFAULT_LEAGUE_ID = 25220
+APP_VERSION = "fpl-kontrollrom-hof-v6-finalfix"
+
+HEADERS = {"User-Agent": "Mozilla/5.0 FPL Kontrollrom"}
+
+st.set_page_config(page_title="FPL Kontrollrom", layout="wide")
+
+if st.session_state.get("_app_version") != APP_VERSION:
+    st.session_state.clear()
+    st.session_state["_app_version"] = APP_VERSION
+
+st.title("FPL Kontrollrom")
+st.write("Miniliga-overvåker for Lofthus Road Open.")
+
+
+# -----------------------------
+# Grunnfunksjoner
+# -----------------------------
+
+@st.cache_data(ttl=300)
+def get_json(path: str) -> Any:
+    url = f"{BASE_URL}{path}"
+    response = requests.get(url, timeout=30, headers=HEADERS)
+    response.raise_for_status()
+    return response.json()
+
+
+@st.cache_data(ttl=3600)
+def get_entry_history(entry_id: int) -> dict:
+    return get_json(f"/entry/{entry_id}/history/")
+
+
+def normalize_text(value: str) -> str:
+    value = str(value or "").lower().strip()
+
+    replacements = {
+        "æ": "ae",
+        "ø": "o",
+        "å": "a",
+        "ä": "a",
+        "ö": "o",
+        "ü": "u",
+        "é": "e",
+        "è": "e",
+        "á": "a",
+        "à": "a",
+        "í": "i",
+        "ó": "o",
+        "ò": "o",
+    }
+
+    for old, new in replacements.items():
+        value = value.replace(old, new)
+
+    value = unicodedata.normalize("NFKD", value)
+    value = "".join(char for char in value if not unicodedata.combining(char))
+    value = re.sub(r"[^a-z0-9 ]+", " ", value)
+    value = re.sub(r"\s+", " ", value).strip()
+    return value
+
+
+def format_rank(rank: int | float | None) -> str:
+    if rank is None or pd.isna(rank):
+        return ""
+
+    try:
+        rank = int(float(rank))
+    except (ValueError, TypeError):
+        return ""
+
+    return f"{rank:,}".replace(",", " ")
+
+
+def format_odds(value: float | None) -> str:
+    if value is None or pd.isna(value):
+        return ""
+
+    value = max(float(value), 1.10)
+    return f"{value:.2f}"
+
+
+def display_table(
+    df: pd.DataFrame,
+    columns: list[str],
+    labels: dict[str, str],
+    column_config: dict | None = None,
+):
+    existing = [column for column in columns if column in df.columns]
+    display_df = df[existing].rename(columns={column: labels.get(column, column) for column in existing})
+
+    translated_config = {}
+
+    if column_config:
+        for source_column, config in column_config.items():
+            if source_column in existing:
+                translated_name = labels.get(source_column, source_column)
+                translated_config[translated_name] = config
+
+    st.dataframe(
+        display_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config=translated_config,
+    )
+
+
+def csv_bytes(df: pd.DataFrame, columns: list[str], labels: dict[str, str]) -> bytes:
+    existing = [column for column in columns if column in df.columns]
+    display_df = df[existing].rename(columns={column: labels.get(column, column) for column in existing})
+    return display_df.to_csv(index=False).encode("utf-8")
+
+
+# -----------------------------
+# Hall of Fame-data
+# -----------------------------
+
+HOF_OVERALL = [
+    {
+        "season": "2025/26",
+        "winner": "Simen Ulriksen",
+        "runner_up": "Matz Andreas Håheim",
+        "third_place": "Rasmus Grytvik-Skoglund",
+        "note": "",
+    },
+    {
+        "season": "2024/25",
+        "winner": "Mats Øyvind Jacobsen Arntzen",
+        "runner_up": "Robin Andersen",
+        "third_place": "",
+        "note": "",
+    },
+    {
+        "season": "2023/24",
+        "winner": "Øyvind Nordmo Sivertsen",
+        "runner_up": "Sindre Krognes",
+        "third_place": "Nickolai Macpherson",
+        "note": "",
+    },
+    {
+        "season": "2022/23",
+        "winner": "Kristoffer W Pettersen",
+        "runner_up": "Nils Åsheim Megård",
+        "third_place": "Robin Andersen",
+        "note": "",
+    },
+    {
+        "season": "2021/22",
+        "winner": "Rasmus Grytvik-Skoglund",
+        "runner_up": "Håkon Juliussen",
+        "third_place": "Øyvind Nordmo Sivertsen",
+        "note": "",
+    },
+    {
+        "season": "2020/21",
+        "winner": "Øyvind Nordmo Sivertsen",
+        "runner_up": "Rasmus Grytvik-Skoglund",
+        "third_place": "Adrian Johansen",
+        "note": "",
+    },
+]
+
+HOF_CUP = [
+    {
+        "season": "2025/26",
+        "winner": "Morten Pedersen",
+        "runner_up": "Sindre Krognes",
+    },
+    {
+        "season": "2024/25",
+        "winner": "Stian Laastad",
+        "runner_up": "Robin Andersen",
+    },
+    {
+        "season": "2023/24",
+        "winner": "Remi Andre Kristiansen",
+        "runner_up": "Øyvind Nordmo Sivertsen",
+    },
+    {
+        "season": "2022/23",
+        "winner": "Robin Andersen",
+        "runner_up": "Øyvind Sørensen",
+    },
+    {
+        "season": "2021/22",
+        "winner": "Robin Andersen",
+        "runner_up": "",
+    },
+]
+
+HOF_RANDOM = [
+    {"season": "2025/26", "winner": "Andreas Nikolai Løkås", "placement": "23. plass"},
+]
+
+MONTHLY_PODIUMS = []
+
+
+def add_podium(season: str, month: str, place: int, *managers: str):
+    for manager in managers:
+        MONTHLY_PODIUMS.append({
+            "season": season,
+            "month": month,
+            "place": place,
+            "manager": manager,
+        })
+
+
+# 2020/21
+add_podium("2020/21", "September", 1, "Sindre Kolberg")
+add_podium("2020/21", "September", 2, "Mats Øyvind Jacobsen Arntzen")
+add_podium("2020/21", "September", 3, "Robin Andersen")
+add_podium("2020/21", "Oktober", 1, "Simen Pedersen")
+add_podium("2020/21", "Oktober", 2, "Mats Rydland")
+add_podium("2020/21", "Oktober", 3, "Nils Åsheim Megård")
+add_podium("2020/21", "November", 1, "Rasmus Grytvik-Skoglund")
+add_podium("2020/21", "November", 2, "Mattias Skoglund")
+add_podium("2020/21", "November", 3, "Øyvind Nordmo Sivertsen")
+add_podium("2020/21", "Desember", 1, "Fredrik Stellander")
+add_podium("2020/21", "Desember", 2, "Rasmus Grytvik-Skoglund")
+add_podium("2020/21", "Desember", 3, "Øyvind Nordmo Sivertsen")
+add_podium("2020/21", "Januar", 1, "Remi Andre Kristiansen")
+add_podium("2020/21", "Januar", 2, "Sindre Krognes")
+add_podium("2020/21", "Januar", 3, "Øyvind Nordmo Sivertsen")
+add_podium("2020/21", "Februar", 1, "Mats Øyvind Jacobsen Arntzen")
+add_podium("2020/21", "Februar", 2, "Mats Rydland")
+add_podium("2020/21", "Februar", 3, "Rasmus Grytvik-Skoglund")
+add_podium("2020/21", "Mars", 1, "Sindre Kolberg")
+add_podium("2020/21", "Mars", 2, "Rasmus Grytvik-Skoglund")
+add_podium("2020/21", "Mars", 3, "Robin Andersen", "Adrian Johansen")
+add_podium("2020/21", "April", 1, "Øyvind Nordmo Sivertsen")
+add_podium("2020/21", "April", 2, "Fredrik Stellander")
+add_podium("2020/21", "April", 3, "Nils Åsheim Megård")
+add_podium("2020/21", "Mai", 1, "Rasmus Grytvik-Skoglund")
+add_podium("2020/21", "Mai", 2, "Fredrik Stellander")
+add_podium("2020/21", "Mai", 3, "Julio Iversen")
+
+# 2021/22
+add_podium("2021/22", "August", 1, "Nickolai Macpherson")
+add_podium("2021/22", "August", 2, "Andreas Nikolai Løkås")
+add_podium("2021/22", "August", 3, "Vegard Bjelland")
+add_podium("2021/22", "September", 1, "Mats Øyvind Jacobsen Arntzen")
+add_podium("2021/22", "September", 2, "Nickolai Macpherson")
+add_podium("2021/22", "September", 3, "Rasmus Grytvik-Skoglund")
+add_podium("2021/22", "Oktober", 1, "Edward Stenlund")
+add_podium("2021/22", "November", 1, "Mats Øyvind Jacobsen Arntzen")
+add_podium("2021/22", "November", 2, "Rasmus Grytvik-Skoglund")
+add_podium("2021/22", "November", 3, "Nickolai Macpherson")
+add_podium("2021/22", "Desember", 1, "Nickolai Macpherson")
+add_podium("2021/22", "Desember", 2, "Mattias Skoglund")
+add_podium("2021/22", "Desember", 3, "Håkon Juliussen")
+add_podium("2021/22", "Januar", 1, "Andreas Nikolai Løkås")
+add_podium("2021/22", "Januar", 2, "Nickolai Macpherson")
+add_podium("2021/22", "Januar", 3, "Simen Pedersen")
+add_podium("2021/22", "Februar", 1, "Adrian Johansen")
+add_podium("2021/22", "Mars", 1, "Remi Andre Kristiansen")
+add_podium("2021/22", "April", 1, "Håkon Juliussen")
+
+# 2022/23
+add_podium("2022/23", "August", 1, "Adrian Drage Valla")
+add_podium("2022/23", "August", 2, "Lars Egil Karlsen Furebotten")
+add_podium("2022/23", "September", 1, "Sindre Jakobsen")
+add_podium("2022/23", "September", 2, "Lars Arnold Nermark", "Lars Egil Karlsen Furebotten")
+add_podium("2022/23", "Oktober", 1, "Rasmus Grytvik-Skoglund")
+add_podium("2022/23", "Oktober", 2, "Henrik Drage Hagane")
+add_podium("2022/23", "Oktober", 3, "Remi Andre Kristiansen")
+add_podium("2022/23", "November", 1, "Kristoffer W Pettersen")
+add_podium("2022/23", "November", 2, "Daniel Eriksson")
+add_podium("2022/23", "Desember", 1, "Sindre Jakobsen")
+add_podium("2022/23", "Januar", 1, "Mats Rydland")
+add_podium("2022/23", "Januar", 2, "Øyvind Nordmo Sivertsen")
+add_podium("2022/23", "Januar", 3, "Kristoffer W Pettersen")
+add_podium("2022/23", "Februar", 1, "Daniel Eriksson")
+add_podium("2022/23", "Februar", 2, "Sindre Kolberg")
+add_podium("2022/23", "Februar", 3, "Mattias Skoglund")
+add_podium("2022/23", "Mars", 1, "Øyvind Sørensen")
+add_podium("2022/23", "Mars", 2, "Edward Stenlund")
+add_podium("2022/23", "Mars", 3, "Adrian Drage Valla")
+add_podium("2022/23", "April", 1, "Rasmus Grytvik-Skoglund")
+add_podium("2022/23", "April", 2, "Adrian Johansen")
+add_podium("2022/23", "April", 3, "Edward Stenlund")
+add_podium("2022/23", "Mai", 1, "Kristoffer W Pettersen")
+
+# 2023/24
+add_podium("2023/24", "August", 1, "Remi Andre Kristiansen")
+add_podium("2023/24", "August", 2, "Sindre Krognes", "Adrian Auke", "Robin Andersen")
+add_podium("2023/24", "September", 1, "August Sandnes Sollund")
+add_podium("2023/24", "September", 2, "Robin Andersen")
+add_podium("2023/24", "September", 3, "Lars Egil Karlsen Furebotten")
+add_podium("2023/24", "Oktober", 1, "Adrian Johansen")
+add_podium("2023/24", "Oktober", 2, "Nickolai Macpherson")
+add_podium("2023/24", "Oktober", 3, "Nils Åsheim Megård")
+add_podium("2023/24", "November", 1, "Nickolai Macpherson")
+add_podium("2023/24", "November", 2, "Simen Pedersen")
+add_podium("2023/24", "November", 3, "Kristoffer W Pettersen")
+add_podium("2023/24", "Desember", 1, "Mikael Dearsley")
+add_podium("2023/24", "Desember", 2, "Mats Rydland")
+add_podium("2023/24", "Januar", 1, "Henrik Drage Hagane")
+add_podium("2023/24", "Januar", 2, "Daniel Eriksson")
+add_podium("2023/24", "Februar", 1, "Thomas Byrkjedal Karlsrud")
+add_podium("2023/24", "Februar", 2, "Sindre Krognes")
+add_podium("2023/24", "Mars", 1, "Nickolai Macpherson")
+add_podium("2023/24", "April", 1, "Mats Øyvind Jacobsen Arntzen")
+add_podium("2023/24", "Mai", 1, "Remi Andre Kristiansen")
+add_podium("2023/24", "Mai", 2, "Sindre Krognes")
+
+# 2024/25
+add_podium("2024/25", "August", 1, "Andreas Nikolai Løkås")
+add_podium("2024/25", "September", 1, "Nils Åsheim Megård")
+add_podium("2024/25", "September", 2, "Kristoffer W Pettersen")
+add_podium("2024/25", "September", 3, "Remi Andre Kristiansen")
+add_podium("2024/25", "Oktober", 1, "Robin Andersen")
+add_podium("2024/25", "Oktober", 2, "August Sandnes Sollund")
+add_podium("2024/25", "Oktober", 3, "Joakim André Bødker")
+add_podium("2024/25", "November", 1, "Robin Andersen")
+add_podium("2024/25", "November", 2, "Andreas Nikolai Løkås")
+add_podium("2024/25", "November", 3, "Nickolai Macpherson")
+add_podium("2024/25", "Desember", 1, "Adrian Johansen")
+add_podium("2024/25", "Desember", 2, "Mats Rydland")
+add_podium("2024/25", "Desember", 3, "Morten Pedersen")
+add_podium("2024/25", "Januar", 1, "Andreas Hjelmseth")
+add_podium("2024/25", "Januar", 2, "Nils Åsheim Megård")
+add_podium("2024/25", "Januar", 3, "Morten Pedersen")
+add_podium("2024/25", "Februar", 1, "Joakim André Bødker")
+add_podium("2024/25", "Februar", 2, "Mats Øyvind Jacobsen Arntzen")
+add_podium("2024/25", "Februar", 3, "Sindre Krognes")
+add_podium("2024/25", "Mars", 1, "Andreas Hjelmseth")
+add_podium("2024/25", "April", 1, "Robin Andersen")
+add_podium("2024/25", "Mai", 1, "Andreas Nikolai Løkås")
+
+# 2025/26
+add_podium("2025/26", "August", 1, "Sindre Jakobsen")
+add_podium("2025/26", "August", 2, "Peter Skarheim")
+add_podium("2025/26", "August", 3, "Adrian Johansen")
+add_podium("2025/26", "September", 1, "Sindre Jakobsen")
+add_podium("2025/26", "September", 2, "Stian Bjørsvik")
+add_podium("2025/26", "Oktober", 1, "Lars Egil Karlsen Furebotten")
+add_podium("2025/26", "Oktober", 2, "Jørgen Hatten")
+add_podium("2025/26", "Oktober", 3, "Mikael Dearsley")
+add_podium("2025/26", "November", 1, "Simen Ulriksen")
+add_podium("2025/26", "November", 2, "Rasmus Grytvik-Skoglund")
+add_podium("2025/26", "November", 3, "Sindre Krognes")
+add_podium("2025/26", "Desember", 1, "Andreas Hjelmseth")
+add_podium("2025/26", "Desember", 2, "Sindre Jakobsen")
+add_podium("2025/26", "Desember", 3, "Joakim André Bødker")
+add_podium("2025/26", "Januar", 1, "Morten Pedersen")
+add_podium("2025/26", "Januar", 2, "Vegard Røstby")
+add_podium("2025/26", "Januar", 3, "Michael Jensen Olafsen")
+add_podium("2025/26", "Februar", 1, "Matz Andreas Håheim")
+add_podium("2025/26", "Mars", 1, "Mats Øyvind Jacobsen Arntzen")
+add_podium("2025/26", "April", 1, "Simen Ulriksen")
+add_podium("2025/26", "Mai", 1, "Andreas Nikolai Løkås")
+
+
+OFFICIAL_MONTHLY_TITLES_RAW = {
+    "Mats Øyvind Jacobsen Arntzen": 5,
+    "Andreas Nikolai Løkås": 4,
+    "Nickolai Macpherson": 4,
+    "Rasmus Grytvik-Skoglund": 4,
+    "Remi Andre Kristiansen": 4,
+    "Sindre Jakobsen": 4,
+    "Adrian Johansen": 3,
+    "Andreas Hjelmseth": 3,
+    "Robin Andersen": 3,
+    "Kristoffer W Pettersen": 2,
+    "Simen Ulriksen": 2,
+    "Sindre Kolberg": 2,
+    "Adrian Drage Valla": 1,
+    "August Sandnes Sollund": 1,
+    "Daniel Eriksson": 1,
+    "Edward Stenlund": 1,
+    "Fredrik Stellander": 1,
+    "Henrik Drage Hagane": 1,
+    "Håkon Juliussen": 1,
+    "Joakim André Bødker": 1,
+    "Lars Egil Karlsen Furebotten": 1,
+    "Mats Rydland": 1,
+    "Matz Andreas Håheim": 1,
+    "Mikael Dearsley": 1,
+    "Morten Pedersen": 1,
+    "Nils Åsheim Megård": 1,
+    "Simen Pedersen": 1,
+    "Thomas Byrkjedal Karlsrud": 1,
+    "Øyvind Nordmo Sivertsen": 1,
+    "Øyvind Sørensen": 1,
+}
+
+HOF_ALIASES = {
+    "Mats Øyvind Jacobsen Arntzen": ["Mats Arntzen", "Arntzen", "Mats Øyvind Jacobsen Arntzen"],
+    "Rasmus Grytvik-Skoglund": ["Rasmus Skoglund", "Rasmus", "Rasmus Grytvik-Skoglund"],
+    "Remi Andre Kristiansen": ["Remi", "Remi Kristiansen", "Remi Andre Kristiansen"],
+    "Andreas Nikolai Løkås": ["Andreas Løkås", "Løkås", "Andreas Nikolai Løkås"],
+    "Joakim André Bødker": ["Joakim Bødker", "Joakim André Bødker"],
+    "Lars Egil Karlsen Furebotten": [
+        "Lars Egil Furebotten",
+        "Lars Erik Furebotten",
+        "Furebotten",
+        "Lars Egil Karlsen Furebotten",
+    ],
+    "Matz Andreas Håheim": ["Matz Håheim", "Håheim", "Matz Andreas Håheim"],
+    "Henrik Drage Hagane": ["Henrik Hagane", "Henrik Drage Hagane"],
+    "Sindre Krognes": ["Krognes", "Sindre Krognes"],
+    "Sindre Kolberg": ["Kolberg", "Sindre Kolberg"],
+    "Øyvind Nordmo Sivertsen": [
+        "Nordmo Sivertsen",
+        "Øyvind Nordmo",
+        "Øyvind Normo Sivertsen",
+        "Øyvind Nordmo Sivertsen",
+    ],
+    "Nils Åsheim Megård": ["Nils Megård", "Nils Åsheim Megård"],
+    "Mikael Dearsley": ["Mikael Dearsley", "Michael Dearsley"],
+    "Michael Jensen Olafsen": ["Michael Jensen Olafsen", "Michael Olafsen", "Michael Jensen"],
+    "Adrian Drage Valla": ["Adrian Drage Valla", "Adrian Valla"],
+    "Adrian Johansen": ["Adrian Johansen"],
+    "Mats Rydland": ["Mats Rydland", "Rydland"],
+    "Kristoffer W Pettersen": ["Kristoffer W Pettersen", "W Pettersen", "Kristoffer Pettersen"],
+    "Simen Ulriksen": ["Simen Ulriksen"],
+    "Simen Pedersen": ["Simen Pedersen"],
+    "Nickolai Macpherson": ["Nickolai", "Nickolai Macpherson", "Nikolai Macpherson"],
+    "Håkon Juliussen": ["Håkon Juliussen", "Juliussen"],
+    "Øyvind Sørensen": ["Øyvind Sørensen"],
+}
+
+
+TAG_SORT = {
+    "Tittelkandidat": 1,
+    "Outsider": 2,
+    "Dark horse": 3,
+    "Stabil traver": 4,
+    "Usikkert kort": 5,
+    "Rookie": 6,
+}
+
+
+def canonical_hof_name(name: str) -> str:
+    norm = normalize_text(name)
+
+    for canonical, aliases in HOF_ALIASES.items():
+        if norm == normalize_text(canonical):
+            return canonical
+
+        for alias in aliases:
+            if norm == normalize_text(alias):
+                return canonical
+
+    return name
+
+
+def hof_key(name: str) -> str:
+    return normalize_text(canonical_hof_name(name))
+
+
+def build_official_monthly_map() -> dict:
+    out = {}
+
+    for name, count in OFFICIAL_MONTHLY_TITLES_RAW.items():
+        out[hof_key(name)] = int(count)
+
+    return out
+
+
+def merit_text(row: dict) -> str:
+    parts = []
+
+    if row.get("overall_count", 0):
+        parts.append(f"{int(row['overall_count'])}x sammenlagt")
+
+    if row.get("overall_runner_up_count", 0):
+        parts.append(f"{int(row['overall_runner_up_count'])}x sølv sammenlagt")
+
+    if row.get("overall_third_count", 0):
+        parts.append(f"{int(row['overall_third_count'])}x bronse sammenlagt")
+
+    if row.get("cup_count", 0):
+        parts.append(f"{int(row['cup_count'])}x cupgull")
+
+    if row.get("cup_runner_up_count", 0):
+        parts.append(f"{int(row['cup_runner_up_count'])}x cupsølv")
+
+    if row.get("random_count", 0):
+        parts.append(f"{int(row['random_count'])}x random")
+
+    if row.get("monthly_titles", 0):
+        parts.append(f"{int(row['monthly_titles'])}x måned")
+
+    return ", ".join(parts)
+
+
+def build_monthly_podium_df() -> pd.DataFrame:
+    df = pd.DataFrame(MONTHLY_PODIUMS)
+
+    if df.empty:
+        return df
+
+    df["manager"] = df["manager"].apply(canonical_hof_name)
+    df["points"] = df["place"].map({1: 6, 2: 2, 3: 1}).fillna(0).astype(int)
+
+    month_order = {
+        "August": 1,
+        "September": 2,
+        "Oktober": 3,
+        "November": 4,
+        "Desember": 5,
+        "Januar": 6,
+        "Februar": 7,
+        "Mars": 8,
+        "April": 9,
+        "Mai": 10,
+    }
+
+    df["month_order"] = df["month"].map(month_order).fillna(99)
+    return df.sort_values(["season", "month_order", "place", "manager"]).reset_index(drop=True)
+
+
+def build_monthly_medal_table(season_filter: str | None = None) -> pd.DataFrame:
+    df = build_monthly_podium_df()
+
+    if df.empty:
+        return df
+
+    if season_filter and season_filter != "Alle":
+        df = df[df["season"] == season_filter]
+
+    grouped = (
+        df.groupby("manager")
+        .agg(
+            gold=("place", lambda s: int((s == 1).sum())),
+            silver=("place", lambda s: int((s == 2).sum())),
+            bronze=("place", lambda s: int((s == 3).sum())),
+            month_points=("points", "sum"),
+            podiums=("place", "count"),
+        )
+        .reset_index()
+    )
+
+    grouped = grouped.sort_values(
+        ["month_points", "gold", "silver", "bronze", "manager"],
+        ascending=[False, False, False, False, True],
+    ).reset_index(drop=True)
+
+    grouped.insert(0, "monthly_rank", range(1, len(grouped) + 1))
+    return grouped
+
+
+def build_monthly_calendar_table(season_filter: str | None = None) -> pd.DataFrame:
+    df = build_monthly_podium_df()
+
+    if df.empty:
+        return df
+
+    if season_filter and season_filter != "Alle":
+        df = df[df["season"] == season_filter]
+
+    grouped = (
+        df.groupby(["season", "month_order", "month", "place"])["manager"]
+        .apply(lambda values: ", ".join(values))
+        .reset_index()
+    )
+
+    pivot = grouped.pivot_table(
+        index=["season", "month_order", "month"],
+        columns="place",
+        values="manager",
+        aggfunc="first",
+    ).reset_index()
+
+    for place in [1, 2, 3]:
+        if place not in pivot.columns:
+            pivot[place] = ""
+
+    pivot = pivot.rename(columns={
+        "season": "season",
+        "month": "month",
+        1: "winner",
+        2: "second_place",
+        3: "third_place",
+    })
+
+    pivot = pivot.sort_values(["season", "month_order"]).reset_index(drop=True)
+    return pivot[["season", "month", "winner", "second_place", "third_place"]]
+
+
+def build_month_specialist_table() -> pd.DataFrame:
+    df = build_monthly_podium_df()
+
+    if df.empty:
+        return df
+
+    grouped = (
+        df.groupby(["month_order", "month", "manager"])
+        .agg(
+            month_points=("points", "sum"),
+            gold=("place", lambda s: int((s == 1).sum())),
+            silver=("place", lambda s: int((s == 2).sum())),
+            bronze=("place", lambda s: int((s == 3).sum())),
+            podiums=("place", "count"),
+        )
+        .reset_index()
+    )
+
+    rows = []
+
+    for month, month_df in grouped.groupby("month"):
+        month_df = month_df.sort_values(
+            ["month_points", "gold", "silver", "bronze", "manager"],
+            ascending=[False, False, False, False, True],
+        ).reset_index(drop=True)
+
+        best = month_df.iloc[0]
+        second_points = month_df.iloc[1]["month_points"] if len(month_df) > 1 else 0
+
+        top_names = []
+
+        for _, row in month_df.head(5).iterrows():
+            top_names.append(
+                f"{row['manager']} "
+                f"({int(row['month_points'])}p, "
+                f"{int(row['gold'])}-{int(row['silver'])}-{int(row['bronze'])})"
+            )
+
+        if int(best["month_points"]) == int(second_points):
+            comment = "Delt/åpen måned"
+        elif int(best["month_points"]) - int(second_points) >= 4:
+            comment = "Tydelig månedskonge"
+        else:
+            comment = "Knapp ledelse"
+
+        rows.append({
+            "month_order": int(best["month_order"]),
+            "month": month,
+            "king": best["manager"],
+            "king_points": int(best["month_points"]),
+            "gold": int(best["gold"]),
+            "silver": int(best["silver"]),
+            "bronze": int(best["bronze"]),
+            "podiums": int(best["podiums"]),
+            "top_five": " | ".join(top_names),
+            "comment": comment,
+        })
+
+    return pd.DataFrame(rows).sort_values("month_order").reset_index(drop=True)
+
+
+def build_hof_people() -> pd.DataFrame:
+    people = {}
+
+    def ensure_person(name: str):
+        if not name:
+            return None
+
+        canonical = canonical_hof_name(name)
+        key = hof_key(canonical)
+
+        if key not in people:
+            people[key] = {
+                "key": key,
+                "display_name": canonical,
+                "overall_count": 0,
+                "overall_runner_up_count": 0,
+                "overall_third_count": 0,
+                "overall_seasons": [],
+                "overall_runner_up_seasons": [],
+                "overall_third_seasons": [],
+                "cup_count": 0,
+                "cup_runner_up_count": 0,
+                "cup_seasons": [],
+                "cup_runner_up_seasons": [],
+                "random_count": 0,
+                "random_notes": [],
+                "monthly_gold_detail": 0,
+                "monthly_silver": 0,
+                "monthly_bronze": 0,
+                "monthly_podiums": 0,
+                "monthly_points": 0,
+            }
+
+        return people[key]
+
+    for row in HOF_OVERALL:
+        winner = ensure_person(row.get("winner"))
+        if winner:
+            winner["overall_count"] += 1
+            note = f"{row['season']}" if not row.get("note") else f"{row['season']} ({row['note']})"
+            winner["overall_seasons"].append(note)
+
+        runner = ensure_person(row.get("runner_up"))
+        if runner:
+            runner["overall_runner_up_count"] += 1
+            runner["overall_runner_up_seasons"].append(row["season"])
+
+        third = ensure_person(row.get("third_place"))
+        if third:
+            third["overall_third_count"] += 1
+            third["overall_third_seasons"].append(row["season"])
+
+    for row in HOF_CUP:
+        winner = ensure_person(row.get("winner"))
+        if winner:
+            winner["cup_count"] += 1
+            winner["cup_seasons"].append(row["season"])
+
+        runner = ensure_person(row.get("runner_up"))
+        if runner:
+            runner["cup_runner_up_count"] += 1
+            runner["cup_runner_up_seasons"].append(row["season"])
+
+    for row in HOF_RANDOM:
+        person = ensure_person(row.get("winner"))
+        if person:
+            person["random_count"] += 1
+            person["random_notes"].append(f"{row['season']} – {row['placement']}")
+
+    monthly_df = build_monthly_podium_df()
+
+    if not monthly_df.empty:
+        for _, row in monthly_df.iterrows():
+            person = ensure_person(row["manager"])
+
+            if person:
+                if int(row["place"]) == 1:
+                    person["monthly_gold_detail"] += 1
+                elif int(row["place"]) == 2:
+                    person["monthly_silver"] += 1
+                elif int(row["place"]) == 3:
+                    person["monthly_bronze"] += 1
+
+                person["monthly_podiums"] += 1
+                person["monthly_points"] += int(row["points"])
+
+    official_monthly = build_official_monthly_map()
+
+    for raw_name in OFFICIAL_MONTHLY_TITLES_RAW:
+        ensure_person(raw_name)
+
+    rows = []
+
+    for person in people.values():
+        official_titles = official_monthly.get(person["key"], None)
+        detail_titles = int(person["monthly_gold_detail"])
+
+        if official_titles is not None:
+            monthly_titles = int(official_titles)
+        else:
+            monthly_titles = detail_titles
+
+        total_titles = (
+            int(person["overall_count"])
+            + int(person["cup_count"])
+            + int(person["random_count"])
+            + monthly_titles
+        )
+
+        hof_score = (
+            int(person["overall_count"]) * 60
+            + int(person["overall_runner_up_count"]) * 30
+            + int(person["overall_third_count"]) * 16
+            + int(person["cup_count"]) * 20
+            + int(person["cup_runner_up_count"]) * 8
+            + int(person["random_count"]) * 4
+            + monthly_titles * 6
+            + int(person["monthly_silver"]) * 2
+            + int(person["monthly_bronze"]) * 1
+        )
+
+        out = {
+            "key": person["key"],
+            "display_name": person["display_name"],
+            "overall_count": int(person["overall_count"]),
+            "overall_runner_up_count": int(person["overall_runner_up_count"]),
+            "overall_third_count": int(person["overall_third_count"]),
+            "overall_seasons": ", ".join(person["overall_seasons"]),
+            "overall_runner_up_seasons": ", ".join(person["overall_runner_up_seasons"]),
+            "overall_third_seasons": ", ".join(person["overall_third_seasons"]),
+            "cup_count": int(person["cup_count"]),
+            "cup_runner_up_count": int(person["cup_runner_up_count"]),
+            "cup_seasons": ", ".join(person["cup_seasons"]),
+            "cup_runner_up_seasons": ", ".join(person["cup_runner_up_seasons"]),
+            "random_count": int(person["random_count"]),
+            "random_notes": ", ".join(person["random_notes"]),
+            "monthly_titles": int(monthly_titles),
+            "monthly_silver": int(person["monthly_silver"]),
+            "monthly_bronze": int(person["monthly_bronze"]),
+            "monthly_podiums": int(person["monthly_podiums"]),
+            "monthly_points": int(person["monthly_points"]),
+            "total_titles": int(total_titles),
+            "hof_score": int(hof_score),
+        }
+
+        out["merits"] = merit_text(out)
+        rows.append(out)
+
+    df = pd.DataFrame(rows)
+
+    if not df.empty:
+        df = df.sort_values(
+            [
+                "hof_score",
+                "overall_count",
+                "overall_runner_up_count",
+                "cup_count",
+                "monthly_titles",
+                "display_name",
+            ],
+            ascending=[False, False, False, False, False, True],
+        ).reset_index(drop=True)
+
+        df.insert(0, "hof_rank", range(1, len(df) + 1))
+
+    return df
+
+
+def enrich_summary_with_hof(summary_df: pd.DataFrame) -> pd.DataFrame:
+    if summary_df.empty:
+        return summary_df
+
+    hof_df = build_hof_people()
+
+    if hof_df.empty:
+        summary_df["monthly_titles"] = 0
+        summary_df["merits"] = ""
+        summary_df["hof_score"] = 0
+        return summary_df
+
+    hof_index = hof_df.set_index("key")
+
+    monthly_titles = []
+    merits = []
+    hof_scores = []
+
+    for _, row in summary_df.iterrows():
+        key = hof_key(row["manager"])
+
+        if key in hof_index.index:
+            hof_row = hof_index.loc[key]
+            monthly_titles.append(int(hof_row["monthly_titles"]))
+            merits.append(hof_row["merits"])
+            hof_scores.append(int(hof_row["hof_score"]))
+        else:
+            monthly_titles.append(0)
+            merits.append("")
+            hof_scores.append(0)
+
+    summary_df = summary_df.copy()
+    summary_df["monthly_titles"] = monthly_titles
+    summary_df["merits"] = merits
+    summary_df["hof_score"] = hof_scores
+
+    return summary_df
+
+
+# -----------------------------
+# Henting av liga
+# -----------------------------
+
+def normalize_manager_row(row: dict, source: str) -> dict:
+    entry = row.get("entry") or row.get("entry_id") or row.get("id")
+
+    entry_name = (
+        row.get("entry_name")
+        or row.get("name")
+        or row.get("team_name")
+        or "Ukjent lag"
+    )
+
+    player_name = (
+        row.get("player_name")
+        or row.get("player")
+        or row.get("manager_name")
+        or "Ukjent manager"
+    )
+
+    first_name = row.get("player_first_name")
+    last_name = row.get("player_last_name")
+
+    if player_name == "Ukjent manager" and (first_name or last_name):
+        player_name = f"{first_name or ''} {last_name or ''}".strip()
+
+    return {
+        "source": source,
+        "entry": entry,
+        "player_name": player_name,
+        "entry_name": entry_name,
+        "rank": row.get("rank"),
+        "last_rank": row.get("last_rank"),
+        "event_total": row.get("event_total"),
+        "total": row.get("total"),
+        "joined_time": row.get("joined_time"),
+        "search_text": normalize_text(f"{player_name} {entry_name} {entry}"),
+        "raw": row,
+    }
+
+
+@st.cache_data(ttl=300)
+def get_league_managers(league_id: int) -> tuple[dict | None, list[dict], dict]:
+    league_info = None
+    managers_by_entry = {}
+
+    debug = {
+        "league_id": league_id,
+        "standings_pages": 0,
+        "new_entries_pages": 0,
+        "standings_count": 0,
+        "new_entries_count": 0,
+        "total_unique_managers": 0,
+        "errors": [],
+    }
+
+    page = 1
+
+    while page <= 100:
+        path = (
+            f"/leagues-classic/{league_id}/standings/"
+            f"?page_standings={page}&page_new_entries=1"
+        )
+
+        try:
+            data = get_json(path)
+        except requests.exceptions.HTTPError as error:
+            if error.response is not None and error.response.status_code == 404:
+                debug["errors"].append(f"Tabell ga 404 for liga-ID {league_id}")
+                break
+            raise error
+
+        league_info = data.get("league") or league_info
+        standings = data.get("standings", {}) or {}
+        results = standings.get("results", []) or []
+
+        debug["standings_pages"] += 1
+        debug["standings_count"] += len(results)
+
+        for row in results:
+            manager = normalize_manager_row(row, "tabell")
+            entry = manager.get("entry")
+
+            if entry:
+                managers_by_entry[entry] = manager
+
+        if not standings.get("has_next"):
+            break
+
+        page += 1
+
+    page = 1
+
+    while page <= 100:
+        path = (
+            f"/leagues-classic/{league_id}/standings/"
+            f"?page_standings=1&page_new_entries={page}"
+        )
+
+        try:
+            data = get_json(path)
+        except requests.exceptions.HTTPError as error:
+            if error.response is not None and error.response.status_code == 404:
+                debug["errors"].append(f"Påmeldte ga 404 for liga-ID {league_id}")
+                break
+            raise error
+
+        league_info = data.get("league") or league_info
+        new_entries = data.get("new_entries", {}) or {}
+        results = new_entries.get("results", []) or []
+
+        debug["new_entries_pages"] += 1
+        debug["new_entries_count"] += len(results)
+
+        for row in results:
+            manager = normalize_manager_row(row, "påmeldt")
+            entry = manager.get("entry")
+
+            if entry and entry not in managers_by_entry:
+                managers_by_entry[entry] = manager
+
+        if not new_entries.get("has_next"):
+            break
+
+        page += 1
+
+    managers = list(managers_by_entry.values())
+    debug["total_unique_managers"] = len(managers)
+
+    return league_info, managers, debug
+
+
+# -----------------------------
+# Historikkmodell
+# -----------------------------
+
+def rank_score(rank: int | float | None) -> float:
+    if rank is None or pd.isna(rank):
+        return 0
+
+    try:
+        rank = float(rank)
+    except ValueError:
+        return 0
+
+    if rank <= 0:
+        return 0
+
+    score = 100 - 10 * math.log10(rank)
+    return max(0, min(100, score))
+
+
+def safe_mean(values: list[float]) -> float:
+    values = [value for value in values if value is not None and not pd.isna(value)]
+
+    if not values:
+        return 0
+
+    return sum(values) / len(values)
+
+
+def tier_from_score(score: float) -> str:
+    if score >= 60:
+        return "Elite"
+    if score >= 55:
+        return "Meget sterk"
+    if score >= 50:
+        return "Sterk"
+    if score >= 45:
+        return "Solid"
+    if score >= 40:
+        return "Midtable"
+    return "Rookie"
+
+
+def trend_string(seasons: list[dict], limit: int = 3) -> str:
+    seasons = seasons[-limit:]
+    parts = []
+    previous_rank = None
+
+    for season in seasons:
+        season_name = str(season.get("season_name", ""))
+        rank = season.get("rank")
+
+        if previous_rank is None:
+            arrow = "⚪"
+        elif rank < previous_rank:
+            arrow = "🟢"
+        elif rank > previous_rank:
+            arrow = "🔴"
+        else:
+            arrow = "⚪"
+
+        parts.append(f"{season_name}: {format_rank(rank)} {arrow}")
+        previous_rank = rank
+
+    return "  →  ".join(parts)
+
+
+def manager_tag(row: dict) -> str:
+    seasons = int(row.get("seasons") or 0)
+    total_rating = float(row.get("total_rating") or 0)
+
+    best_rank = row.get("best_rank_num")
+    last_rank = row.get("last_season_rank_num")
+    avg3 = row.get("avg_rank_last_3_num")
+    avg5 = row.get("avg_rank_last_5_num")
+
+    top_100k = int(row.get("top_100k_seasons") or 0)
+    top_500k = int(row.get("top_500k_seasons") or 0)
+
+    last_2_good = int(row.get("last_2_good_seasons") or 0)
+    weak_before_last_2 = bool(row.get("weak_before_last_2") or False)
+
+    if seasons <= 2:
+        return "Rookie"
+
+    if total_rating >= 56 or (
+        avg3 is not None
+        and avg3 <= 350_000
+        and top_100k >= 2
+    ):
+        return "Tittelkandidat"
+
+    if top_100k >= 3 or top_500k >= 6:
+        return "Outsider"
+
+    if (
+        best_rank is not None
+        and best_rank <= 100_000
+        and (
+            avg3 is None
+            or avg3 >= 750_000
+            or last_rank is None
+            or last_rank >= 1_000_000
+        )
+    ):
+        return "Dark horse"
+
+    if last_2_good >= 2 and weak_before_last_2:
+        return "Dark horse"
+
+    if total_rating < 42:
+        return "Usikkert kort"
+
+    if last_rank is not None and last_rank > 2_000_000:
+        return "Usikkert kort"
+
+    if avg3 is not None and avg3 > 1_700_000:
+        return "Usikkert kort"
+
+    if seasons >= 5 and avg5 is not None and avg5 <= 1_500_000:
+        return "Stabil traver"
+
+    return "Usikkert kort"
+
+
+def build_summary_row(manager: dict, history: dict) -> dict:
+    past = history.get("past", []) or []
+    seasons = []
+
+    for season in past:
+        rank = season.get("rank")
+        total_points = season.get("total_points")
+        season_name = season.get("season_name")
+
+        if rank is None:
+            continue
+
+        seasons.append({
+            "season_name": season_name,
+            "rank": int(rank),
+            "total_points": int(total_points) if total_points is not None else None,
+            "score": rank_score(rank),
+        })
+
+    seasons = sorted(seasons, key=lambda x: x["season_name"] or "")
+
+    last_2 = seasons[-2:]
+    last_3 = seasons[-3:]
+    last_5 = seasons[-5:]
+
+    ranks = [season["rank"] for season in seasons]
+    ranks_last_3 = [season["rank"] for season in last_3]
+    ranks_last_5 = [season["rank"] for season in last_5]
+
+    best_rank_num = min(ranks) if ranks else None
+    best_seasons = [season for season in seasons if season["rank"] == best_rank_num] if best_rank_num else []
+    best_season = best_seasons[0]["season_name"] if best_seasons else None
+
+    last_season = seasons[-1] if seasons else None
+    last_season_rank_num = last_season["rank"] if last_season else None
+
+    avg_rank_last_3_num = round(safe_mean(ranks_last_3)) if ranks_last_3 else None
+    avg_rank_last_5_num = round(safe_mean(ranks_last_5)) if ranks_last_5 else None
+
+    scores_last_2 = [season["score"] for season in last_2]
+    scores_last_3 = [season["score"] for season in last_3]
+    scores_last_5 = [season["score"] for season in last_5]
+
+    consistency_last_5 = 0
+
+    if last_5:
+        consistency_last_5 = 100 * sum(
+            1 for season in last_5 if season["rank"] <= 500_000
+        ) / len(last_5)
+
+    best_score = rank_score(best_rank_num)
+    recent_score = safe_mean(scores_last_2)
+    last_3_score = safe_mean(scores_last_3)
+    last_5_score = safe_mean(scores_last_5)
+    consistency_score = consistency_last_5
+
+    top_100k_seasons = sum(1 for rank in ranks if rank <= 100_000)
+    top_500k_seasons = sum(1 for rank in ranks if rank <= 500_000)
+
+    top_100k_rate = top_100k_seasons / len(seasons) * 100 if seasons else 0
+    top_500k_rate = top_500k_seasons / len(seasons) * 100 if seasons else 0
+
+    last_2_good_seasons = sum(1 for season in last_2 if season["rank"] <= 500_000)
+    before_last_2 = seasons[:-2]
+
+    weak_before_last_2 = (
+        len(before_last_2) >= 2
+        and sum(1 for season in before_last_2 if season["rank"] <= 500_000) == 0
+    )
+
+    total_rating = (
+        0.45 * last_3_score
+        + 0.15 * recent_score
+        + 0.15 * last_5_score
+        + 0.10 * best_score
+        + 0.07 * consistency_score
+        + 0.05 * top_100k_rate
+        + 0.03 * top_500k_rate
+    )
+
+    row = {
+        "manager": manager.get("player_name"),
+        "team": manager.get("entry_name"),
+        "entry": manager.get("entry"),
+        "search_text": normalize_text(
+            f"{manager.get('player_name')} {manager.get('entry_name')} {manager.get('entry')}"
+        ),
+        "seasons": len(seasons),
+        "last_season": last_season["season_name"] if last_season else None,
+        "last_season_rank_num": last_season_rank_num,
+        "last_season_rank": format_rank(last_season_rank_num),
+        "last_season_points": last_season["total_points"] if last_season else None,
+        "best_rank_num": best_rank_num,
+        "best_rank": format_rank(best_rank_num),
+        "best_season": best_season,
+        "avg_rank_last_3_num": avg_rank_last_3_num,
+        "avg_rank_last_3": format_rank(avg_rank_last_3_num),
+        "avg_rank_last_5_num": avg_rank_last_5_num,
+        "avg_rank_last_5": format_rank(avg_rank_last_5_num),
+        "last_3_ranks": " / ".join(format_rank(season["rank"]) for season in last_3),
+        "trend": trend_string(seasons, limit=3),
+        "top_100k_seasons": top_100k_seasons,
+        "top_500k_seasons": top_500k_seasons,
+        "last_2_good_seasons": last_2_good_seasons,
+        "weak_before_last_2": weak_before_last_2,
+        "best_score": round(best_score, 1),
+        "recent_score": round(recent_score, 1),
+        "last_3_score": round(last_3_score, 1),
+        "last_5_score": round(last_5_score, 1),
+        "consistency_score": round(consistency_score, 1),
+        "total_rating": round(total_rating, 1),
+        "tier": tier_from_score(total_rating),
+    }
+
+    row["tag"] = manager_tag(row)
+    row["tag_sort"] = TAG_SORT.get(row["tag"], 99)
+    return row
+
+
+def build_history_tables(managers: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    summary_rows = []
+    season_rows = []
+    errors = []
+
+    if not managers:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+    progress = st.progress(0)
+    status = st.empty()
+
+    for i, manager in enumerate(managers):
+        entry_id = manager.get("entry")
+        name = manager.get("player_name", "Ukjent manager")
+
+        status.write(f"Henter historikk for {name} ({i + 1}/{len(managers)})")
+
+        try:
+            history = get_entry_history(int(entry_id))
+            summary_rows.append(build_summary_row(manager, history))
+
+            for season in history.get("past", []) or []:
+                season_rows.append({
+                    "manager": manager.get("player_name"),
+                    "team": manager.get("entry_name"),
+                    "entry": entry_id,
+                    "season_name": season.get("season_name"),
+                    "total_points": season.get("total_points"),
+                    "rank_num": season.get("rank"),
+                    "rank": format_rank(season.get("rank")),
+                })
+
+        except Exception as error:
+            errors.append({
+                "manager": name,
+                "team": manager.get("entry_name"),
+                "entry": entry_id,
+                "error": str(error),
+            })
+
+        progress.progress((i + 1) / len(managers))
+
+    progress.empty()
+    status.empty()
+
+    summary_df = pd.DataFrame(summary_rows)
+    seasons_df = pd.DataFrame(season_rows)
+    errors_df = pd.DataFrame(errors)
+
+    if not summary_df.empty:
+        summary_df = enrich_summary_with_hof(summary_df)
+        summary_df["peak_sort"] = summary_df["best_rank_num"].fillna(999_999_999)
+
+        summary_df = summary_df.sort_values(
+            ["peak_sort", "total_rating"],
+            ascending=[True, False],
+        ).reset_index(drop=True)
+
+    if not seasons_df.empty:
+        seasons_df = seasons_df.sort_values(["manager", "season_name"]).reset_index(drop=True)
+
+    return summary_df, seasons_df, errors_df
+
+
+# -----------------------------
+# Oddsmodell
+# -----------------------------
+
+def build_preseason_odds(summary_df: pd.DataFrame) -> pd.DataFrame:
+    if summary_df.empty:
+        return pd.DataFrame()
+
+    df = summary_df.copy()
+    df["total_rating"] = pd.to_numeric(df["total_rating"], errors="coerce").fillna(0)
+
+    top_score = df["total_rating"].max()
+    base_favorite_odds = 2.10
+    max_outright_odds = 15.00
+
+    df["odds_float"] = base_favorite_odds * ((top_score - df["total_rating"]) / 7.5).apply(math.exp)
+
+    df.loc[df["seasons"] <= 2, "odds_float"] *= 1.15
+    df.loc[df["last_season_rank_num"].fillna(999_999_999) > 2_000_000, "odds_float"] *= 1.20
+    df.loc[df["avg_rank_last_3_num"].fillna(999_999_999) > 1_500_000, "odds_float"] *= 1.18
+
+    df.loc[df["top_100k_seasons"] >= 4, "odds_float"] *= 0.95
+    df.loc[df["top_500k_seasons"] >= 10, "odds_float"] *= 0.97
+
+    if "hof_score" in df.columns:
+        df.loc[df["hof_score"] >= 60, "odds_float"] *= 0.97
+        df.loc[df["monthly_titles"] >= 4, "odds_float"] *= 0.98
+
+    df["odds_float"] = df["odds_float"].clip(lower=2.00, upper=max_outright_odds)
+    df["odds"] = df["odds_float"].apply(format_odds)
+
+    df = df.sort_values("odds_float", ascending=True).reset_index(drop=True)
+    df.insert(0, "odds_rank", range(1, len(df) + 1))
+
+    return df
+
+
+# -----------------------------
+# Navnesøk
+# -----------------------------
+
+def smart_match(summary_df: pd.DataFrame, query: str) -> tuple[pd.Series | None, float]:
+    if summary_df.empty:
+        return None, 0
+
+    query_norm = normalize_text(query)
+    query_tokens = [token for token in query_norm.split() if len(token) > 1]
+
+    if not query_tokens:
+        return None, 0
+
+    candidates = summary_df.copy()
+
+    if "search_text" not in candidates.columns:
+        candidates["search_text"] = (
+            candidates["manager"].astype(str)
+            + " "
+            + candidates["team"].astype(str)
+            + " "
+            + candidates["entry"].astype(str)
+        ).apply(normalize_text)
+
+    scored = []
+
+    for index, row in candidates.iterrows():
+        manager_norm = normalize_text(row.get("manager", ""))
+        team_norm = normalize_text(row.get("team", ""))
+        text = row.get("search_text", "")
+        text_tokens = set(text.split())
+
+        score = 0.0
+
+        if query_norm == manager_norm:
+            score = 100.0
+        elif query_norm == team_norm:
+            score = 98.0
+        elif query_norm in text:
+            score = 94.0
+        elif all(token in text_tokens for token in query_tokens):
+            score = 90.0
+        elif len(query_tokens) >= 3 and sum(token in text_tokens for token in query_tokens) >= len(query_tokens) - 1:
+            score = 88.0
+        elif len(query_tokens) == 1 and query_tokens[0] in text_tokens:
+            score = 82.0
+        else:
+            fuzzy = max(
+                SequenceMatcher(None, query_norm, manager_norm).ratio(),
+                SequenceMatcher(None, query_norm, team_norm).ratio(),
+            ) * 100
+
+            if fuzzy >= 90:
+                score = fuzzy
+
+        if score > 0:
+            scored.append((score, index))
+
+    if not scored:
+        return None, 0
+
+    scored = sorted(scored, reverse=True, key=lambda item: item[0])
+    best_score, best_index = scored[0]
+
+    threshold = 88 if len(query_tokens) > 1 else 78
+
+    if best_score < threshold:
+        return None, round(best_score, 1)
+
+    return candidates.loc[best_index], round(best_score, 1)
+
+
+# -----------------------------
+# H2H
+# -----------------------------
+
+def num(row: pd.Series, key: str, default: float = 999_999_999) -> float:
+    value = row.get(key, default)
+
+    if value is None or pd.isna(value):
+        return default
+
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def compact_profile(row: pd.Series) -> str:
+    return (
+        f"beste {row['best_rank']}, "
+        f"snitt siste 3 {row['avg_rank_last_3']}, "
+        f"{int(row['top_100k_seasons'])} topp 100k"
+    )
+
+
+def reason_bits(a: pd.Series, b: pd.Series, max_items: int = 2) -> str:
+    bits = []
+
+    if num(a, "avg_rank_last_3_num") < num(b, "avg_rank_last_3_num"):
+        bits.append(f"bedre snitt siste 3 ({a['avg_rank_last_3']} mot {b['avg_rank_last_3']})")
+
+    if num(a, "last_season_rank_num") < num(b, "last_season_rank_num"):
+        bits.append(f"bedre sist sesong ({a['last_season_rank']} mot {b['last_season_rank']})")
+
+    if num(a, "best_rank_num") < num(b, "best_rank_num"):
+        bits.append(f"bedre peak ({a['best_rank']} mot {b['best_rank']})")
+
+    if int(a.get("top_100k_seasons") or 0) > int(b.get("top_100k_seasons") or 0):
+        bits.append(f"flere topp 100k ({int(a['top_100k_seasons'])} mot {int(b['top_100k_seasons'])})")
+
+    if not bits:
+        bits.append("marginalt sterkere samlet profil")
+
+    return "; ".join(bits[:max_items])
+
+
+def h2h_reason(player: pd.Series, opponent: pd.Series) -> str:
+    if float(player["total_rating"]) >= float(opponent["total_rating"]):
+        return f"Favoritt: {reason_bits(player, opponent)}."
+
+    return f"Underdog: {opponent['manager']} har {reason_bits(opponent, player)}."
+
+
+def group_reason(player: pd.Series, ordered_players: list[pd.Series], index: int) -> str:
+    total = len(ordered_players)
+
+    if index == 0:
+        next_player = ordered_players[1]
+        return f"Favoritt: {reason_bits(player, next_player)}."
+
+    if index == total - 1:
+        previous_player = ordered_players[index - 1]
+        return f"Sist: {previous_player['manager']} har {reason_bits(previous_player, player)}."
+
+    above = ordered_players[index - 1]
+    below = ordered_players[index + 1]
+
+    return (
+        f"Bak {above['manager']}: {reason_bits(above, player, 1)}. "
+        f"Foran {below['manager']}: {reason_bits(player, below, 1)}."
+    )
+
+
+def h2h_odds(a: pd.Series, b: pd.Series) -> tuple[float, float]:
+    diff = float(a["total_rating"]) - float(b["total_rating"])
+    raw_a = 1 / (1 + math.exp(-diff / 6.0))
+
+    p_a = 0.25 * 0.50 + 0.75 * raw_a
+    p_b = 1 - p_a
+
+    margin = 1.06
+
+    odds_a = 1 / (p_a * margin)
+    odds_b = 1 / (p_b * margin)
+
+    return min(max(odds_a, 1.18), 4.25), min(max(odds_b, 1.18), 4.25)
+
+
+def group_odds(players: list[pd.Series]) -> list[dict]:
+    scores = [float(player["total_rating"]) for player in players]
+    max_score = max(scores)
+
+    temperature = 6.5
+
+    weights = [math.exp((score - max_score) / temperature) for score in scores]
+    total_weight = sum(weights)
+    skill_probs = [weight / total_weight for weight in weights]
+
+    n = len(players)
+    equal_prob = 1 / n
+
+    random_blend = 0.35
+    margin = 1.08
+
+    raw_rows = []
+
+    for player, skill_prob in zip(players, skill_probs):
+        probability = random_blend * equal_prob + (1 - random_blend) * skill_prob
+        odds = min(max(1 / (probability * margin), 1.25), 12.00)
+
+        raw_rows.append({
+            "player": player,
+            "odds_float": odds,
+        })
+
+    raw_rows = sorted(raw_rows, key=lambda row: row["odds_float"])
+    ordered_players = [row["player"] for row in raw_rows]
+
+    rows = []
+
+    for index, item in enumerate(raw_rows):
+        player = item["player"]
+        odds = item["odds_float"]
+
+        rows.append({
+            "Rangering": index + 1,
+            "Manager": player["manager"],
+            "Lag": player["team"],
+            "Odds": format_odds(odds),
+            "Beste plassering": player["best_rank"],
+            "Snitt siste 3": player["avg_rank_last_3"],
+            "Utvikling": player["trend"],
+            "Begrunnelse": group_reason(player, ordered_players, index),
+            "Profil": compact_profile(player),
+        })
+
+    return rows
+
+
+def analyze_markets(summary_df: pd.DataFrame, text: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    market_rows = []
+    missing_rows = []
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+
+        if not line:
+            continue
+
+        names = [
+            part.strip()
+            for part in re.split(r"\s+vs\s+", line, flags=re.IGNORECASE)
+            if part.strip()
+        ]
+
+        if len(names) < 2:
+            continue
+
+        matched = []
+
+        for name in names:
+            row, score = smart_match(summary_df, name)
+
+            if row is None:
+                missing_rows.append({
+                    "Søk": name,
+                    "Status": "Ikke funnet / ikke påmeldt",
+                })
+            else:
+                matched.append(row)
+
+        if len(matched) != len(names):
+            continue
+
+        if len(matched) == 2:
+            a, b = matched
+            odds_a, odds_b = h2h_odds(a, b)
+
+            h2h_rows = []
+
+            for player, opponent, odds in [(a, b, odds_a), (b, a, odds_b)]:
+                h2h_rows.append({
+                    "Rangering": None,
+                    "Manager": player["manager"],
+                    "Lag": player["team"],
+                    "Odds": format_odds(odds),
+                    "Beste plassering": player["best_rank"],
+                    "Snitt siste 3": player["avg_rank_last_3"],
+                    "Utvikling": player["trend"],
+                    "Begrunnelse": h2h_reason(player, opponent),
+                    "Profil": compact_profile(player),
+                    "odds_float": odds,
+                })
+
+            h2h_rows = sorted(h2h_rows, key=lambda row: row["odds_float"])
+
+            for index, row in enumerate(h2h_rows):
+                row["Rangering"] = index + 1
+                row.pop("odds_float", None)
+                market_rows.append(row)
+
+        else:
+            market_rows.extend(group_odds(matched))
+
+    return pd.DataFrame(market_rows), pd.DataFrame(missing_rows)
+
+
+# -----------------------------
+# Norgeskart
+# -----------------------------
+
+def build_place_data() -> pd.DataFrame:
+    places = [
+        {
+            "By": "Bodø",
+            "lat": 67.2804,
+            "lon": 14.4049,
+            "Folk": [
+                "Sindre Kolberg",
+                "Remi Kristiansen",
+                "Rachel Antonsen",
+                "Simen Pedersen",
+                "Roger Westblikk",
+                "Rasmus Skoglund",
+                "Stian Laastad",
+                "Simon Berg Jacobsen",
+            ],
+        },
+        {
+            "By": "Rognan",
+            "lat": 67.0953,
+            "lon": 15.3878,
+            "Folk": [
+                "Andreas Løkås",
+                "Henrik Hagane",
+                "Peter Skarheim",
+                "Joakim Bødker",
+            ],
+        },
+        {
+            "By": "Oslo",
+            "lat": 59.9139,
+            "lon": 10.7522,
+            "Folk": [
+                "Andreas Almli",
+                "Mats Arntzen",
+                "Edward Stenlund",
+            ],
+        },
+        {
+            "By": "Korgen",
+            "lat": 66.0771,
+            "lon": 13.8153,
+            "Folk": [
+                "Jørgen Hatten",
+                "Adrian Drage Valla",
+            ],
+        },
+        {
+            "By": "Mo i Rana",
+            "lat": 66.3128,
+            "lon": 14.1420,
+            "Folk": [
+                "Oskar Brun",
+                "Tobias Nygård",
+                "Sindre Krognes",
+            ],
+        },
+        {
+            "By": "Sarpsborg",
+            "lat": 59.2841,
+            "lon": 11.1094,
+            "Folk": [
+                "Kevin Jørgensen",
+            ],
+        },
+        {
+            "By": "Tromsø",
+            "lat": 69.6492,
+            "lon": 18.9553,
+            "Folk": [
+                "Robin Andersen",
+                "Nickolai Macpherson",
+                "Mikael Dearsley",
+            ],
+        },
+        {
+            "By": "Trondheim",
+            "lat": 63.4305,
+            "lon": 10.3951,
+            "Folk": [
+                "Martin Hatling",
+                "Sindre Samset",
+                "Erik Johnsen",
+            ],
+        },
+        {
+            "By": "Kristiansand",
+            "lat": 58.1467,
+            "lon": 7.9956,
+            "Folk": [
+                "Sander Maxwell Frøyså",
+            ],
+        },
+        {
+            "By": "Bergen",
+            "lat": 60.3913,
+            "lon": 5.3221,
+            "Folk": [
+                "Adrian Auke",
+            ],
+        },
+        {
+            "By": "Narvik",
+            "lat": 68.4385,
+            "lon": 17.4273,
+            "Folk": [
+                "Øyvind Sørensen",
+                "Matz Håheim",
+                "Daniel Eriksson",
+            ],
+        },
+        {
+            "By": "Fauske",
+            "lat": 67.2588,
+            "lon": 15.3918,
+            "Folk": [
+                "Jens Vangen",
+                "Mattias Pettersen",
+                "Michael Jensen Olafsen",
+            ],
+        },
+    ]
+
+    rows = []
+
+    for place in places:
+        count = len(place["Folk"])
+
+        rows.append({
+            "By": place["By"],
+            "lat": place["lat"],
+            "lon": place["lon"],
+            "Antall": count,
+            "Deltakere": ", ".join(place["Folk"]),
+            "Label": f"{place['By']} ({count})",
+            "radius": 12_000 + count * 5_500,
+        })
+
+    return pd.DataFrame(rows)
+
+
+# -----------------------------
+# Session helpers
+# -----------------------------
+
+def ensure_managers_loaded(league_id: int):
+    if "managers" not in st.session_state or st.session_state.get("loaded_league_id") != league_id:
+        league_info, managers, debug = get_league_managers(league_id)
+
+        st.session_state["league_info"] = league_info
+        st.session_state["managers"] = managers
+        st.session_state["debug"] = debug
+        st.session_state["loaded_league_id"] = league_id
+
+
+def ensure_history_loaded(league_id: int):
+    ensure_managers_loaded(league_id)
+
+    if "summary_df" not in st.session_state or st.session_state.get("history_league_id") != league_id:
+        summary_df, seasons_df, errors_df = build_history_tables(st.session_state["managers"])
+
+        st.session_state["summary_df"] = summary_df
+        st.session_state["seasons_df"] = seasons_df
+        st.session_state["errors_df"] = errors_df
+        st.session_state["history_league_id"] = league_id
+
+
+# -----------------------------
+# Labels
+# -----------------------------
+
+LIGATABELL_LABELS = {
+    "rank_display": "Plassering",
+    "form_curve": "Formkurve",
+    "player_name": "Manager",
+    "entry_name": "Lag",
+    "event_total_display": "Rundepoeng",
+    "total_display": "Poeng",
+    "odds_before": "Odds før sesongstart",
+    "best_rank": "Beste plassering",
+    "tag": "Merknad",
+    "tier": "Nivå",
+}
+
+HISTORY_LABELS = {
+    "manager": "Manager",
+    "team": "Lag",
+    "seasons": "Sesonger spilt",
+    "last_season_rank": "Plassering sist",
+    "best_rank": "Beste plassering",
+    "best_season": "Beste sesong",
+    "avg_rank_last_3": "Snitt siste 3",
+    "trend": "Utvikling siste 3",
+    "monthly_titles": "Månedstitler",
+    "merits": "Meritter",
+    "top_100k_seasons": "Topp 100k",
+    "top_500k_seasons": "Topp 500k",
+    "tier": "Nivå",
+    "tag": "Merknad",
+}
+
+SEASON_LABELS = {
+    "manager": "Manager",
+    "team": "Lag",
+    "season_name": "Sesong",
+    "total_points": "Poeng",
+    "rank": "Plassering",
+}
+
+ERROR_LABELS = {
+    "manager": "Manager",
+    "team": "Lag",
+    "entry": "Entry-ID",
+    "error": "Feil",
+}
+
+HOF_LABELS = {
+    "hof_rank": "Hall of Fame-rangering",
+    "display_name": "Manager",
+    "hof_score": "Merittpoeng",
+    "total_titles": "Titler totalt",
+    "overall_count": "Sammenlagtseiere",
+    "overall_runner_up_count": "2. plasser",
+    "overall_third_count": "3. plasser",
+    "cup_count": "Cupgull",
+    "cup_runner_up_count": "Cupsølv",
+    "monthly_titles": "Månedsseiere",
+    "monthly_silver": "Månedssølv",
+    "monthly_bronze": "Månedsbronse",
+    "monthly_podiums": "Månedspodier",
+    "monthly_points": "Månedspoeng",
+    "random_count": "Random",
+    "merits": "Meritter",
+    "overall_seasons": "Sammenlagt-gull",
+    "overall_runner_up_seasons": "Sammenlagt-sølv",
+    "overall_third_seasons": "Sammenlagt-bronse",
+    "cup_seasons": "Cupgull-sesonger",
+    "cup_runner_up_seasons": "Cupsølv-sesonger",
+}
+
+MONTHLY_MEDAL_LABELS = {
+    "monthly_rank": "Månedsrangering",
+    "manager": "Manager",
+    "month_points": "Månedspoeng",
+    "gold": "Gull",
+    "silver": "Sølv",
+    "bronze": "Bronse",
+    "podiums": "Podier",
+}
+
+MONTHLY_PODIUM_LABELS = {
+    "season": "Sesong",
+    "month": "Måned",
+    "place": "Plass",
+    "manager": "Manager",
+    "points": "Poeng",
+}
+
+MONTHLY_CALENDAR_LABELS = {
+    "season": "Sesong",
+    "month": "Måned",
+    "winner": "1. plass",
+    "second_place": "2. plass",
+    "third_place": "3. plass",
+}
+
+MONTH_SPECIALIST_LABELS = {
+    "month": "Måned",
+    "king": "Månedskonge",
+    "king_points": "Poeng",
+    "gold": "Gull",
+    "silver": "Sølv",
+    "bronze": "Bronse",
+    "podiums": "Podier",
+    "top_five": "Toppnavn historisk",
+    "comment": "Vurdering",
+}
+
+OVERALL_LABELS = {
+    "season": "Sesong",
+    "winner": "Vinner",
+    "runner_up": "2. plass",
+    "third_place": "3. plass",
+    "note": "Notat",
+}
+
+CUP_LABELS = {
+    "season": "Sesong",
+    "winner": "Cupvinner",
+    "runner_up": "Finalist",
+}
+
+RANDOM_LABELS = {
+    "season": "Sesong",
+    "winner": "Vinner",
+    "placement": "Plassering",
+}
+
+
+# -----------------------------
+# UI
+# -----------------------------
+
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "Ligatabell",
+    "Historikk",
+    "H2H",
+    "Hall of Fame",
+    "Norgeskart",
+])
+
+
+with tab1:
+    st.header("Ligatabell")
+
+    league_id = st.number_input("Liga-ID", value=DEFAULT_LEAGUE_ID, step=1, key="league_table_id_v6_final")
+
+    if st.button("Hent ligadata"):
+        ensure_history_loaded(int(league_id))
+
+    if "managers" in st.session_state:
+        managers = st.session_state["managers"]
+
+        if not managers:
+            st.warning("Fant ingen påmeldte/managers.")
+        else:
+            table_df = pd.DataFrame(managers)
+            summary_df = st.session_state.get("summary_df", pd.DataFrame())
+
+            if not summary_df.empty:
+                odds_df = build_preseason_odds(summary_df)
+
+                table_df = table_df.merge(
+                    summary_df[[
+                        "entry",
+                        "best_rank",
+                        "best_rank_num",
+                        "tier",
+                        "tag",
+                        "tag_sort",
+                    ]],
+                    on="entry",
+                    how="left",
+                )
+
+                if not odds_df.empty:
+                    table_df = table_df.merge(
+                        odds_df[["entry", "odds", "odds_float"]],
+                        on="entry",
+                        how="left",
+                    )
+                else:
+                    table_df["odds"] = ""
+                    table_df["odds_float"] = None
+            else:
+                table_df["best_rank"] = ""
+                table_df["best_rank_num"] = 999_999_999
+                table_df["tier"] = ""
+                table_df["tag"] = ""
+                table_df["tag_sort"] = 99
+                table_df["odds"] = ""
+                table_df["odds_float"] = None
+
+            table_df["rank_num"] = pd.to_numeric(table_df["rank"], errors="coerce")
+            table_df["last_rank_num"] = pd.to_numeric(table_df["last_rank"], errors="coerce")
+            table_df["event_total_num"] = pd.to_numeric(table_df["event_total"], errors="coerce")
+            table_df["total_num"] = pd.to_numeric(table_df["total"], errors="coerce")
+            table_df["best_rank_num"] = pd.to_numeric(table_df["best_rank_num"], errors="coerce").fillna(999_999_999)
+            table_df["tag_sort"] = pd.to_numeric(table_df["tag_sort"], errors="coerce").fillna(99)
+            table_df["odds_float"] = pd.to_numeric(table_df["odds_float"], errors="coerce")
+
+            table_df["rank_display"] = table_df["rank"].apply(format_rank)
+            table_df["event_total_display"] = table_df["event_total"].fillna("")
+            table_df["total_display"] = table_df["total"].fillna("")
+            table_df["odds_before"] = table_df["odds_float"]
+            table_df["form_delta"] = table_df["last_rank_num"] - table_df["rank_num"]
+
+            def form_curve(row):
+                if pd.isna(row["rank_num"]) or pd.isna(row["last_rank_num"]):
+                    return ""
+
+                delta = int(row["last_rank_num"] - row["rank_num"])
+
+                if delta > 0:
+                    return f"🟢 ▲ {delta}"
+
+                if delta < 0:
+                    return f"🔴 ▼ {abs(delta)}"
+
+                return "⚪ 0"
+
+            table_df["form_curve"] = table_df.apply(form_curve, axis=1)
+
+            has_live_table = table_df["rank_num"].notna().any()
+
+            sort_options = []
+
+            if has_live_table:
+                sort_options.extend([
+                    "Ligaplassering",
+                    "Formkurve",
+                    "Rundepoeng",
+                    "Totalpoeng",
+                ])
+
+            sort_options.extend([
+                "Odds før sesongstart",
+                "Merknad",
+                "Beste plassering",
+                "Manager",
+            ])
+
+            default_sort = "Ligaplassering" if has_live_table else "Odds før sesongstart"
+
+            sort_choice = st.selectbox(
+                "Sorter ligatabell etter",
+                sort_options,
+                index=sort_options.index(default_sort),
+                key="league_sort_v6_final",
+            )
+
+            if sort_choice == "Ligaplassering":
+                table_df = table_df.sort_values(
+                    ["rank_num", "player_name"],
+                    ascending=[True, True],
+                    na_position="last",
+                )
+
+            elif sort_choice == "Formkurve":
+                table_df = table_df.sort_values(
+                    ["form_delta", "rank_num", "player_name"],
+                    ascending=[False, True, True],
+                    na_position="last",
+                )
+
+            elif sort_choice == "Rundepoeng":
+                table_df = table_df.sort_values(
+                    ["event_total_num", "rank_num", "player_name"],
+                    ascending=[False, True, True],
+                    na_position="last",
+                )
+
+            elif sort_choice == "Totalpoeng":
+                table_df = table_df.sort_values(
+                    ["total_num", "rank_num", "player_name"],
+                    ascending=[False, True, True],
+                    na_position="last",
+                )
+
+            elif sort_choice == "Odds før sesongstart":
+                table_df = table_df.sort_values(
+                    ["odds_float", "best_rank_num", "player_name"],
+                    ascending=[True, True, True],
+                    na_position="last",
+                )
+
+            elif sort_choice == "Merknad":
+                table_df = table_df.sort_values(
+                    ["tag_sort", "odds_float", "best_rank_num", "player_name"],
+                    ascending=[True, True, True, True],
+                    na_position="last",
+                )
+
+            elif sort_choice == "Beste plassering":
+                table_df = table_df.sort_values(
+                    ["best_rank_num", "player_name"],
+                    ascending=[True, True],
+                    na_position="last",
+                )
+
+            elif sort_choice == "Manager":
+                table_df = table_df.sort_values(
+                    ["player_name"],
+                    ascending=[True],
+                    na_position="last",
+                )
+
+            columns = [
+                "rank_display",
+                "form_curve",
+                "player_name",
+                "entry_name",
+                "event_total_display",
+                "total_display",
+                "odds_before",
+                "best_rank",
+                "tag",
+                "tier",
+            ]
+
+            display_table(
+                table_df,
+                columns,
+                LIGATABELL_LABELS,
+                column_config={
+                    "odds_before": st.column_config.NumberColumn(
+                        "Odds før sesongstart",
+                        format="%.2f",
+                    )
+                },
+            )
+
+            if not has_live_table:
+                st.caption("Før sesongstart kan tabellen sorteres etter odds, merknad eller beste historiske plassering.")
+
+            st.caption(f"Fant {len(table_df)} lag.")
+
+            st.download_button(
+                label="Last ned ligadata som CSV",
+                data=csv_bytes(table_df, columns, LIGATABELL_LABELS),
+                file_name="fpl_ligatabell.csv",
+                mime="text/csv",
+            )
+
+    if "debug" in st.session_state:
+        with st.expander("Debug"):
+            st.json(st.session_state["debug"])
+
+
+with tab2:
+    st.header("Historikk")
+
+    league_id_history = st.number_input("Liga-ID", value=DEFAULT_LEAGUE_ID, step=1, key="history_id_v6_final")
+
+    if st.button("Hent historikk"):
+        ensure_history_loaded(int(league_id_history))
+
+    if "summary_df" in st.session_state:
+        summary_df = st.session_state["summary_df"]
+        seasons_df = st.session_state["seasons_df"]
+        errors_df = st.session_state["errors_df"]
+
+        if summary_df.empty:
+            st.warning("Fant ingen historikk.")
+        else:
+            sort_choice = st.selectbox(
+                "Sorter historikk etter",
+                [
+                    "Beste plassering",
+                    "Snitt siste 3",
+                    "Siste sesong",
+                    "Merknad",
+                    "Månedstitler",
+                    "Hall of Fame-score",
+                ],
+                key="history_sort_v6_final",
+            )
+
+            sort_map = {
+                "Beste plassering": ("best_rank_num", True),
+                "Snitt siste 3": ("avg_rank_last_3_num", True),
+                "Siste sesong": ("last_season_rank_num", True),
+                "Merknad": ("tag_sort", True),
+                "Månedstitler": ("monthly_titles", False),
+                "Hall of Fame-score": ("hof_score", False),
+            }
+
+            sort_column, ascending = sort_map[sort_choice]
+            summary = summary_df.copy()
+
+            if sort_column in ["best_rank_num", "avg_rank_last_3_num", "last_season_rank_num"]:
+                summary[sort_column] = summary[sort_column].fillna(999_999_999)
+
+            summary = summary.sort_values(
+                [sort_column, "manager"],
+                ascending=[ascending, True],
+            ).reset_index(drop=True)
+
+            columns = [
+                "manager",
+                "team",
+                "seasons",
+                "last_season_rank",
+                "best_rank",
+                "best_season",
+                "avg_rank_last_3",
+                "trend",
+                "monthly_titles",
+                "merits",
+                "top_100k_seasons",
+                "top_500k_seasons",
+                "tier",
+                "tag",
+            ]
+
+            display_table(summary, columns, HISTORY_LABELS)
+
+            st.download_button(
+                label="Last ned historikk som CSV",
+                data=csv_bytes(summary, columns, HISTORY_LABELS),
+                file_name="fpl_historikk.csv",
+                mime="text/csv",
+            )
+
+            st.subheader("Radar")
+
+            radar_cols = st.columns(4)
+
+            with radar_cols[0]:
+                peak = summary_df.sort_values("best_rank_num").iloc[0]
+                st.metric("Beste all-time plassering", peak["manager"], peak["best_rank"])
+
+            with radar_cols[1]:
+                form = summary_df.sort_values("last_season_rank_num").iloc[0]
+                st.metric("Best sist sesong", form["manager"], form["last_season_rank"])
+
+            with radar_cols[2]:
+                proven = summary_df.sort_values("top_100k_seasons", ascending=False).iloc[0]
+                st.metric("Flest topp 100k", proven["manager"], int(proven["top_100k_seasons"]))
+
+            with radar_cols[3]:
+                hof = summary_df.sort_values("hof_score", ascending=False).iloc[0]
+                st.metric("Mest merittert", hof["manager"], int(hof["hof_score"]))
+
+            with st.expander("Merknad-forklaring"):
+                st.write(
+                    """
+                    **Tittelkandidat:** høy rating, lav før-sesong-odds eller sterk historikk.  
+                    **Outsider:** mange gode sesonger eller flere topp 100k / topp 500k.  
+                    **Dark horse:** høy peak, men svakere/rotete nyere historikk, eller to gode sesonger på rad etter svakere historikk.  
+                    **Stabil traver:** mye historikk og jevnt OK nivå, men ikke åpenbar vinnerprofil.  
+                    **Usikkert kort:** svakere historikk, lavere modellstyrke eller svak siste periode.  
+                    **Rookie:** for få sesonger.
+                    """
+                )
+
+            with st.expander("Alle tidligere sesonger"):
+                season_columns = ["manager", "team", "season_name", "total_points", "rank"]
+                display_table(seasons_df, season_columns, SEASON_LABELS)
+
+                st.download_button(
+                    label="Last ned alle sesonger som CSV",
+                    data=csv_bytes(seasons_df, season_columns, SEASON_LABELS),
+                    file_name="fpl_alle_sesonger.csv",
+                    mime="text/csv",
+                )
+
+        if not errors_df.empty:
+            st.warning("Noen feilet ved historikkhenting.")
+            display_table(errors_df, ["manager", "team", "entry", "error"], ERROR_LABELS)
+
+
+with tab3:
+    st.header("H2H")
+
+    st.write("Skriv én duell eller gruppe per linje. Bruk `vs` mellom navnene.")
+
+    league_id_markets = st.number_input("Liga-ID", value=DEFAULT_LEAGUE_ID, step=1, key="markets_id_v6_final")
+    market_text = st.text_area("Dueller/grupper", value="", height=320)
+
+    if st.button("Lag H2H-odds"):
+        ensure_history_loaded(int(league_id_markets))
+        summary_df = st.session_state["summary_df"]
+
+        market_df, missing_df = analyze_markets(summary_df, market_text)
+
+        if not market_df.empty:
+            st.subheader("Odds")
+
+            st.dataframe(market_df, use_container_width=True, hide_index=True)
+
+            st.download_button(
+                label="Last ned H2H-odds som CSV",
+                data=market_df.to_csv(index=False).encode("utf-8"),
+                file_name="fpl_h2h_odds.csv",
+                mime="text/csv",
+            )
+        else:
+            st.warning("Fant ingen markeder å vise.")
+
+        if not missing_df.empty:
+            with st.expander("Navn appen ikke fant sikkert treff på"):
+                st.dataframe(missing_df, use_container_width=True, hide_index=True)
+
+
+with tab4:
+    st.header("Hall of Fame")
+
+    hof_df = build_hof_people()
+
+    if hof_df.empty:
+        st.warning("Fant ingen Hall of Fame-data.")
+    else:
+        most_decorated = hof_df.sort_values("hof_score", ascending=False).iloc[0]
+        monthly_king = hof_df.sort_values("monthly_titles", ascending=False).iloc[0]
+        overall_king = hof_df.sort_values("overall_count", ascending=False).iloc[0]
+
+        c1, c2, c3 = st.columns(3)
+
+        with c1:
+            st.metric("Mest merittert", most_decorated["display_name"], int(most_decorated["hof_score"]))
+
+        with c2:
+            st.metric("Flest månedsseiere", monthly_king["display_name"], int(monthly_king["monthly_titles"]))
+
+        with c3:
+            st.metric("Flest sammenlagtseiere", overall_king["display_name"], int(overall_king["overall_count"]))
+
+        st.subheader("Meritt-tabell")
+
+        hof_columns = [
+            "hof_rank",
+            "display_name",
+            "hof_score",
+            "total_titles",
+            "overall_count",
+            "overall_runner_up_count",
+            "overall_third_count",
+            "cup_count",
+            "cup_runner_up_count",
+            "monthly_titles",
+            "monthly_silver",
+            "monthly_bronze",
+            "monthly_podiums",
+            "merits",
+        ]
+
+        display_table(hof_df, hof_columns, HOF_LABELS)
+
+        st.download_button(
+            label="Last ned Hall of Fame som CSV",
+            data=csv_bytes(hof_df, hof_columns, HOF_LABELS),
+            file_name="fpl_hall_of_fame.csv",
+            mime="text/csv",
+        )
+
+        with st.expander("Sesongdetaljer per manager"):
+            detail_columns = [
+                "display_name",
+                "overall_seasons",
+                "overall_runner_up_seasons",
+                "overall_third_seasons",
+                "cup_seasons",
+                "cup_runner_up_seasons",
+                "random_notes",
+            ]
+            display_table(hof_df, detail_columns, HOF_LABELS)
+
+        st.subheader("Månedskonger")
+
+        month_specialists = build_month_specialist_table()
+
+        if month_specialists.empty:
+            st.warning("Fant ingen månedskonge-data.")
+        else:
+            month_specialist_columns = [
+                "month",
+                "king",
+                "king_points",
+                "gold",
+                "silver",
+                "bronze",
+                "podiums",
+                "top_five",
+                "comment",
+            ]
+
+            display_table(
+                month_specialists,
+                month_specialist_columns,
+                MONTH_SPECIALIST_LABELS,
+            )
+
+        st.subheader("Månedsliga")
+
+        monthly_df = build_monthly_podium_df()
+
+        if monthly_df.empty:
+            st.warning("Fant ingen månedspodier.")
+        else:
+            seasons = ["Alle"] + sorted(monthly_df["season"].dropna().unique().tolist())
+
+            selected_season = st.selectbox(
+                "Velg sesong",
+                seasons,
+                key="monthly_season_filter_v6_final",
+            )
+
+            monthly_medals = build_monthly_medal_table(selected_season)
+
+            medal_columns = [
+                "monthly_rank",
+                "manager",
+                "month_points",
+                "gold",
+                "silver",
+                "bronze",
+                "podiums",
+            ]
+
+            display_table(monthly_medals, medal_columns, MONTHLY_MEDAL_LABELS)
+
+            with st.expander("Måned for måned"):
+                calendar_df = build_monthly_calendar_table(selected_season)
+                calendar_columns = ["season", "month", "winner", "second_place", "third_place"]
+                display_table(calendar_df, calendar_columns, MONTHLY_CALENDAR_LABELS)
+
+            with st.expander("Månedspodier"):
+                podium_view = monthly_df.copy()
+
+                if selected_season != "Alle":
+                    podium_view = podium_view[podium_view["season"] == selected_season]
+
+                podium_columns = ["season", "month", "place", "manager", "points"]
+                display_table(podium_view, podium_columns, MONTHLY_PODIUM_LABELS)
+
+        st.subheader("Sammenlagtvinnere")
+        overall_df = pd.DataFrame(HOF_OVERALL)
+        display_table(overall_df, ["season", "winner", "runner_up", "third_place", "note"], OVERALL_LABELS)
+
+        st.subheader("Cupvinnere")
+        cup_df = pd.DataFrame(HOF_CUP)
+        display_table(cup_df, ["season", "winner", "runner_up"], CUP_LABELS)
+
+        st.subheader("Random plassering")
+        random_df = pd.DataFrame(HOF_RANDOM)
+        display_table(random_df, ["season", "winner", "placement"], RANDOM_LABELS)
+
+
+with tab5:
+    st.header("Norgeskart")
+
+    st.write("Geografisk fordeling av managerne i ligaen.")
+
+    place_df = build_place_data()
+
+    total_people = int(place_df["Antall"].sum())
+    top_city = place_df.sort_values("Antall", ascending=False).iloc[0]
+
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        st.metric("Registrerte på kartet", total_people)
+
+    with c2:
+        st.metric("Byer/steder", len(place_df))
+
+    with c3:
+        st.metric("Største miljø", top_city["By"], int(top_city["Antall"]))
+
+    if total_people != 36:
+        st.info(
+            f"Kartlista summerer til {total_people}. Ligaen har trolig 36 påmeldte, "
+            "så én person mangler sted i lista."
+        )
+
+    if pdk is not None:
+        layer = pdk.Layer(
+            "ScatterplotLayer",
+            data=place_df,
+            get_position="[lon, lat]",
+            get_radius="radius",
+            get_fill_color="[255, 70, 70, 170]",
+            get_line_color="[80, 0, 0]",
+            line_width_min_pixels=1,
+            pickable=True,
+        )
+
+        text_layer = pdk.Layer(
+            "TextLayer",
+            data=place_df,
+            get_position="[lon, lat]",
+            get_text="Label",
+            get_size=16,
+            get_color="[30, 30, 30]",
+            get_text_anchor='"middle"',
+            get_alignment_baseline='"bottom"',
+        )
+
+        view_state = pdk.ViewState(latitude=64.9, longitude=13.5, zoom=4.0, pitch=25)
+
+        deck = pdk.Deck(
+            map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+            initial_view_state=view_state,
+            layers=[layer, text_layer],
+            tooltip={
+                "html": "<b>{By}</b><br/>{Antall} managers<br/>{Deltakere}",
+                "style": {"backgroundColor": "white", "color": "black"},
+            },
+        )
+
+        st.pydeck_chart(deck, use_container_width=True)
+
+    else:
+        map_df = place_df.rename(columns={"lat": "latitude", "lon": "longitude"})
+        st.map(map_df, latitude="latitude", longitude="longitude")
+
+    st.subheader("Byranking")
+
+    city_rank = place_df.sort_values(["Antall", "By"], ascending=[False, True]).copy()
+
+    st.bar_chart(city_rank.set_index("By")["Antall"])
+
+    st.dataframe(
+        city_rank[["By", "Antall", "Deltakere"]],
+        use_container_width=True,
+        hide_index=True,
+    )
