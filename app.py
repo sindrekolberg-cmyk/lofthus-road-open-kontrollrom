@@ -21,7 +21,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-kontrollrom-v16-launch-fix"
+APP_VERSION = "lofthus-road-open-kontrollrom-v17-map-cards-fix"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -1941,19 +1941,27 @@ def render_league_table_component(table_df: pd.DataFrame, seasons_df: pd.DataFra
 
 
 def render_city_cards(place_df: pd.DataFrame):
-    cards = ['<div class="city-grid">']
-    for _, row in place_df.sort_values(["Antall", "By"], ascending=[False, True]).iterrows():
-        cards.append(
-            f'''
-            <div class="city-card">
-                <div class="city-title">{html.escape(str(row.get("By", "")))} · {int(row.get("Antall", 0))} managere</div>
-                <div class="city-people">{html.escape(str(row.get("Deltakere", "")))}</div>
-            </div>
-            '''
-        )
-    cards.append('</div>')
-    st.markdown("".join(cards), unsafe_allow_html=True)
+    """Render place cards with native Streamlit elements.
 
+    This deliberately avoids feeding a large indented HTML string to st.markdown,
+    because Markdown can interpret indented HTML as a code block in some cases.
+    """
+    ordered = place_df.sort_values(["Antall", "By"], ascending=[False, True]).reset_index(drop=True)
+
+    if ordered.empty:
+        return
+
+    cols = st.columns(2)
+
+    for index, row in ordered.iterrows():
+        count = int(row.get("Antall", 0))
+        label = "manager" if count == 1 else "managere"
+        people = str(row.get("Deltakere", ""))
+
+        with cols[index % 2]:
+            with st.container(border=True):
+                st.markdown(f"**{row.get('By', '')} · {count} {label}**")
+                st.caption(people)
 
 def build_season_radar_tables(managers: list[dict], summary_df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     if not managers:
