@@ -21,7 +21,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-kontrollrom-v23-launch-tightening"
+APP_VERSION = "lofthus-road-open-kontrollrom-v25-history-no-merknad"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -2112,8 +2112,6 @@ def render_history_table_component(summary: pd.DataFrame, seasons_df: pd.DataFra
             "avg3": avg3,
             "hofScore": None if pd.isna(row.get("hof_score")) else int(row.get("hof_score")),
             "merits": clean_cell(row.get("merits")),
-            "tag": clean_invisible(row.get("tag_display") or row.get("tag") or ""),
-            "tagSort": 99 if pd.isna(row.get("tag_sort")) else int(row.get("tag_sort")),
         })
 
     rows_json = json.dumps(rows, ensure_ascii=False)
@@ -2133,7 +2131,6 @@ def render_history_table_component(summary: pd.DataFrame, seasons_df: pd.DataFra
           <th data-key="avg3" class="sortable col-avg">Snitt siste tre sesonger</th>
           <th data-key="hofScore" class="sortable col-merit">Merittpoeng</th>
           <th data-key="merits" class="sortable">Meritter</th>
-          <th data-key="tagSort" class="sortable">Merknad</th>
         </tr></thead>
         <tbody id="lro-history-body"></tbody>
       </table>
@@ -2144,22 +2141,25 @@ def render_history_table_component(summary: pd.DataFrame, seasons_df: pd.DataFra
       .lro-table {{border-collapse:collapse;width:100%;font-size:13.5px;border:1px solid #e5e7eb;border-radius:14px;overflow:hidden;}}
       .lro-table th {{text-align:left;background:#f8fafc;color:#334155;padding:12px 10px;border-bottom:1px solid #e5e7eb;cursor:pointer;user-select:none;white-space:nowrap;}}
       .lro-table td {{padding:10px 10px;border-bottom:1px solid #eef2f7;color:#0f172a;vertical-align:top;}}
-      .lro-table tr:hover td {{background:#fafafa;}}
-      .lro-table .col-last {{background:#eff6ff;}}
-      .lro-table .col-best {{background:#fff7ed;}}
-      .lro-table .col-avg {{background:#f0fdf4;}}
-      .lro-table .col-merit {{background:#fffbeb;}}
-      .lro-table td.col-last {{background:#dbeafe;font-weight:750;}}
-      .lro-table td.col-best {{background:#ffedd5;font-weight:750;}}
-      .lro-table td.col-avg {{background:#dcfce7;font-weight:750;}}
-      .lro-table td.col-merit {{background:#fef3c7;font-weight:850;}}
+      .lro-table tr:hover td {{background:#f8fafc;}}
+      .lro-table .col-last,
+      .lro-table .col-best,
+      .lro-table .col-avg,
+      .lro-table .col-merit {{background:#f8fafc;}}
+      .lro-table td.col-last,
+      .lro-table td.col-best,
+      .lro-table td.col-avg,
+      .lro-table td.col-merit {{background:white;font-weight:750;}}
+      .lro-table td.col-merit {{font-weight:850;}}
       .manager-link {{font-weight:850;color:#7f1d1d;cursor:pointer;text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px;}}
-      .badge-tag {{display:inline-block;border-radius:999px;padding:3px 8px;background:#f1f5f9;color:#334155;font-weight:700;font-size:12px;white-space:nowrap;}}
-      .history-detail {{background:#0f172a!important;color:white!important;padding:14px!important;}}
-      .history-detail table {{width:100%;border-collapse:collapse;margin-top:8px;}}
-      .history-detail th,.history-detail td {{color:white;border-bottom:1px solid rgba(255,255,255,0.12);padding:6px 8px;text-align:left;}}
+      .history-detail {{background:#f8fafc!important;color:#0f172a!important;padding:16px!important;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;}}
+      .history-detail strong {{display:block;color:#0f172a!important;font-size:15px;margin-bottom:10px;}}
+      .history-detail table {{width:100%;border-collapse:collapse;margin-top:8px;background:white;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;}}
+      .history-detail th {{background:#f1f5f9!important;color:#334155!important;font-weight:800;border-bottom:1px solid #e5e7eb;padding:8px 10px;text-align:left;}}
+      .history-detail td {{background:white!important;color:#0f172a!important;border-bottom:1px solid #eef2f7;padding:8px 10px;text-align:left;}}
+      .history-detail tr:hover td {{background:#f8fafc!important;}}
       .sort-mark {{margin-left:6px;font-size:11px;color:#b91c1c;}}
-      .merits-cell {{max-width:460px;line-height:1.35;}}
+      .merits-cell {{max-width:620px;line-height:1.35;}}
     </style>
     <script>
       const historyRows = {rows_json};
@@ -2172,7 +2172,7 @@ def render_history_table_component(summary: pd.DataFrame, seasons_df: pd.DataFra
       function fmtNum(value) {{ if (value === null || value === undefined || Number.isNaN(value)) return ''; return Number(value).toLocaleString('nb-NO'); }}
       function fmtBest(row) {{ const base = fmtNum(row.bestRank); if (!base) return ''; return row.bestSeason ? `${{base}} (${{esc(row.bestSeason)}})` : base; }}
       function compareRows(a,b) {{
-        const numericKeys = new Set(['meritRank','seasons','lastRank','bestRank','avg3','hofScore','tagSort']);
+        const numericKeys = new Set(['meritRank','seasons','lastRank','bestRank','avg3','hofScore']);
         let av=a[sortKey]; let bv=b[sortKey];
         if (numericKeys.has(sortKey)) {{
           const am=av===null||av===undefined||Number.isNaN(av); const bm=bv===null||bv===undefined||Number.isNaN(bv);
@@ -2180,7 +2180,6 @@ def render_history_table_component(summary: pd.DataFrame, seasons_df: pd.DataFra
           if(am) return 1; if(bm) return -1;
           const diff=sortDir==='asc'?av-bv:bv-av;
           if(diff!==0) return diff;
-          if(sortKey==='tagSort') return a.hofScore===b.hofScore ? String(a.manager).localeCompare(String(b.manager),'nb') : b.hofScore-a.hofScore;
           return String(a.manager).localeCompare(String(b.manager),'nb');
         }}
         av=String(av||'').toLowerCase(); bv=String(bv||'').toLowerCase();
@@ -2190,13 +2189,13 @@ def render_history_table_component(summary: pd.DataFrame, seasons_df: pd.DataFra
         const data=histories[row.entry]||[];
         const rows=data.map(item=>`<tr><td>${{esc(item.season)}}</td><td>${{fmtNum(item.points)}}</td><td>${{fmtNum(item.rank)}}</td></tr>`).join('');
         const empty=data.length?'':'<div>Fant ikke tidligere sesonger.</div>';
-        return `<tr><td colspan="10" class="history-detail"><strong>Full FPL-historikk: ${{esc(row.manager)}}</strong>${{empty}}<table><thead><tr><th>Sesong</th><th>Poeng</th><th>FPL-plassering</th></tr></thead><tbody>${{rows}}</tbody></table></td></tr>`;
+        return `<tr><td colspan="9" class="history-detail"><strong>Full FPL-historikk: ${{esc(row.manager)}}</strong>${{empty}}<table><thead><tr><th>Sesong</th><th>Poeng</th><th>FPL-plassering</th></tr></thead><tbody>${{rows}}</tbody></table></td></tr>`;
       }}
       function render() {{
         const sorted=[...historyRows].sort(compareRows); tbody.innerHTML='';
         sorted.forEach(row=>{{
           const tr=document.createElement('tr');
-          tr.innerHTML=`<td><strong>${{esc(row.rankLabel)}}</strong></td><td><span class="manager-link" data-entry="${{esc(row.entry)}}">${{esc(row.manager)}}</span></td><td>${{esc(row.team)}}</td><td>${{fmtNum(row.seasons)}}</td><td class="col-last">${{fmtNum(row.lastRank)}}</td><td class="col-best">${{fmtBest(row)}}</td><td class="col-avg">${{fmtNum(row.avg3)}}</td><td class="col-merit">${{fmtNum(row.hofScore)}}</td><td class="merits-cell">${{esc(row.merits)}}</td><td><span class="badge-tag">${{esc(row.tag)}}</span></td>`;
+          tr.innerHTML=`<td><strong>${{esc(row.rankLabel)}}</strong></td><td><span class="manager-link" data-entry="${{esc(row.entry)}}">${{esc(row.manager)}}</span></td><td>${{esc(row.team)}}</td><td>${{fmtNum(row.seasons)}}</td><td class="col-last">${{fmtNum(row.lastRank)}}</td><td class="col-best">${{fmtBest(row)}}</td><td class="col-avg">${{fmtNum(row.avg3)}}</td><td class="col-merit">${{fmtNum(row.hofScore)}}</td><td class="merits-cell">${{esc(row.merits)}}</td>`;
           tbody.appendChild(tr);
           if(activeEntry===row.entry) tbody.insertAdjacentHTML('beforeend', detailRow(row));
         }});
@@ -2461,7 +2460,6 @@ HISTORY_LABELS = {
     "top_100k_seasons": "Topp 100k",
     "top_500k_seasons": "Topp 500k",
     "tier_display": "Nivå",
-    "tag_display": "Merknad",
 }
 
 SEASON_LABELS = {
@@ -2673,7 +2671,7 @@ with tab1:
 
 with tab2:
     st.header("Historikk")
-    lro_note("Fortid, ikke framtid", "Historikken viser tidligere FPL-sesonger, beste plassering, siste tre sesonger og meritter fra Lofthus Road Open. Tabellen er sortert på merittpoeng som standard.", "")
+    lro_note("Fortid, ikke framtid", "Historikken viser tidligere FPL-sesonger, beste plassering, snitt siste tre sesonger og meritter fra Lofthus Road Open. Trykk på et manager-navn for full FPL-historikk.", "")
 
     if st.button("Hent historikk"):
         ensure_history_loaded(DEFAULT_LEAGUE_ID)
@@ -2697,7 +2695,7 @@ with tab2:
 
             history_download = summary[[
                 "merit_rank", "manager", "team", "seasons", "last_season_rank_num",
-                "best_rank_num", "best_season", "avg_rank_last_3_num", "hof_score", "merits", "tag"
+                "best_rank_num", "best_season", "avg_rank_last_3_num", "hof_score", "merits"
             ]].rename(columns={
                 "merit_rank": "Rangering",
                 "manager": "Manager",
@@ -2709,7 +2707,6 @@ with tab2:
                 "avg_rank_last_3_num": "Snitt siste tre sesonger",
                 "hof_score": "Merittpoeng",
                 "merits": "Meritter",
-                "tag": "Merknad",
             })
 
             st.download_button(
@@ -2737,17 +2734,6 @@ with tab2:
                 ])
                 st.dataframe(weights, use_container_width=True, hide_index=True)
 
-            with st.expander("Merknad-forklaring"):
-                st.write(
-                    """
-                    **Tittelkandidat:** høy rating, lav før-sesong-odds eller sterk historikk.  
-                    **Outsider:** mange gode sesonger eller flere topp 100k / topp 500k.  
-                    **Dark horse:** høy peak, men svakere/rotete nyere historikk, eller to gode sesonger på rad etter svakere historikk.  
-                    **Stabil traver:** mye historikk og jevnt OK nivå, men ikke åpenbar vinnerprofil.  
-                    **Usikkert kort:** svakere historikk, lavere modellstyrke eller svak siste periode.  
-                    **Rookie:** for få sesonger.
-                    """
-                )
 
             with st.expander("Alle tidligere sesonger"):
                 season_columns = ["manager", "team", "season_name", "total_points", "rank"]
