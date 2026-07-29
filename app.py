@@ -21,7 +21,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-kontrollrom-v34-stable-nav"
+APP_VERSION = "lofthus-road-open-kontrollrom-v35-nav-predicted"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -222,10 +222,18 @@ st.markdown(
             margin-bottom: 18px;
         }
 
-        /* Stable top navigation. Uses Streamlit radio instead of tabs so only the
-           selected page is rendered. This avoids the manager-profile jump and cuts lag. */
-        div[role="radiogroup"] {gap: .35rem; margin-bottom: .7rem;}
-        div[role="radiogroup"] label {border-radius: 999px; padding: 4px 8px;}
+        /* Stable navigation. Avoids Streamlit tabs/radio dots and renders only the selected page. */
+        .stButton > button {
+            border-radius: 999px;
+            border: 1px solid #d1d5db;
+            font-weight: 750;
+            padding: 0.45rem 0.75rem;
+        }
+        .stButton > button[kind="primary"] {
+            background: #111827;
+            border-color: #111827;
+            color: white;
+        }
 
         @media (max-width: 760px) {
             .lro-hero {padding: 24px 22px; border-radius: 20px;}
@@ -2686,7 +2694,141 @@ def render_month_king_cards(month_specialists: pd.DataFrame):
                         st.caption(f"{leaders_count} på topp")
                     else:
                         st.markdown(f"**{row.get('king', '')}**")
-                    st.caption(f"{int(row.get('king_points') or 0)} poeng")
+
+
+def nav_choice(label: str, options: list[str], key: str, default: str | None = None) -> str:
+    """Stable pill/button navigation without radio dots."""
+    if not options:
+        return ""
+
+    if key not in st.session_state or st.session_state[key] not in options:
+        st.session_state[key] = default or options[0]
+
+    segmented = getattr(st, "segmented_control", None)
+    if callable(segmented):
+        try:
+            choice = segmented(
+                label or "Velg",
+                options,
+                default=st.session_state[key],
+                key=f"{key}_segmented",
+                label_visibility="collapsed" if not label else "visible",
+            )
+            if choice and choice in options:
+                st.session_state[key] = choice
+            return st.session_state[key]
+        except Exception:
+            pass
+
+    cols = st.columns(len(options))
+    for option, col in zip(options, cols):
+        safe = re.sub(r"[^a-zA-Z0-9_]+", "_", option).strip("_").lower()
+        with col:
+            if st.button(
+                option,
+                key=f"{key}_btn_{safe}",
+                type="primary" if st.session_state[key] == option else "secondary",
+                use_container_width=True,
+            ):
+                st.session_state[key] = option
+                st.rerun()
+
+    return st.session_state[key]
+
+
+def render_prediction_table_component(odds_df: pd.DataFrame):
+    if odds_df.empty:
+        st.caption("Fant ikke nok historikk til å lage tabelltips.")
+        return
+
+    rows = []
+    for index, row in odds_df.reset_index(drop=True).iterrows():
+        best_rank = pd.to_numeric(row.get("best_rank_num"), errors="coerce")
+        last_rank = pd.to_numeric(row.get("last_season_rank_num"), errors="coerce")
+        avg3 = pd.to_numeric(row.get("avg_rank_last_3_num"), errors="coerce")
+        rows.append({
+            "tip": int(index + 1),
+            "manager": clean_cell(row.get("manager")),
+            "winOdds": None if pd.isna(row.get("odds_float")) else float(row.get("odds_float")),
+            "top3Odds": None if pd.isna(row.get("top3_odds_float")) else float(row.get("top3_odds_float")),
+            "lastRank": None if pd.isna(last_rank) else int(last_rank),
+            "avg3": None if pd.isna(avg3) else int(avg3),
+            "bestRank": None if pd.isna(best_rank) else int(best_rank),
+            "bestSeason": clean_cell(row.get("best_season")),
+            "merits": clean_cell(row.get("merits")),
+        })
+
+    rows_json = json.dumps(rows, ensure_ascii=False)
+    component_html = """
+    <div class="lro-table-wrap lro-prediction-wrap">
+      <div class="lro-table-note">Modellens tabelltips før sesongstart. Trykk på kolonneoverskriftene for å sortere.</div>
+      <table class="lro-table lro-prediction-table">
+        <thead><tr>
+          <th data-key="tip" class="sortable">Tips</th>
+          <th data-key="manager" class="sortable">Manager</th>
+          <th data-key="winOdds" class="sortable col-win">Vinnerodds</th>
+          <th data-key="top3Odds" class="sortable col-top3">Topp 3-odds</th>
+          <th data-key="lastRank" class="sortable">Plassering forrige sesong</th>
+          <th data-key="avg3" class="sortable">Snitt siste tre sesonger</th>
+          <th data-key="bestRank" class="sortable">Beste FPL-plassering</th>
+          <th data-key="merits" class="sortable">Lofthus Road Open-meritter</th>
+        </tr></thead>
+        <tbody id="lro-prediction-body"></tbody>
+      </table>
+    </div>
+    <style>
+      .lro-prediction-wrap {font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;}
+      .lro-table-note {font-size:13px;color:#64748b;margin:0 0 10px 0;}
+      .lro-table {border-collapse:collapse;width:100%;font-size:13.5px;border:1px solid #e5e7eb;border-radius:14px;overflow:hidden;}
+      .lro-table th {text-align:left;background:#f8fafc;color:#334155;padding:12px 10px;border-bottom:1px solid #e5e7eb;cursor:pointer;user-select:none;white-space:nowrap;}
+      .lro-table td {padding:10px 10px;border-bottom:1px solid #eef2f7;color:#0f172a;vertical-align:top;}
+      .lro-table tr:hover td {background:#f8fafc;}
+      .lro-table .col-win {background:#fff7ed;}
+      .lro-table .col-top3 {background:#eff6ff;}
+      .lro-table td.col-win {background:#ffedd5;font-weight:850;}
+      .lro-table td.col-top3 {background:#dbeafe;font-weight:850;}
+      .tip-cell {font-weight:900;white-space:nowrap;}
+      .merits-cell {max-width:520px;line-height:1.35;}
+      .sort-mark {margin-left:6px;font-size:11px;color:#334155;}
+    </style>
+    <script>
+      const predictionRows = __ROWS__;
+      let sortKey = 'tip';
+      let sortDir = 'asc';
+      const tbody = document.getElementById('lro-prediction-body');
+      function esc(value) { if (value === null || value === undefined) return ''; return String(value).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+      function fmtNum(value) { if (value === null || value === undefined || Number.isNaN(value)) return ''; return Number(value).toLocaleString('nb-NO'); }
+      function fmtOdds(value) { if (value === null || value === undefined || Number.isNaN(value)) return ''; return Number(value).toFixed(2); }
+      function medal(index) { return index === 0 ? '🥇 ' : index === 1 ? '🥈 ' : index === 2 ? '🥉 ' : ''; }
+      function fmtBest(row) { const base = fmtNum(row.bestRank); if (!base) return ''; return row.bestSeason ? `${base} (${esc(row.bestSeason)})` : base; }
+      function compareRows(a,b) {
+        const numericKeys = new Set(['tip','winOdds','top3Odds','lastRank','avg3','bestRank']);
+        let av=a[sortKey]; let bv=b[sortKey];
+        if (numericKeys.has(sortKey)) {
+          const am=av===null||av===undefined||Number.isNaN(av); const bm=bv===null||bv===undefined||Number.isNaN(bv);
+          if(am&&bm) return String(a.manager).localeCompare(String(b.manager),'nb');
+          if(am) return 1; if(bm) return -1;
+          const diff=sortDir==='asc'?av-bv:bv-av;
+          if(diff!==0) return diff;
+          return String(a.manager).localeCompare(String(b.manager),'nb');
+        }
+        av=String(av||'').toLowerCase(); bv=String(bv||'').toLowerCase();
+        return sortDir==='asc'?av.localeCompare(bv,'nb'):bv.localeCompare(av,'nb');
+      }
+      function render() {
+        const sorted=[...predictionRows].sort(compareRows); tbody.innerHTML='';
+        sorted.forEach((row,index)=>{
+          const tr=document.createElement('tr');
+          tr.innerHTML=`<td><span class="tip-cell">${medal(index)}${fmtNum(row.tip)}</span></td><td><strong>${esc(row.manager)}</strong></td><td class="col-win">${fmtOdds(row.winOdds)}</td><td class="col-top3">${fmtOdds(row.top3Odds)}</td><td>${fmtNum(row.lastRank)}</td><td>${fmtNum(row.avg3)}</td><td>${fmtBest(row)}</td><td class="merits-cell">${esc(row.merits)}</td>`;
+          tbody.appendChild(tr);
+        });
+        document.querySelectorAll('.lro-prediction-table th.sortable').forEach(th=>{const key=th.getAttribute('data-key'); th.querySelectorAll('.sort-mark').forEach(s=>s.remove()); if(key===sortKey){const span=document.createElement('span'); span.className='sort-mark'; span.textContent=sortDir==='asc'?'▲':'▼'; th.appendChild(span);}});
+      }
+      document.querySelectorAll('.lro-prediction-table th.sortable').forEach(th=>{th.addEventListener('click',()=>{const key=th.getAttribute('data-key'); if(sortKey===key){sortDir=sortDir==='asc'?'desc':'asc';} else {sortKey=key; sortDir=(key==='manager'||key==='merits')?'asc':'asc';} render();});});
+      render();
+    </script>
+    """.replace("__ROWS__", rows_json)
+    components.html(component_html, height=820, scrolling=True)
 
 def render_preseason_radar_preview():
     st.info("Sesongradaren våkner når ligaen får live plasseringer og runde-data fra FPL.")
@@ -2999,7 +3141,6 @@ MONTHLY_CALENDAR_LABELS = {
 MONTH_SPECIALIST_LABELS = {
     "month": "Måned",
     "king": "Månedskonge(r)",
-    "king_points": "Poeng",
     "gold": "1. plass",
     "silver": "2. plass",
     "bronze": "3. plass",
@@ -3071,13 +3212,7 @@ NUMERIC_CONFIG = {
 # -----------------------------
 
 MAIN_PAGES = ["Ligatabell", "Sesongradar", "Odds", "Hall of Fame og historikk"]
-main_page = st.radio(
-    "Hovedmeny",
-    MAIN_PAGES,
-    horizontal=True,
-    label_visibility="collapsed",
-    key="main_page_v34",
-)
+main_page = nav_choice("", MAIN_PAGES, "main_page_v35", default="Ligatabell")
 
 
 if main_page == "Ligatabell":
@@ -3089,6 +3224,8 @@ if main_page == "Ligatabell":
         if not managers:
             st.warning("Fant ingen påmeldte/managere.")
         else:
+            league_view = nav_choice("", ["Ligatabell", "Predicted tabell"], "league_view_v35", default="Ligatabell")
+
             table_df = pd.DataFrame(managers)
             table_df["rank_num"] = pd.to_numeric(table_df["rank"], errors="coerce")
             table_df["last_rank_num"] = pd.to_numeric(table_df["last_rank"], errors="coerce")
@@ -3098,28 +3235,40 @@ if main_page == "Ligatabell":
             table_df["form_delta"] = table_df["last_rank_num"] - table_df["rank_num"]
 
             has_live_table = table_df["rank_num"].notna().any()
-            if has_live_table:
-                table_df = table_df.sort_values(["rank_num", "player_name"], ascending=[True, True], na_position="last")
+
+            if league_view == "Predicted tabell":
+                ensure_history_for_page()
+                summary_df = st.session_state.get("summary_df", pd.DataFrame())
+
+                if summary_df.empty:
+                    st.warning("Fant ikke nok historikk til å lage predicted tabell.")
+                else:
+                    odds_df = build_preseason_odds(summary_df)
+                    st.subheader("Predicted tabell")
+                    st.caption("Modellens før-sesongtips basert på FPL-historikk, fersk form og Lofthus Road Open-meritter.")
+                    render_prediction_table_component(odds_df)
             else:
-                table_df = table_df.sort_values(["player_name"], ascending=[True], na_position="last")
+                if has_live_table:
+                    table_df = table_df.sort_values(["rank_num", "player_name"], ascending=[True, True], na_position="last")
+                else:
+                    table_df = table_df.sort_values(["player_name"], ascending=[True], na_position="last")
 
-            render_league_table_component(table_df, has_live_table)
+                render_league_table_component(table_df, has_live_table)
 
-            with st.expander("Hva betyr formkurven?"):
-                st.write(
-                    """
-                    **🟢 ↑** kraftig opp.  
-                    **🔵 ↗** litt opp.  
-                    **⚪ ━** omtrent på stedet hvil / før sesongstart.  
-                    **🟡 ↘** litt ned.  
-                    **🔴 ↓** kraftig ned.
-                    """
-                )
+                with st.expander("Hva betyr formkurven?"):
+                    st.write(
+                        """
+                        **🟢 ↑** kraftig opp.  
+                        **🔵 ↗** litt opp.  
+                        **⚪ ━** omtrent på stedet hvil / før sesongstart.  
+                        **🟡 ↘** litt ned.  
+                        **🔴 ↓** kraftig ned.
+                        """
+                    )
 
-            st.caption(f"Fant {len(table_df)} lag.")
+                st.caption(f"Fant {len(table_df)} lag.")
     else:
         lro_note("Ikke hentet ennå", "FPL-data hentes automatisk. Bruk Oppdater fra FPL nå i venstremenyen hvis noe mangler.", "gold")
-
 
 elif main_page == "Sesongradar":
     st.header("Sesongradar")
@@ -3155,13 +3304,7 @@ elif main_page == "Sesongradar":
             if cards:
                 lro_cards(cards[:4])
 
-            radar_section = st.radio(
-                "Velg radarseksjon",
-                ["Tabellbevegelse", "Form", "Mot oddsen"],
-                horizontal=True,
-                label_visibility="collapsed",
-                key="radar_section_v34",
-            )
+            radar_section = nav_choice("", ["Tabellbevegelse", "Form", "Mot oddsen"], "radar_section_v35", default="Tabellbevegelse")
 
             if radar_section == "Tabellbevegelse":
                 c1, c2 = st.columns(2)
@@ -3217,13 +3360,7 @@ elif main_page == "Odds":
         challengers = odds_view[(odds_view["odds_float"] > 8.0) & (odds_view["odds_float"] <= 25.0)].head(12)
         longshots = odds_view[odds_view["odds_float"] > 25.0].head(12)
 
-        odds_section = st.radio(
-            "Velg oddsvisning",
-            ["Favoritter", "Utfordrere", "Langskudd", "Fullstendig oddsliste"],
-            horizontal=True,
-            label_visibility="collapsed",
-            key="odds_section_v34",
-        )
+        odds_section = nav_choice("", ["Favoritter", "Utfordrere", "Langskudd", "Fullstendig oddsliste"], "odds_section_v35", default="Favoritter")
         if odds_section == "Favoritter":
             render_odds_cards(favs, "Favoritter", "Ingen favoritter i dette sjiktet.")
         elif odds_section == "Utfordrere":
@@ -3268,13 +3405,7 @@ elif main_page == "Hall of Fame og historikk":
     seasons_df = st.session_state.get("seasons_df", pd.DataFrame())
     errors_df = st.session_state.get("errors_df", pd.DataFrame())
 
-    hof_section = st.radio(
-        "Velg Hall of Fame-del",
-        ["Pokalskap", "Managerprofiler", "Månedskonger", "Resultatarkiv"],
-        horizontal=True,
-        label_visibility="collapsed",
-        key="hof_section_v34",
-    )
+    hof_section = nav_choice("", ["Pokalskap", "Managerprofiler", "Månedskonger", "Resultatarkiv"], "hof_section_v35", default="Pokalskap")
 
     if hof_section == "Managerprofiler":
         ensure_history_for_page()
@@ -3394,7 +3525,7 @@ elif main_page == "Hall of Fame og historikk":
             else:
                 display_table(
                     month_specialists,
-                    ["month", "king", "king_points", "gold", "silver", "bronze", "podiums"],
+                    ["month", "king", "gold", "silver", "bronze", "podiums"],
                     MONTH_SPECIALIST_LABELS,
                 )
 
