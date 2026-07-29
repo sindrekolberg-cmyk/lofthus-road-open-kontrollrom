@@ -21,7 +21,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-kontrollrom-v29-idiotproof"
+APP_VERSION = "lofthus-road-open-kontrollrom-v30-clean-prelaunch"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -2101,19 +2101,15 @@ def render_odds_table_component(odds_view: pd.DataFrame):
             "manager": clean_cell(row.get("manager")),
             "team": clean_cell(row.get("team")),
             "winOdds": None if pd.isna(row.get("odds_float")) else float(row.get("odds_float")),
-            "winnerMaxStake": None if pd.isna(row.get("winner_max_stake")) else int(row.get("winner_max_stake")),
             "top3Odds": None if pd.isna(row.get("top3_odds_float")) else float(row.get("top3_odds_float")),
-            "top3MaxStake": None if pd.isna(row.get("top3_max_stake")) else int(row.get("top3_max_stake")),
             "avg3": None if pd.isna(row.get("avg_rank_last_3_num")) else float(row.get("avg_rank_last_3_num")),
             "bestRank": None if pd.isna(row.get("best_rank_num")) else float(row.get("best_rank_num")),
-            "tag": clean_cell(row.get("tag")),
-            "tagSort": 99 if pd.isna(row.get("tag_sort")) else int(row.get("tag_sort")),
         })
 
     rows_json = json.dumps(rows, ensure_ascii=False)
     component_html = f"""
     <div class="lro-table-wrap">
-      <div class="lro-table-note">Trykk på kolonneoverskriftene for å sortere. Maks spill er sosial grense per enkeltspill, ikke oppfordring.</div>
+      <div class="lro-table-note">Trykk på kolonneoverskriftene for å sortere.</div>
       <table class="lro-table lro-odds-table">
         <thead>
           <tr>
@@ -2121,12 +2117,9 @@ def render_odds_table_component(odds_view: pd.DataFrame):
             <th data-key="manager" class="sortable">Manager</th>
             <th data-key="team" class="sortable">Lagnavn</th>
             <th data-key="winOdds" class="sortable col-win">Vinnerodds</th>
-            <th data-key="winnerMaxStake" class="sortable col-stake">Maks spill vinner</th>
             <th data-key="top3Odds" class="sortable col-top3">Topp 3-odds</th>
-            <th data-key="top3MaxStake" class="sortable col-stake">Maks spill topp 3</th>
             <th data-key="avg3" class="sortable">Snitt siste tre sesonger</th>
             <th data-key="bestRank" class="sortable">Beste FPL-plassering</th>
-            <th data-key="tagSort" class="sortable">Merknad</th>
           </tr>
         </thead>
         <tbody id="lro-odds-body"></tbody>
@@ -2141,12 +2134,9 @@ def render_odds_table_component(odds_view: pd.DataFrame):
       .lro-table tr:hover td {{background: #fafafa;}}
       .lro-table .col-win {{background: #eff6ff;}}
       .lro-table .col-top3 {{background: #fff7ed;}}
-      .lro-table .col-stake {{background: #f8fafc;}}
       .lro-table td.col-win {{background: #dbeafe; font-weight: 850;}}
       .lro-table td.col-top3 {{background: #ffedd5; font-weight: 850;}}
-      .lro-table td.col-stake {{background: #f8fafc; font-weight: 800; color:#334155;}}
       .sort-mark {{margin-left: 6px; font-size: 11px; color: #b91c1c;}}
-      .badge-tag {{display:inline-block; border-radius:999px; padding:3px 8px; background:#f1f5f9; color:#334155; font-weight:700; font-size:12px; white-space:nowrap;}}
     </style>
     <script>
       const oddsRows = {rows_json};
@@ -2156,9 +2146,8 @@ def render_odds_table_component(odds_view: pd.DataFrame):
       function esc(value) {{ if (value === null || value === undefined) return ''; return String(value).replace(/[&<>"']/g, m => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[m])); }}
       function fmtNum(value) {{ if (value === null || value === undefined || Number.isNaN(value)) return ''; return Number(value).toLocaleString('nb-NO'); }}
       function fmtOdds(value) {{ if (value === null || value === undefined || Number.isNaN(value)) return ''; return Number(value).toFixed(2); }}
-      function fmtKr(value) {{ if (value === null || value === undefined || Number.isNaN(value)) return ''; return `${{Number(value).toLocaleString('nb-NO')}} kr`; }}
       function compareRows(a,b) {{
-        const numericKeys = new Set(['rank','winOdds','winnerMaxStake','top3Odds','top3MaxStake','avg3','bestRank','tagSort']);
+        const numericKeys = new Set(['rank','winOdds','top3Odds','avg3','bestRank']);
         let av = a[sortKey]; let bv = b[sortKey];
         if (numericKeys.has(sortKey)) {{
           const am = av === null || av === undefined || Number.isNaN(av);
@@ -2167,7 +2156,6 @@ def render_odds_table_component(odds_view: pd.DataFrame):
           if (am) return 1; if (bm) return -1;
           const diff = sortDir === 'asc' ? av - bv : bv - av;
           if (diff !== 0) return diff;
-          if (sortKey === 'tagSort') return (a.winOdds || 999) - (b.winOdds || 999);
           return String(a.manager).localeCompare(String(b.manager), 'nb');
         }}
         av = String(av || '').toLowerCase(); bv = String(bv || '').toLowerCase();
@@ -2177,7 +2165,7 @@ def render_odds_table_component(odds_view: pd.DataFrame):
         const sorted = [...oddsRows].sort(compareRows); tbody.innerHTML = '';
         sorted.forEach(row => {{
           const tr = document.createElement('tr');
-          tr.innerHTML = `<td><strong>${{fmtNum(row.rank)}}</strong></td><td><strong>${{esc(row.manager)}}</strong></td><td>${{esc(row.team)}}</td><td class="col-win">${{fmtOdds(row.winOdds)}}</td><td class="col-stake">${{fmtKr(row.winnerMaxStake)}}</td><td class="col-top3">${{fmtOdds(row.top3Odds)}}</td><td class="col-stake">${{fmtKr(row.top3MaxStake)}}</td><td>${{fmtNum(row.avg3)}}</td><td>${{fmtNum(row.bestRank)}}</td><td><span class="badge-tag">${{esc(row.tag)}}</span></td>`;
+          tr.innerHTML = `<td><strong>${{fmtNum(row.rank)}}</strong></td><td><strong>${{esc(row.manager)}}</strong></td><td>${{esc(row.team)}}</td><td class="col-win">${{fmtOdds(row.winOdds)}}</td><td class="col-top3">${{fmtOdds(row.top3Odds)}}</td><td>${{fmtNum(row.avg3)}}</td><td>${{fmtNum(row.bestRank)}}</td>`;
           tbody.appendChild(tr);
         }});
         document.querySelectorAll('.lro-odds-table th.sortable').forEach(th => {{
@@ -2185,12 +2173,11 @@ def render_odds_table_component(odds_view: pd.DataFrame):
           if (key === sortKey) {{ const span = document.createElement('span'); span.className = 'sort-mark'; span.textContent = sortDir === 'asc' ? '▲' : '▼'; th.appendChild(span); }}
         }});
       }}
-      document.querySelectorAll('.lro-odds-table th.sortable').forEach(th => {{ th.addEventListener('click', () => {{ const key = th.getAttribute('data-key'); if (sortKey === key) {{ sortDir = sortDir === 'asc' ? 'desc' : 'asc'; }} else {{ sortKey = key; sortDir = (key === 'manager' || key === 'team' || key === 'tagSort') ? 'asc' : 'asc'; }} render(); }}); }});
+      document.querySelectorAll('.lro-odds-table th.sortable').forEach(th => {{ th.addEventListener('click', () => {{ const key = th.getAttribute('data-key'); if (sortKey === key) {{ sortDir = sortDir === 'asc' ? 'desc' : 'asc'; }} else {{ sortKey = key; sortDir = (key === 'manager' || key === 'team') ? 'asc' : 'asc'; }} render(); }}); }});
       render();
     </script>
     """
-    components.html(component_html, height=900, scrolling=True)
-
+    components.html(component_html, height=780, scrolling=True)
 
 
 def render_history_table_component(summary: pd.DataFrame, seasons_df: pd.DataFrame):
@@ -2500,13 +2487,8 @@ def render_odds_cards(df: pd.DataFrame, title: str, empty_text: str):
                     c1, c2 = st.columns(2)
                     with c1:
                         st.metric("Vinner", format_odds(row.get("odds_float")))
-                        st.caption(f"Maks {fmt_kr(row.get('winner_max_stake'))}")
                     with c2:
                         st.metric("Topp 3", format_odds(row.get("top3_odds_float")))
-                        st.caption(f"Maks {fmt_kr(row.get('top3_max_stake'))}")
-                    note = clean_invisible(row.get("tag_display", row.get("tag", "")))
-                    if note:
-                        st.caption(note)
 
 
 def render_month_king_cards(month_specialists: pd.DataFrame):
@@ -2529,7 +2511,6 @@ def render_month_king_cards(month_specialists: pd.DataFrame):
                     else:
                         st.markdown(f"**{row.get('king', '')}**")
                         st.caption(f"{int(row.get('king_points') or 0)} poeng · {row.get('month_merits', '')}")
-                    st.caption(row.get("comment", ""))
 
 
 def render_preseason_radar_preview():
@@ -2901,19 +2882,16 @@ NUMERIC_CONFIG = {
 # UI
 # -----------------------------
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     "Ligatabell",
-    "Historikk",
+    "Hall of Fame og historikk",
     "Odds",
-    "Hall of Fame",
     "Sesongradar",
-    "Norgeskart",
 ])
 
 
 with tab1:
     st.header("Ligatabell")
-    lro_note("Hovedinngangen", "Påmeldte lag, rundepoeng, totalpoeng og formkurve. Odds, H2H og spillgrenser ligger i Odds-fanen.", "")
 
     if "managers" in st.session_state:
         managers = st.session_state["managers"]
@@ -2925,19 +2903,6 @@ with tab1:
             summary_df = st.session_state.get("summary_df", pd.DataFrame())
 
             if not summary_df.empty:
-                odds_df = build_preseason_odds(summary_df)
-                fav = odds_df.sort_values("odds_float").iloc[0] if not odds_df.empty else None
-                peak = pick_first(summary_df, "best_rank_num", True)
-                proven = pick_first(summary_df, "top_100k_seasons", False)
-                hof = pick_first(summary_df, "hof_score", False)
-
-                lro_cards([
-                    {"label": "Bookiens favoritt", "value": f"{fav['manager']} · {format_odds(fav['odds_float'])}" if fav is not None else "", "caption": "Vinnerodds før sesongstart"},
-                    {"label": "Beste FPL-peak", "value": peak.get("manager") if peak is not None else "", "caption": format_rank(peak.get("best_rank_num")) if peak is not None else ""},
-                    {"label": "Flest topp 100k", "value": proven.get("manager") if proven is not None else "", "caption": f"{int(proven.get('top_100k_seasons') or 0)} sesonger" if proven is not None else ""},
-                    {"label": "Mest merittert", "value": hof.get("manager") if hof is not None else "", "caption": f"{int(hof.get('hof_score') or 0)} merittpoeng" if hof is not None else ""},
-                ])
-
                 table_df = table_df.merge(
                     summary_df[["entry", "tier", "tag"]],
                     on="entry",
@@ -2986,149 +2951,16 @@ with tab1:
         lro_note("Ikke hentet ennå", "FPL-data hentes automatisk. Bruk Oppdater fra FPL nå i venstremenyen hvis noe mangler.", "gold")
 
 
-
 with tab2:
-    st.header("Historikk")
-    lro_note("Managerprofiler og historisk nivå", "Velg en manager for rask profil og full FPL-historikk. Den store tabellen ligger under for sortering og eksport.", "")
-
-    if "summary_df" in st.session_state:
-        summary_df = st.session_state["summary_df"]
-        seasons_df = st.session_state["seasons_df"]
-        errors_df = st.session_state["errors_df"]
-
-        if summary_df.empty:
-            st.warning("Fant ingen historikk.")
-        else:
-            summary = summary_df.copy()
-            summary = add_sortable_display_columns(summary)
-            summary = summary.sort_values(["hof_score", "manager"], ascending=[False, True], na_position="last").reset_index(drop=True)
-            summary["merit_rank"] = range(1, len(summary) + 1)
-            summary["merits"] = summary["merits"].fillna("")
-
-            render_manager_profile(summary, seasons_df)
-
-            with st.expander("Full historikktabell", expanded=True):
-                render_history_table_component(summary, seasons_df)
-
-            history_download = summary[[
-                "merit_rank", "manager", "team", "seasons", "last_season_rank_num",
-                "best_rank_num", "best_season", "avg_rank_last_3_num", "hof_score", "merits"
-            ]].rename(columns={
-                "merit_rank": "Rangering",
-                "manager": "Manager",
-                "team": "Lagnavn",
-                "seasons": "Sesonger spilt",
-                "last_season_rank_num": "Plassering forrige sesong",
-                "best_rank_num": "Beste FPL-plassering gjennom tidene",
-                "best_season": "Beste sesong",
-                "avg_rank_last_3_num": "Snitt siste tre sesonger",
-                "hof_score": "Merittpoeng",
-                "merits": "Meritter",
-            })
-
-            st.download_button(
-                label="Last ned historikk som CSV",
-                data=history_download.to_csv(index=False).encode("utf-8"),
-                file_name="lro_historikk.csv",
-                mime="text/csv",
-            )
-
-            with st.expander("Utvikling siste tre sesonger"):
-                trend_columns = ["manager", "team", "trend"]
-                display_table(summary, trend_columns, HISTORY_LABELS)
-
-            with st.expander("Hvordan regnes merittpoeng?"):
-                weights = pd.DataFrame([
-                    {"Meritt": "Sammenlagt-seier", "Poeng": 60},
-                    {"Meritt": "Sammenlagt-sølv", "Poeng": 30},
-                    {"Meritt": "Sammenlagt-bronse", "Poeng": 16},
-                    {"Meritt": "Cupgull", "Poeng": 20},
-                    {"Meritt": "Cupsølv", "Poeng": 8},
-                    {"Meritt": "Månedsseier", "Poeng": 6},
-                    {"Meritt": "Månedssølv", "Poeng": 2},
-                    {"Meritt": "Månedsbronse", "Poeng": 1},
-                    {"Meritt": "Random plassering", "Poeng": 4},
-                ])
-                st.dataframe(weights, use_container_width=True, hide_index=True)
-
-        if not errors_df.empty:
-            st.warning("Noen feilet ved historikkhenting.")
-            display_table(errors_df, ["manager", "team", "entry", "error"], ERROR_LABELS)
-    else:
-        lro_note("Ikke hentet ennå", "FPL-data hentes automatisk. Bruk Oppdater fra FPL nå i venstremenyen hvis noe mangler.", "gold")
-
-
-
-with tab3:
-    st.header("Odds")
-    lro_note("Før sesongstart", "Vinnerodds, topp 3-odds, maks spill og egen duellgenerator. Oddsen er laget for intern LRO-lek med lave innsatser og tydelige grenser.", "")
-
-    if "summary_df" in st.session_state and not st.session_state["summary_df"].empty:
-        summary_df = st.session_state["summary_df"]
-        odds_df = build_preseason_odds(summary_df)
-        odds_view = odds_df.copy()
-        odds_view["top3_odds_float"] = pd.to_numeric(odds_view["top3_odds_float"], errors="coerce")
-        odds_view = add_sortable_display_columns(odds_view)
-
-        favs = odds_view[odds_view["odds_float"] <= 8.0].head(9)
-        challengers = odds_view[(odds_view["odds_float"] > 8.0) & (odds_view["odds_float"] <= 25.0)].head(12)
-        longshots = odds_view[odds_view["odds_float"] > 25.0].head(12)
-
-        market_tabs = st.tabs(["Favoritter", "Utfordrere", "Langskudd", "Full oddstabell"])
-        with market_tabs[0]:
-            render_odds_cards(favs, "Favoritter", "Ingen favoritter i dette sjiktet.")
-        with market_tabs[1]:
-            render_odds_cards(challengers, "Utfordrere", "Ingen utfordrere i dette sjiktet.")
-        with market_tabs[2]:
-            render_odds_cards(longshots, "Langskudd", "Ingen langskudd i dette sjiktet.")
-        with market_tabs[3]:
-            render_odds_table_component(odds_view)
-
-        st.download_button(
-            label="Last ned odds som CSV",
-            data=odds_view[["odds_rank", "manager", "team", "odds", "winner_max_stake", "top3_odds", "top3_max_stake"]].rename(columns={"team": "lagnavn", "winner_max_stake": "maks spill vinner", "top3_max_stake": "maks spill topp 3"}).to_csv(index=False).encode("utf-8"),
-            file_name="lro_odds.csv",
-            mime="text/csv",
-        )
-    else:
-        st.info("Oddsgrunnlaget hentes automatisk. Bruk Oppdater fra FPL nå i venstremenyen hvis noe mangler.")
-
-    st.subheader("Lag egne dueller")
-    st.write("Skriv én duell eller gruppe per linje. Bruk `vs` mellom navnene.")
-    market_text = st.text_area("Dueller/grupper", value="", height=240)
-
-    if st.button("Lag duellodds"):
-        ensure_history_loaded(DEFAULT_LEAGUE_ID)
-        summary_df = st.session_state["summary_df"]
-
-        market_df, missing_df = analyze_markets(summary_df, market_text)
-
-        if not market_df.empty:
-            st.dataframe(market_df, use_container_width=True, hide_index=True)
-            st.download_button(
-                label="Last ned duellodds som CSV",
-                data=market_df.to_csv(index=False).encode("utf-8"),
-                file_name="lro_duellodds.csv",
-                mime="text/csv",
-            )
-        else:
-            st.warning("Fant ingen markeder å vise.")
-
-        if not missing_df.empty:
-            with st.expander("Navn appen ikke fant sikkert treff på"):
-                st.dataframe(missing_df, use_container_width=True, hide_index=True)
-
-
-
-with tab4:
-    st.header("Hall of Fame")
-    lro_note("Ligaens pokalskap", "Sammenlagt-seier vektes tyngst, cupgull deretter, månedsseiere lavere. Månedspodier gir ekstra historisk krydder.", "gold")
+    st.header("Hall of Fame og historikk")
+    lro_note("Pokalskap og historisk nivå", "Her samles Lofthus-meritter og FPL-historikk. Sammenlagt-seier vektes tyngst, cupgull deretter og månedsseiere lavere.", "gold")
 
     hof_df = build_hof_people()
+    summary_df = st.session_state.get("summary_df", pd.DataFrame())
+    seasons_df = st.session_state.get("seasons_df", pd.DataFrame())
+    errors_df = st.session_state.get("errors_df", pd.DataFrame())
 
-    if hof_df.empty:
-        st.warning("Fant ingen Hall of Fame-data.")
-    else:
+    if not hof_df.empty:
         hof_df = hof_df.sort_values(["hof_score", "display_name"], ascending=[False, True]).reset_index(drop=True)
         hof_df["rank_display"] = [f"{medal_for_position(i + 1)} {i + 1}".strip() for i in range(len(hof_df))]
 
@@ -3137,42 +2969,18 @@ with tab4:
         cup_king = hof_df.sort_values(["cup_count", "hof_score"], ascending=[False, False]).iloc[0]
         monthly_king = hof_df.sort_values(["monthly_titles", "hof_score"], ascending=[False, False]).iloc[0]
 
-        lro_cards([
-            {"label": "Mest merittert", "value": most_decorated["display_name"], "caption": f"{int(most_decorated['hof_score'])} merittpoeng"},
-            {"label": "Flest sammenlagtseiere", "value": overall_king["display_name"], "caption": f"{int(overall_king['overall_count'])} seiere"},
-            {"label": "Flest cupgull", "value": cup_king["display_name"], "caption": f"{int(cup_king['cup_count'])} cupgull"},
-            {"label": "Flest månedsseiere", "value": monthly_king["display_name"], "caption": f"{int(monthly_king['monthly_titles'])} månedsseiere"},
-        ])
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("Mest merittert", most_decorated["display_name"], int(most_decorated["hof_score"]))
+        with c2:
+            st.metric("Flest sammenlagt", overall_king["display_name"], int(overall_king["overall_count"]))
+        with c3:
+            st.metric("Flest cupgull", cup_king["display_name"], int(cup_king["cup_count"]))
+        with c4:
+            st.metric("Flest månedsseiere", monthly_king["display_name"], int(monthly_king["monthly_titles"]))
 
         st.subheader("Pokalskap")
         render_hof_table_component(hof_df.head(12))
-
-        hof_main = hof_df[[
-            "rank_display",
-            "display_name",
-            "hof_score",
-            "overall_count",
-            "cup_count",
-            "cup_runner_up_count",
-            "monthly_titles",
-            "merits",
-        ]].rename(columns={
-            "rank_display": "Rangering",
-            "display_name": "Manager",
-            "hof_score": "Merittpoeng",
-            "overall_count": "Sammenlagt-seiere",
-            "cup_count": "Cupgull",
-            "cup_runner_up_count": "Cupsølv",
-            "monthly_titles": "Månedsseiere",
-            "merits": "Meritter",
-        })
-
-        st.download_button(
-            label="Last ned Hall of Fame som CSV",
-            data=hof_main.to_csv(index=False).encode("utf-8"),
-            file_name="lro_hall_of_fame.csv",
-            mime="text/csv",
-        )
 
         with st.expander("Detaljert meritt-tabell"):
             detailed_hof = hof_df[[
@@ -3219,65 +3027,184 @@ with tab4:
             ]
             display_table(hof_df, detail_columns, HOF_LABELS, column_config={"display_name": st.column_config.TextColumn("Manager", width="large")})
 
-        st.subheader("Månedskonger")
-        month_specialists = build_month_specialist_table()
-        if month_specialists.empty:
-            st.warning("Fant ingen månedskonge-data.")
-        else:
-            render_month_king_cards(month_specialists)
-            with st.expander("Månedskonge-detaljer"):
-                display_table(
-                    month_specialists,
-                    ["month", "king", "leaders_count", "king_points", "month_merits", "podiums", "comment"],
-                    MONTH_SPECIALIST_LABELS,
-                )
+    st.subheader("Managerprofiler og FPL-historikk")
+    if not summary_df.empty:
+        summary = summary_df.copy()
+        summary = add_sortable_display_columns(summary)
+        summary = summary.sort_values(["hof_score", "manager"], ascending=[False, True], na_position="last").reset_index(drop=True)
+        summary["merit_rank"] = range(1, len(summary) + 1)
+        summary["merits"] = summary["merits"].fillna("")
 
-        st.subheader("Hvem gjør det best i hvilken måned?")
-        monthly_df = build_monthly_podium_df()
+        render_manager_profile(summary, seasons_df)
 
-        if monthly_df.empty:
-            st.warning("Fant ingen månedspodier.")
-        else:
-            seasons = ["Alle"] + sorted(monthly_df["season"].dropna().unique().tolist())
-            selected_season = st.selectbox("Velg sesong", seasons, key="monthly_season_filter_v28")
-            monthly_medals = build_monthly_medal_table(selected_season)
+        with st.expander("Full historikktabell", expanded=True):
+            render_history_table_component(summary, seasons_df)
 
-            medal_columns = ["monthly_rank", "manager", "month_points", "gold", "silver", "bronze", "podiums"]
-            display_table(monthly_medals, medal_columns, MONTHLY_MEDAL_LABELS)
+        history_download = summary[[
+            "merit_rank", "manager", "team", "seasons", "last_season_rank_num",
+            "best_rank_num", "best_season", "avg_rank_last_3_num", "hof_score", "merits"
+        ]].rename(columns={
+            "merit_rank": "Rangering",
+            "manager": "Manager",
+            "team": "Lagnavn",
+            "seasons": "Sesonger spilt",
+            "last_season_rank_num": "Plassering forrige sesong",
+            "best_rank_num": "Beste FPL-plassering gjennom tidene",
+            "best_season": "Beste sesong",
+            "avg_rank_last_3_num": "Snitt siste tre sesonger",
+            "hof_score": "Merittpoeng",
+            "merits": "Meritter",
+        })
 
-            lro_note(
-                "Ufullstendig sølv/bronse-historikk",
-                "Jeg har alle månedsvinnerne, men ikke full oversikt over 2. og 3. plass i hver eneste måned tilbake til september 2020. Tabellen under viser det som er dokumentert.",
-                "gold",
+        st.download_button(
+            label="Last ned historikk som CSV",
+            data=history_download.to_csv(index=False).encode("utf-8"),
+            file_name="lro_historikk.csv",
+            mime="text/csv",
+        )
+
+        with st.expander("Utvikling siste tre sesonger"):
+            trend_columns = ["manager", "team", "trend"]
+            display_table(summary, trend_columns, HISTORY_LABELS)
+
+        with st.expander("Hvordan regnes merittpoeng?"):
+            weights = pd.DataFrame([
+                {"Meritt": "Sammenlagt-seier", "Poeng": 60},
+                {"Meritt": "Sammenlagt-sølv", "Poeng": 30},
+                {"Meritt": "Sammenlagt-bronse", "Poeng": 16},
+                {"Meritt": "Cupgull", "Poeng": 20},
+                {"Meritt": "Cupsølv", "Poeng": 8},
+                {"Meritt": "Månedsseier", "Poeng": 6},
+                {"Meritt": "Månedssølv", "Poeng": 2},
+                {"Meritt": "Månedsbronse", "Poeng": 1},
+                {"Meritt": "Random plassering", "Poeng": 4},
+            ])
+            st.dataframe(weights, use_container_width=True, hide_index=True)
+
+        if not errors_df.empty:
+            st.warning("Noen feilet ved historikkhenting.")
+            display_table(errors_df, ["manager", "team", "entry", "error"], ERROR_LABELS)
+    else:
+        lro_note("Ikke hentet ennå", "FPL-data hentes automatisk. Bruk Oppdater fra FPL nå i venstremenyen hvis noe mangler.", "gold")
+
+    st.subheader("Månedskonger")
+    month_specialists = build_month_specialist_table()
+    if month_specialists.empty:
+        st.warning("Fant ingen månedskonge-data.")
+    else:
+        render_month_king_cards(month_specialists)
+        with st.expander("Månedskonge-detaljer"):
+            display_table(
+                month_specialists,
+                ["month", "king", "leaders_count", "king_points", "month_merits", "podiums", "comment"],
+                MONTH_SPECIALIST_LABELS,
             )
 
-            with st.expander("Måned for måned"):
-                calendar_df = build_monthly_calendar_table(selected_season)
-                calendar_columns = ["season", "month", "winner", "second_place", "third_place"]
-                display_table(calendar_df, calendar_columns, MONTHLY_CALENDAR_LABELS)
+    st.subheader("Hvem gjør det best i hvilken måned?")
+    monthly_df = build_monthly_podium_df()
 
-            with st.expander("Månedspodier"):
-                podium_view = monthly_df.copy()
-                if selected_season != "Alle":
-                    podium_view = podium_view[podium_view["season"] == selected_season]
-                podium_columns = ["season", "month", "place", "manager", "points"]
-                display_table(podium_view, podium_columns, MONTHLY_PODIUM_LABELS)
+    if monthly_df.empty:
+        st.warning("Fant ingen månedspodier.")
+    else:
+        seasons = ["Alle"] + sorted(monthly_df["season"].dropna().unique().tolist())
+        selected_season = st.selectbox("Velg sesong", seasons, key="monthly_season_filter_v30")
+        monthly_medals = build_monthly_medal_table(selected_season)
 
-        st.subheader("Sammenlagtvinnere")
-        overall_df = pd.DataFrame(HOF_OVERALL)
-        display_table(overall_df, ["season", "winner", "runner_up", "third_place"], OVERALL_LABELS)
+        medal_columns = ["monthly_rank", "manager", "month_points", "gold", "silver", "bronze", "podiums"]
+        display_table(monthly_medals, medal_columns, MONTHLY_MEDAL_LABELS)
 
-        st.subheader("Cupvinnere")
-        cup_df = pd.DataFrame(HOF_CUP)
-        display_table(cup_df, ["season", "winner", "runner_up"], CUP_LABELS)
+        lro_note(
+            "Ufullstendig sølv/bronse-historikk",
+            "Jeg har alle månedsvinnerne, men ikke full oversikt over 2. og 3. plass i hver eneste måned tilbake til september 2020. Tabellen under viser det som er dokumentert.",
+            "gold",
+        )
 
-        st.subheader("Random plassering")
-        random_df = pd.DataFrame(HOF_RANDOM)
-        display_table(random_df, ["season", "winner", "placement"], RANDOM_LABELS)
+        with st.expander("Måned for måned"):
+            calendar_df = build_monthly_calendar_table(selected_season)
+            calendar_columns = ["season", "month", "winner", "second_place", "third_place"]
+            display_table(calendar_df, calendar_columns, MONTHLY_CALENDAR_LABELS)
+
+        with st.expander("Månedspodier"):
+            podium_view = monthly_df.copy()
+            if selected_season != "Alle":
+                podium_view = podium_view[podium_view["season"] == selected_season]
+            podium_columns = ["season", "month", "place", "manager", "points"]
+            display_table(podium_view, podium_columns, MONTHLY_PODIUM_LABELS)
+
+    st.subheader("Sammenlagtvinnere")
+    overall_df = pd.DataFrame(HOF_OVERALL)
+    display_table(overall_df, ["season", "winner", "runner_up", "third_place"], OVERALL_LABELS)
+
+    st.subheader("Cupvinnere")
+    cup_df = pd.DataFrame(HOF_CUP)
+    display_table(cup_df, ["season", "winner", "runner_up"], CUP_LABELS)
+
+    st.subheader("Random plassering")
+    random_df = pd.DataFrame(HOF_RANDOM)
+    display_table(random_df, ["season", "winner", "placement"], RANDOM_LABELS)
 
 
+with tab3:
+    st.header("Odds")
+    lro_note("Før sesongstart", "Vinnerodds, topp 3-odds og egen duellgenerator. Oddsen er laget for intern moro.", "")
 
-with tab5:
+    if "summary_df" in st.session_state and not st.session_state["summary_df"].empty:
+        summary_df = st.session_state["summary_df"]
+        odds_df = build_preseason_odds(summary_df)
+        odds_view = odds_df.copy()
+        odds_view["top3_odds_float"] = pd.to_numeric(odds_view["top3_odds_float"], errors="coerce")
+        odds_view = add_sortable_display_columns(odds_view)
+
+        favs = odds_view[odds_view["odds_float"] <= 8.0].head(9)
+        challengers = odds_view[(odds_view["odds_float"] > 8.0) & (odds_view["odds_float"] <= 25.0)].head(12)
+        longshots = odds_view[odds_view["odds_float"] > 25.0].head(12)
+
+        market_tabs = st.tabs(["Favoritter", "Utfordrere", "Langskudd", "Full oddstabell"])
+        with market_tabs[0]:
+            render_odds_cards(favs, "Favoritter", "Ingen favoritter i dette sjiktet.")
+        with market_tabs[1]:
+            render_odds_cards(challengers, "Utfordrere", "Ingen utfordrere i dette sjiktet.")
+        with market_tabs[2]:
+            render_odds_cards(longshots, "Langskudd", "Ingen langskudd i dette sjiktet.")
+        with market_tabs[3]:
+            render_odds_table_component(odds_view)
+
+        st.download_button(
+            label="Last ned odds som CSV",
+            data=odds_view[["odds_rank", "manager", "team", "odds", "top3_odds"]].rename(columns={"team": "lagnavn"}).to_csv(index=False).encode("utf-8"),
+            file_name="lro_odds.csv",
+            mime="text/csv",
+        )
+    else:
+        st.info("Oddsgrunnlaget hentes automatisk. Bruk Oppdater fra FPL nå i venstremenyen hvis noe mangler.")
+
+    st.subheader("Lag egne dueller")
+    st.write("Skriv én duell eller gruppe per linje. Bruk `vs` mellom navnene.")
+    market_text = st.text_area("Dueller/grupper", value="", height=240)
+
+    if st.button("Lag duellodds"):
+        ensure_history_loaded(DEFAULT_LEAGUE_ID)
+        summary_df = st.session_state["summary_df"]
+
+        market_df, missing_df = analyze_markets(summary_df, market_text)
+
+        if not market_df.empty:
+            st.dataframe(market_df, use_container_width=True, hide_index=True)
+            st.download_button(
+                label="Last ned duellodds som CSV",
+                data=market_df.to_csv(index=False).encode("utf-8"),
+                file_name="lro_duellodds.csv",
+                mime="text/csv",
+            )
+        else:
+            st.warning("Fant ingen markeder å vise.")
+
+        if not missing_df.empty:
+            with st.expander("Navn appen ikke fant sikkert treff på"):
+                st.dataframe(missing_df, use_container_width=True, hide_index=True)
+
+
+with tab4:
     st.header("Sesongradar")
     lro_note("Blir best når sesongen er i gang", "Her kommer største klatrere, største fall, form siste tre runder og hvem som over-/underpresterer mot før-sesong-odds.", "")
 
@@ -3327,92 +3254,3 @@ with tab5:
                     st.caption("Trenger live-tabell og oddsdata.")
                 else:
                     display_table(radar["under"], ["player_name", "entry_name", "rank_num", "odds_rank", "performance_vs_odds", "odds"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
-
-
-with tab6:
-    st.header("Norgeskart")
-    lro_note("Ligaen på kartet", "Geografisk fordeling av managerne i ligaen. Kartet viser klynger; bruk tabellen under for full navneliste.", "")
-
-    active_manager_names = []
-    if "managers" in st.session_state:
-        active_manager_names = [manager.get("player_name", "") for manager in st.session_state.get("managers", [])]
-
-    place_df = build_place_data(active_manager_names if active_manager_names else None)
-
-    if place_df.empty:
-        st.warning("Fant ingen steder i data/places.csv.")
-    else:
-        total_people = int(place_df["Antall"].sum())
-        top_city = place_df.sort_values("Antall", ascending=False).iloc[0]
-
-        c1, c2, c3 = st.columns(3)
-
-        with c1:
-            st.metric("Registrerte på kartet", total_people)
-
-        with c2:
-            st.metric("Byer/steder", len(place_df))
-
-        with c3:
-            st.metric("Største miljø", top_city["By"], int(top_city["Antall"]))
-
-        raw_places = read_csv_file("places.csv", ["manager", "place", "lat", "lon"])
-        mapped_keys = set(raw_places["manager"].map(hof_key).tolist()) if not raw_places.empty else set()
-
-        with st.expander("Kartdata-kontroll"):
-            if "managers" in st.session_state:
-                missing = []
-                for manager in st.session_state.get("managers", []):
-                    manager_name = manager.get("player_name", "")
-                    if manager_name and hof_key(manager_name) not in mapped_keys:
-                        missing.append(manager_name)
-
-                if missing:
-                    st.warning("Mangler kartplassering/alias for: " + ", ".join(sorted(set(missing))))
-                    st.caption("Hvis personen egentlig finnes på kartet, legg navnevarianten inn i data/aliases.csv. Hvis personen mangler helt, legg vedkommende inn i data/places.csv.")
-                elif total_people != len(st.session_state.get("managers", [])):
-                    st.info(f"Kartet har {total_people} personer, mens FPL-lista har {len(st.session_state.get('managers', []))}. Sjekk mulige alias/duplikater.")
-                else:
-                    st.success("Kartdata matcher FPL-lista.")
-            else:
-                st.info("FPL-lista hentes automatisk. Bruk Oppdater fra FPL nå i venstremenyen hvis kartkontrollen ikke er klar.")
-
-        if pdk is not None:
-            layer = pdk.Layer(
-                "ScatterplotLayer",
-                data=place_df,
-                get_position="[lon, lat]",
-                get_radius="radius",
-                get_fill_color="[185, 28, 28, 210]",
-                get_line_color="[15, 23, 42]",
-                line_width_min_pixels=1,
-                pickable=True,
-            )
-
-            view_state = pdk.ViewState(latitude=64.9, longitude=13.5, zoom=3.85, pitch=20)
-
-            deck = pdk.Deck(
-                map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
-                initial_view_state=view_state,
-                layers=[layer],
-                tooltip={
-                    "text": "{By}\n{Antall} managere\n{Deltakere}",
-                    "style": {
-                        "backgroundColor": "white",
-                        "color": "black",
-                        "padding": "14px",
-                        "borderRadius": "12px",
-                        "maxWidth": "760px",
-                        "fontSize": "13px",
-                    },
-                },
-            )
-
-            st.pydeck_chart(deck, use_container_width=True)
-
-        else:
-            map_df = place_df.rename(columns={"lat": "latitude", "lon": "longitude"})
-            st.map(map_df, latitude="latitude", longitude="longitude")
-
-        st.subheader("Steder og deltakere")
-        render_city_cards(place_df)
