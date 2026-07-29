@@ -21,7 +21,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-kontrollrom-v25-history-no-merknad"
+APP_VERSION = "lofthus-road-open-kontrollrom-v29-idiotproof"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -197,12 +197,7 @@ with st.sidebar:
     if st.session_state.get("last_updated"):
         st.caption(f"Sist hentet: {st.session_state['last_updated']}")
     if st.button("Oppdater fra FPL nå"):
-        for cached_func in ["get_json", "get_entry_history", "get_league_managers"]:
-            try:
-                globals()[cached_func].clear()
-            except Exception:
-                pass
-        st.session_state.clear()
+        st.session_state["_refresh_fpl_now"] = True
         st.rerun()
     st.markdown("---")
     st.caption("Beta fram mot 1. august. Meld feil i gruppa, særlig på gamle meritter, navn og bosted.")
@@ -1405,55 +1400,175 @@ def plackett_luce_top3_probs(probs: list[float]) -> list[float]:
     return [min(max(value, 0.0), 0.98) for value in out]
 
 
+
+def recommended_stake_by_odds(odds: float | None, market: str = "winner") -> int:
+    """Social stake limits for the internal LRO odds game.
+
+    The limits keep big longshot payouts fun, but stop anyone from placing
+    ruinous stakes on 50.00+ prices.
+    """
+    if odds is None or pd.isna(odds):
+        return 0
+
+    odds = float(odds)
+
+    if market == "top3":
+        if odds <= 2.99:
+            return 150
+        if odds <= 5.99:
+            return 100
+        if odds <= 11.99:
+            return 50
+        if odds <= 24.99:
+            return 25
+        return 10
+
+    # Winner market.
+    if odds <= 5.99:
+        return 200
+    if odds <= 9.99:
+        return 150
+    if odds <= 19.99:
+        return 75
+    if odds <= 39.99:
+        return 50
+    if odds <= 79.99:
+        return 20
+    if odds <= 149.99:
+        return 10
+    return 5
+
+
 def build_preseason_odds(summary_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    LRO bookmaker-ish preseason market.
+
+    This is intentionally NOT a pure fair-probability model. The goal is a
+    playable internal market:
+    - the known elite should be protected hard, with the favourite around 3-ish;
+    - the field still spreads naturally down the list;
+    - top-3 prices must not collapse into 1.14 nonsense;
+    - stake limits are shown because high odds must never allow huge liability.
+    """
     if summary_df.empty:
         return pd.DataFrame()
 
     df = summary_df.copy()
-    df["total_rating"] = pd.to_numeric(df["total_rating"], errors="coerce").fillna(0)
 
-    n = max(len(df), 1)
-    max_score = df["total_rating"].max()
+    def series_num(column: str, default: float = 0.0) -> pd.Series:
+        if column not in df.columns:
+            return pd.Series([default] * len(df), index=df.index, dtype="float")
+        return pd.to_numeric(df[column], errors="coerce").fillna(default).astype(float)
 
-    # Før-sesongodds i en privat FPL-liga skal ha mye varians.
-    # Modellen bruker historisk styrke, men blander kraftig inn usikkerhet slik at
-    # topp 3-markedet ikke blir kunstig lavt på halve feltet.
-    temperature = 10.8
-    skill_weights = ((df["total_rating"] - max_score) / temperature).apply(math.exp)
-    skill_probs = skill_weights / skill_weights.sum()
-    equal_probs = pd.Series([1 / n] * n, index=df.index)
+    total_rating = series_num("total_rating")
+    last_3_score = series_num("last_3_score")
+    last_5_score = series_num("last_5_score")
+    recent_score = series_num("recent_score")
+    best_score = series_num("best_score")
+    consistency_score = series_num("consistency_score")
+    hof_score = series_num("hof_score")
+    monthly_titles = series_num("monthly_titles")
+    seasons = series_num("seasons")
+    top_100k = series_num("top_100k_seasons")
+    top_500k = series_num("top_500k_seasons")
+    last_rank = series_num("last_season_rank_num", 9_999_999)
+    avg3_rank = series_num("avg_rank_last_3_num", 9_999_999)
 
-    random_blend = 0.46
-    win_probs = random_blend * equal_probs + (1 - random_blend) * skill_probs
+    # Betting strength. Recent FPL years drive the model, but elite peak,
+    # consistency and LRO track record still matter.
+    market_score = (
+        0.30 * total_rating
+        + 0.30 * last_3_score
+        + 0.12 * recent_score
+        + 0.10 * last_5_score
+        + 0.08 * best_score
+        + 0.06 * consistency_score
+        + 0.04 * top_100k.clip(0, 6) * 6
+    )
 
-    adj = pd.Series([1.0] * n, index=df.index)
-    adj.loc[df["seasons"] <= 2] *= 0.94
-    adj.loc[df["last_season_rank_num"].fillna(999_999_999) > 2_000_000] *= 0.94
-    adj.loc[df["avg_rank_last_3_num"].fillna(999_999_999) > 1_500_000] *= 0.95
-    adj.loc[df["top_100k_seasons"] >= 4] *= 1.04
-    adj.loc[df["top_500k_seasons"] >= 10] *= 1.025
+    # Small LRO-respect bonus. Enough to matter in a private league, not enough
+    # to rescue a bad FPL profile alone.
+    market_score += hof_score.clip(0, 220) / 75.0
+    market_score += monthly_titles.clip(0, 6) * 0.18
+    market_score += top_500k.clip(0, 12) * 0.06
 
-    if "hof_score" in df.columns:
-        adj.loc[df["hof_score"] >= 60] *= 1.02
-        adj.loc[df["monthly_titles"] >= 4] *= 1.01
+    # Human bookmaker-style adjustments.
+    market_score = market_score.where(seasons > 2, market_score - 2.2)
+    market_score = market_score.where(last_rank <= 2_000_000, market_score - 1.4)
+    market_score = market_score.where(avg3_rank <= 1_700_000, market_score - 1.4)
+    market_score = market_score.where(avg3_rank <= 2_500_000, market_score - 1.0)
 
-    win_probs = win_probs * adj
-    win_probs = win_probs / win_probs.sum()
+    df["market_score"] = market_score.round(2)
 
-    margin_win = 1.07
-    df["odds_float"] = (1 / (win_probs * margin_win)).clip(lower=2.75, upper=251.00)
+    max_score = float(market_score.max()) if len(market_score) else 0.0
+
+    # Start from a score-based price ladder, not a fully normalised probability
+    # model. This gives the right bookmaker-feel for a social market.
+    base_favourite_odds = 3.25
+    spread = 8.8
+    df["odds_float"] = base_favourite_odds * ((max_score - market_score) / spread).apply(math.exp)
+
+    # Extra protection on obvious elite profiles. We would rather be a bit short
+    # on the proven best players than give away 5-6 odds before the field is full.
+    elite_mask = (
+        (avg3_rank <= 350_000)
+        | (top_100k >= 4)
+        | ((hof_score >= 100) & (top_500k >= 5))
+    )
+    df.loc[elite_mask, "odds_float"] *= 0.88
+
+    # Dark horses can still be tempting, but don't make weak recent form too cheap.
+    df.loc[avg3_rank > 1_500_000, "odds_float"] *= 1.18
+    df.loc[last_rank > 2_500_000, "odds_float"] *= 1.12
+    df.loc[seasons <= 2, "odds_float"] *= 1.18
+
+    # Guardrails. Known elite starts around 3, longshots are allowed to drift.
+    df["odds_float"] = df["odds_float"].clip(lower=3.00, upper=251.00)
+
+    # Keep the very top compact. If there are several genuinely strong managers,
+    # they should not all drift to 10+ before the season starts.
+    df = df.sort_values("odds_float", ascending=True).reset_index(drop=True)
+    top_caps = {0: 3.25, 1: 4.00, 2: 4.75, 3: 5.75, 4: 7.25}
+    for idx, cap in top_caps.items():
+        if idx < len(df) and float(df.loc[idx, "odds_float"]) > cap:
+            df.loc[idx, "odds_float"] = cap
+
+    # Avoid a completely flat top: later rows must be at least marginally longer.
+    for idx in range(1, len(df)):
+        min_allowed = float(df.loc[idx - 1, "odds_float"]) + 0.10
+        if float(df.loc[idx, "odds_float"]) < min_allowed:
+            df.loc[idx, "odds_float"] = min_allowed
+
+    # Top-3 odds derived from vinnerodds, but softened for a 37-62-player FPL field.
+    # This is a practical market relation: strong favourites can be 1.70-ish,
+    # but no one should be 1.14 before GW1.
+    win_odds = pd.to_numeric(df["odds_float"], errors="coerce").fillna(251.0)
+    top3_odds = []
+    for odd in win_odds:
+        odd = float(odd)
+        implied = 1 / max(odd, 1.01)
+        # Multiplying implied win chance gives a rough top-3 chance. The factor
+        # slowly falls as odds rise, preventing silly low top-3 prices on outsiders.
+        factor = 2.25 if odd <= 5 else 2.05 if odd <= 10 else 1.85 if odd <= 25 else 1.65
+        top3_prob = implied * factor
+        top3_prob = min(max(top3_prob, 0.006), 0.56)
+        # Tiny margin, then guardrails.
+        top3_odds.append(min(max(1 / (top3_prob * 1.04), 1.70), 151.00))
+
+    df["top3_odds_float"] = pd.Series(top3_odds, index=df.index)
+
+    # Final display columns.
     df["odds"] = df["odds_float"].apply(format_odds)
-
-    top3_probs = pd.Series(plackett_luce_top3_probs(win_probs.tolist()), index=df.index)
-    margin_top3 = 1.06
-    df["top3_odds_float"] = (1 / (top3_probs * margin_top3)).clip(lower=1.85, upper=101.00)
     df["top3_odds"] = df["top3_odds_float"].apply(format_odds)
+    df["winner_max_stake"] = df["odds_float"].apply(lambda value: recommended_stake_by_odds(value, "winner"))
+    df["top3_max_stake"] = df["top3_odds_float"].apply(lambda value: recommended_stake_by_odds(value, "top3"))
+    df["winner_max_payout"] = (df["winner_max_stake"] * df["odds_float"]).round(0).astype(int)
+    df["top3_max_payout"] = (df["top3_max_stake"] * df["top3_odds_float"]).round(0).astype(int)
 
     df = df.sort_values("odds_float", ascending=True).reset_index(drop=True)
     df.insert(0, "odds_rank", range(1, len(df) + 1))
 
     return df
-
 
 # -----------------------------
 # Navnesøk
@@ -1925,9 +2040,8 @@ def render_league_table_component(table_df: pd.DataFrame, has_live_table: bool):
         return sortDir === 'asc' ? av.localeCompare(bv, 'nb') : bv.localeCompare(av, 'nb');
       }}
 
-      function rankCell(row) {{
-        const rankNumber = Number(row.rankValue);
-        const medal = rankNumber === 1 ? '🥇 ' : rankNumber === 2 ? '🥈 ' : rankNumber === 3 ? '🥉 ' : '';
+      function rankCell(row, index) {{
+        const medal = index === 0 ? '🥇 ' : index === 1 ? '🥈 ' : index === 2 ? '🥉 ' : '';
         const label = row.rank || '';
         return `<span class="rank-cell">${{medal}}${{esc(label)}}</span>`;
       }}
@@ -1935,10 +2049,10 @@ def render_league_table_component(table_df: pd.DataFrame, has_live_table: bool):
       function render() {{
         const sorted = [...rows].sort(compareRows);
         tbody.innerHTML = '';
-        sorted.forEach((row) => {{
+        sorted.forEach((row, index) => {{
           const tr = document.createElement('tr');
           tr.innerHTML = `
-            <td>${{rankCell(row)}}</td>
+            <td>${{rankCell(row, index)}}</td>
             <td><strong>${{esc(row.manager)}}</strong></td>
             <td>${{esc(row.team)}}</td>
             <td class="col-gw">${{fmtNum(row.eventPoints)}}</td>
@@ -1978,6 +2092,7 @@ def render_league_table_component(table_df: pd.DataFrame, has_live_table: bool):
 
 
 
+
 def render_odds_table_component(odds_view: pd.DataFrame):
     rows = []
     for _, row in odds_view.reset_index(drop=True).iterrows():
@@ -1986,7 +2101,9 @@ def render_odds_table_component(odds_view: pd.DataFrame):
             "manager": clean_cell(row.get("manager")),
             "team": clean_cell(row.get("team")),
             "winOdds": None if pd.isna(row.get("odds_float")) else float(row.get("odds_float")),
+            "winnerMaxStake": None if pd.isna(row.get("winner_max_stake")) else int(row.get("winner_max_stake")),
             "top3Odds": None if pd.isna(row.get("top3_odds_float")) else float(row.get("top3_odds_float")),
+            "top3MaxStake": None if pd.isna(row.get("top3_max_stake")) else int(row.get("top3_max_stake")),
             "avg3": None if pd.isna(row.get("avg_rank_last_3_num")) else float(row.get("avg_rank_last_3_num")),
             "bestRank": None if pd.isna(row.get("best_rank_num")) else float(row.get("best_rank_num")),
             "tag": clean_cell(row.get("tag")),
@@ -1996,15 +2113,17 @@ def render_odds_table_component(odds_view: pd.DataFrame):
     rows_json = json.dumps(rows, ensure_ascii=False)
     component_html = f"""
     <div class="lro-table-wrap">
-      <div class="lro-table-note">Trykk på kolonneoverskriftene for å sortere. Merknad sorteres i riktig intern rekkefølge.</div>
+      <div class="lro-table-note">Trykk på kolonneoverskriftene for å sortere. Maks spill er sosial grense per enkeltspill, ikke oppfordring.</div>
       <table class="lro-table lro-odds-table">
         <thead>
           <tr>
             <th data-key="rank" class="sortable">Odds-rangering</th>
             <th data-key="manager" class="sortable">Manager</th>
             <th data-key="team" class="sortable">Lagnavn</th>
-            <th data-key="winOdds" class="sortable col-gw">Vinnerodds før sesongstart</th>
-            <th data-key="top3Odds" class="sortable col-total">Topp 3-odds før sesongstart</th>
+            <th data-key="winOdds" class="sortable col-win">Vinnerodds</th>
+            <th data-key="winnerMaxStake" class="sortable col-stake">Maks spill vinner</th>
+            <th data-key="top3Odds" class="sortable col-top3">Topp 3-odds</th>
+            <th data-key="top3MaxStake" class="sortable col-stake">Maks spill topp 3</th>
             <th data-key="avg3" class="sortable">Snitt siste tre sesonger</th>
             <th data-key="bestRank" class="sortable">Beste FPL-plassering</th>
             <th data-key="tagSort" class="sortable">Merknad</th>
@@ -2016,16 +2135,18 @@ def render_odds_table_component(odds_view: pd.DataFrame):
     <style>
       .lro-table-wrap {{font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;}}
       .lro-table-note {{font-size: 13px; color: #64748b; margin: 0 0 10px 0;}}
-      .lro-table {{border-collapse: collapse; width: 100%; font-size: 14px; border: 1px solid #e5e7eb; border-radius: 14px; overflow: hidden;}}
-      .lro-table th {{text-align: left; background: #f8fafc; color: #334155; padding: 12px 10px; border-bottom: 1px solid #e5e7eb; cursor: pointer; user-select: none; white-space: nowrap;}}
-      .lro-table td {{padding: 11px 10px; border-bottom: 1px solid #eef2f7; color: #0f172a; vertical-align: top;}}
+      .lro-table {{border-collapse: collapse; width: 100%; font-size: 13.5px; border: 1px solid #e5e7eb; border-radius: 14px; overflow: hidden;}}
+      .lro-table th {{text-align: left; background: #f8fafc; color: #334155; padding: 11px 9px; border-bottom: 1px solid #e5e7eb; cursor: pointer; user-select: none; white-space: nowrap;}}
+      .lro-table td {{padding: 10px 9px; border-bottom: 1px solid #eef2f7; color: #0f172a; vertical-align: top;}}
       .lro-table tr:hover td {{background: #fafafa;}}
-      .lro-table .col-gw {{background: #eff6ff;}}
-      .lro-table .col-total {{background: #fff7ed;}}
-      .lro-table td.col-gw {{background: #dbeafe; font-weight: 850;}}
-      .lro-table td.col-total {{background: #ffedd5; font-weight: 850;}}
+      .lro-table .col-win {{background: #eff6ff;}}
+      .lro-table .col-top3 {{background: #fff7ed;}}
+      .lro-table .col-stake {{background: #f8fafc;}}
+      .lro-table td.col-win {{background: #dbeafe; font-weight: 850;}}
+      .lro-table td.col-top3 {{background: #ffedd5; font-weight: 850;}}
+      .lro-table td.col-stake {{background: #f8fafc; font-weight: 800; color:#334155;}}
       .sort-mark {{margin-left: 6px; font-size: 11px; color: #b91c1c;}}
-      .badge-tag {{display:inline-block; border-radius:999px; padding:3px 8px; background:#f1f5f9; color:#334155; font-weight:700; font-size:12px;}}
+      .badge-tag {{display:inline-block; border-radius:999px; padding:3px 8px; background:#f1f5f9; color:#334155; font-weight:700; font-size:12px; white-space:nowrap;}}
     </style>
     <script>
       const oddsRows = {rows_json};
@@ -2035,8 +2156,9 @@ def render_odds_table_component(odds_view: pd.DataFrame):
       function esc(value) {{ if (value === null || value === undefined) return ''; return String(value).replace(/[&<>"']/g, m => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[m])); }}
       function fmtNum(value) {{ if (value === null || value === undefined || Number.isNaN(value)) return ''; return Number(value).toLocaleString('nb-NO'); }}
       function fmtOdds(value) {{ if (value === null || value === undefined || Number.isNaN(value)) return ''; return Number(value).toFixed(2); }}
+      function fmtKr(value) {{ if (value === null || value === undefined || Number.isNaN(value)) return ''; return `${{Number(value).toLocaleString('nb-NO')}} kr`; }}
       function compareRows(a,b) {{
-        const numericKeys = new Set(['rank','winOdds','top3Odds','avg3','bestRank','tagSort']);
+        const numericKeys = new Set(['rank','winOdds','winnerMaxStake','top3Odds','top3MaxStake','avg3','bestRank','tagSort']);
         let av = a[sortKey]; let bv = b[sortKey];
         if (numericKeys.has(sortKey)) {{
           const am = av === null || av === undefined || Number.isNaN(av);
@@ -2055,7 +2177,7 @@ def render_odds_table_component(odds_view: pd.DataFrame):
         const sorted = [...oddsRows].sort(compareRows); tbody.innerHTML = '';
         sorted.forEach(row => {{
           const tr = document.createElement('tr');
-          tr.innerHTML = `<td><strong>${{fmtNum(row.rank)}}</strong></td><td><strong>${{esc(row.manager)}}</strong></td><td>${{esc(row.team)}}</td><td class="col-gw">${{fmtOdds(row.winOdds)}}</td><td class="col-total">${{fmtOdds(row.top3Odds)}}</td><td>${{fmtNum(row.avg3)}}</td><td>${{fmtNum(row.bestRank)}}</td><td><span class="badge-tag">${{esc(row.tag)}}</span></td>`;
+          tr.innerHTML = `<td><strong>${{fmtNum(row.rank)}}</strong></td><td><strong>${{esc(row.manager)}}</strong></td><td>${{esc(row.team)}}</td><td class="col-win">${{fmtOdds(row.winOdds)}}</td><td class="col-stake">${{fmtKr(row.winnerMaxStake)}}</td><td class="col-top3">${{fmtOdds(row.top3Odds)}}</td><td class="col-stake">${{fmtKr(row.top3MaxStake)}}</td><td>${{fmtNum(row.avg3)}}</td><td>${{fmtNum(row.bestRank)}}</td><td><span class="badge-tag">${{esc(row.tag)}}</span></td>`;
           tbody.appendChild(tr);
         }});
         document.querySelectorAll('.lro-odds-table th.sortable').forEach(th => {{
@@ -2067,8 +2189,7 @@ def render_odds_table_component(odds_view: pd.DataFrame):
       render();
     </script>
     """
-    components.html(component_html, height=820, scrolling=True)
-
+    components.html(component_html, height=900, scrolling=True)
 
 
 
@@ -2267,17 +2388,159 @@ def render_city_cards(place_df: pd.DataFrame):
     if ordered.empty:
         return
 
-    cols = st.columns(2)
+    cols = st.columns(3)
 
     for index, row in ordered.iterrows():
         count = int(row.get("Antall", 0))
         label = "manager" if count == 1 else "managere"
         people = str(row.get("Deltakere", ""))
 
-        with cols[index % 2]:
+        with cols[index % 3]:
             with st.container(border=True):
                 st.markdown(f"**{row.get('By', '')} · {count} {label}**")
-                st.caption(people)
+                st.write(people)
+
+
+
+def fmt_int(value: Any) -> str:
+    try:
+        if value is None or pd.isna(value):
+            return ""
+        return f"{int(float(value)):,}".replace(",", " ")
+    except Exception:
+        return ""
+
+
+def fmt_kr(value: Any) -> str:
+    try:
+        if value is None or pd.isna(value):
+            return ""
+        return f"{int(float(value))} kr"
+    except Exception:
+        return ""
+
+
+def pick_first(df: pd.DataFrame, sort_column: str, ascending: bool = True) -> pd.Series | None:
+    if df is None or df.empty or sort_column not in df.columns:
+        return None
+    temp = df.copy()
+    temp[sort_column] = pd.to_numeric(temp[sort_column], errors="coerce")
+    temp = temp.dropna(subset=[sort_column])
+    if temp.empty:
+        return None
+    return temp.sort_values(sort_column, ascending=ascending).iloc[0]
+
+
+def render_manager_profile(summary: pd.DataFrame, seasons_df: pd.DataFrame):
+    if summary.empty:
+        return
+
+    ordered = summary.sort_values(["hof_score", "manager"], ascending=[False, True]).reset_index(drop=True)
+    names = ordered["manager"].fillna("Ukjent").tolist()
+    selected_name = st.selectbox("Velg managerprofil", names, key="history_profile_picker_v28")
+    selected = ordered[ordered["manager"] == selected_name].iloc[0]
+
+    st.subheader(selected.get("manager", "Manager"))
+    lro_cards([
+        {
+            "label": "Beste FPL-plassering",
+            "value": format_rank_with_season(selected.get("best_rank_num"), selected.get("best_season")),
+            "caption": "All-time peak",
+        },
+        {
+            "label": "Forrige sesong",
+            "value": format_rank(selected.get("last_season_rank_num")),
+            "caption": "Plassering forrige sesong",
+        },
+        {
+            "label": "Snitt siste tre",
+            "value": format_rank(selected.get("avg_rank_last_3_num")),
+            "caption": "Siste tre sesonger",
+        },
+        {
+            "label": "Merittpoeng",
+            "value": fmt_int(selected.get("hof_score")),
+            "caption": clean_cell(selected.get("merits")) or "Ingen LRO-meritter registrert",
+        },
+    ])
+
+    entry = selected.get("entry")
+    manager_history = seasons_df[seasons_df["entry"].astype(str) == str(entry)].copy() if "entry" in seasons_df.columns else pd.DataFrame()
+    if not manager_history.empty:
+        manager_history["rank_num_sort"] = pd.to_numeric(manager_history["rank_num"], errors="coerce")
+        manager_history = manager_history.sort_values("season_name", ascending=False)
+        with st.expander(f"Full FPL-historikk for {selected.get('manager')}", expanded=True):
+            display_table(
+                manager_history,
+                ["season_name", "total_points", "rank"],
+                SEASON_LABELS,
+                column_config={
+                    "total_points": st.column_config.NumberColumn("Poeng", format="%d"),
+                },
+            )
+    else:
+        st.caption("Fant ikke full tidligere FPL-historikk for denne manageren.")
+
+
+def render_odds_cards(df: pd.DataFrame, title: str, empty_text: str):
+    st.subheader(title)
+    if df.empty:
+        st.caption(empty_text)
+        return
+
+    cards_per_row = 3
+    for start in range(0, len(df), cards_per_row):
+        cols = st.columns(cards_per_row)
+        for col, (_, row) in zip(cols, df.iloc[start:start + cards_per_row].iterrows()):
+            with col:
+                with st.container(border=True):
+                    rank = int(row.get("odds_rank") or 0)
+                    st.markdown(f"**#{rank} · {row.get('manager', '')}**")
+                    st.caption(str(row.get("team", "")))
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.metric("Vinner", format_odds(row.get("odds_float")))
+                        st.caption(f"Maks {fmt_kr(row.get('winner_max_stake'))}")
+                    with c2:
+                        st.metric("Topp 3", format_odds(row.get("top3_odds_float")))
+                        st.caption(f"Maks {fmt_kr(row.get('top3_max_stake'))}")
+                    note = clean_invisible(row.get("tag_display", row.get("tag", "")))
+                    if note:
+                        st.caption(note)
+
+
+def render_month_king_cards(month_specialists: pd.DataFrame):
+    if month_specialists.empty:
+        return
+
+    cols_per_row = 3
+    for start in range(0, len(month_specialists), cols_per_row):
+        cols = st.columns(cols_per_row)
+        for col, (_, row) in zip(cols, month_specialists.iloc[start:start + cols_per_row].iterrows()):
+            with col:
+                with st.container(border=True):
+                    month = str(row.get("month", ""))
+                    leaders_count = int(row.get("leaders_count") or 1)
+                    st.caption(month.upper())
+                    if leaders_count > 1:
+                        st.markdown("**Delt månedskonge**")
+                        st.caption(f"{leaders_count} managere på topp · {int(row.get('king_points') or 0)} poeng")
+                        st.caption("Se navn i detaljene under.")
+                    else:
+                        st.markdown(f"**{row.get('king', '')}**")
+                        st.caption(f"{int(row.get('king_points') or 0)} poeng · {row.get('month_merits', '')}")
+                    st.caption(row.get("comment", ""))
+
+
+def render_preseason_radar_preview():
+    st.info("Sesongradaren våkner for alvor når FPL-sesongen er i gang og ligaen har live plasseringer/rundedata.")
+    lro_cards([
+        {"label": "Kommer", "value": "Største klatrere", "caption": "Hvem flyr oppover tabellen"},
+        {"label": "Kommer", "value": "Største fall", "caption": "Hvem faller mest"},
+        {"label": "Kommer", "value": "Form siste tre", "caption": "Tre-runders formkurve"},
+        {"label": "Kommer", "value": "Mot oddsen", "caption": "Over- og underprestasjon"},
+    ])
+
 
 def build_season_radar_tables(managers: list[dict], summary_df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     if not managers:
@@ -2426,6 +2689,45 @@ def ensure_history_loaded(league_id: int):
         st.session_state["history_league_id"] = league_id
 
 
+def clear_loaded_fpl_state():
+    for key in [
+        "league_info",
+        "managers",
+        "debug",
+        "loaded_league_id",
+        "summary_df",
+        "seasons_df",
+        "errors_df",
+        "history_league_id",
+        "last_updated",
+    ]:
+        st.session_state.pop(key, None)
+
+
+def handle_refresh_and_autoload():
+    if st.session_state.pop("_refresh_fpl_now", False):
+        for cached_func in [get_json, get_entry_history, get_league_managers]:
+            try:
+                cached_func.clear()
+            except Exception:
+                pass
+        clear_loaded_fpl_state()
+        st.session_state.pop("_autoload_failed", None)
+
+    if "summary_df" not in st.session_state and not st.session_state.get("_autoload_failed"):
+        with st.spinner("Henter Lofthus-data fra FPL ..."):
+            try:
+                ensure_history_loaded(DEFAULT_LEAGUE_ID)
+                st.session_state["_autoload_failed"] = False
+            except Exception as error:
+                st.session_state["_autoload_failed"] = True
+                st.error(f"Klarte ikke å hente FPL-data akkurat nå: {error}")
+                st.caption("Prøv Oppdater fra FPL nå i venstremenyen om litt.")
+
+
+handle_refresh_and_autoload()
+
+
 
 # -----------------------------
 # Labels
@@ -2438,9 +2740,12 @@ LIGATABELL_LABELS = {
     "event_total_num": "Rundepoeng",
     "total_num": "Poeng totalt",
     "form_curve": "Formkurve",
+    "form_delta": "Endring i plassering",
     "odds_before": "Vinnerodds før sesongstart",
     "top3_odds": "Topp 3-odds før sesongstart",
     "top3_odds_float": "Topp 3-odds før sesongstart",
+    "winner_max_stake": "Maks spill vinner",
+    "top3_max_stake": "Maks spill topp 3",
 }
 
 HISTORY_LABELS = {
@@ -2605,23 +2910,34 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Norgeskart",
 ])
 
+
 with tab1:
     st.header("Ligatabell")
-    lro_note("Sesongens inngang", "Påmeldte lag, rundepoeng, totalpoeng og formkurve. Odds og dueller ligger i Odds-fanen.", "")
-
-    if st.button("Hent ligadata"):
-        ensure_history_loaded(DEFAULT_LEAGUE_ID)
+    lro_note("Hovedinngangen", "Påmeldte lag, rundepoeng, totalpoeng og formkurve. Odds, H2H og spillgrenser ligger i Odds-fanen.", "")
 
     if "managers" in st.session_state:
         managers = st.session_state["managers"]
 
         if not managers:
-            st.warning("Fant ingen påmeldte/managers.")
+            st.warning("Fant ingen påmeldte/managere.")
         else:
             table_df = pd.DataFrame(managers)
             summary_df = st.session_state.get("summary_df", pd.DataFrame())
 
             if not summary_df.empty:
+                odds_df = build_preseason_odds(summary_df)
+                fav = odds_df.sort_values("odds_float").iloc[0] if not odds_df.empty else None
+                peak = pick_first(summary_df, "best_rank_num", True)
+                proven = pick_first(summary_df, "top_100k_seasons", False)
+                hof = pick_first(summary_df, "hof_score", False)
+
+                lro_cards([
+                    {"label": "Bookiens favoritt", "value": f"{fav['manager']} · {format_odds(fav['odds_float'])}" if fav is not None else "", "caption": "Vinnerodds før sesongstart"},
+                    {"label": "Beste FPL-peak", "value": peak.get("manager") if peak is not None else "", "caption": format_rank(peak.get("best_rank_num")) if peak is not None else ""},
+                    {"label": "Flest topp 100k", "value": proven.get("manager") if proven is not None else "", "caption": f"{int(proven.get('top_100k_seasons') or 0)} sesonger" if proven is not None else ""},
+                    {"label": "Mest merittert", "value": hof.get("manager") if hof is not None else "", "caption": f"{int(hof.get('hof_score') or 0)} merittpoeng" if hof is not None else ""},
+                ])
+
                 table_df = table_df.merge(
                     summary_df[["entry", "tier", "tag"]],
                     on="entry",
@@ -2666,15 +2982,14 @@ with tab1:
                 file_name="lro_ligatabell.csv",
                 mime="text/csv",
             )
+    else:
+        lro_note("Ikke hentet ennå", "FPL-data hentes automatisk. Bruk Oppdater fra FPL nå i venstremenyen hvis noe mangler.", "gold")
 
 
 
 with tab2:
     st.header("Historikk")
-    lro_note("Fortid, ikke framtid", "Historikken viser tidligere FPL-sesonger, beste plassering, snitt siste tre sesonger og meritter fra Lofthus Road Open. Trykk på et manager-navn for full FPL-historikk.", "")
-
-    if st.button("Hent historikk"):
-        ensure_history_loaded(DEFAULT_LEAGUE_ID)
+    lro_note("Managerprofiler og historisk nivå", "Velg en manager for rask profil og full FPL-historikk. Den store tabellen ligger under for sortering og eksport.", "")
 
     if "summary_df" in st.session_state:
         summary_df = st.session_state["summary_df"]
@@ -2690,8 +3005,10 @@ with tab2:
             summary["merit_rank"] = range(1, len(summary) + 1)
             summary["merits"] = summary["merits"].fillna("")
 
-            st.subheader("Historikktabell")
-            render_history_table_component(summary, seasons_df)
+            render_manager_profile(summary, seasons_df)
+
+            with st.expander("Full historikktabell", expanded=True):
+                render_history_table_component(summary, seasons_df)
 
             history_download = summary[[
                 "merit_rank", "manager", "team", "seasons", "last_season_rank_num",
@@ -2734,26 +3051,17 @@ with tab2:
                 ])
                 st.dataframe(weights, use_container_width=True, hide_index=True)
 
-
-            with st.expander("Alle tidligere sesonger"):
-                season_columns = ["manager", "team", "season_name", "total_points", "rank"]
-                display_table(seasons_df, season_columns, SEASON_LABELS)
-
-                st.download_button(
-                    label="Last ned alle sesonger som CSV",
-                    data=csv_bytes(seasons_df, season_columns, SEASON_LABELS),
-                    file_name="lro_alle_sesonger.csv",
-                    mime="text/csv",
-                )
-
         if not errors_df.empty:
             st.warning("Noen feilet ved historikkhenting.")
             display_table(errors_df, ["manager", "team", "entry", "error"], ERROR_LABELS)
+    else:
+        lro_note("Ikke hentet ennå", "FPL-data hentes automatisk. Bruk Oppdater fra FPL nå i venstremenyen hvis noe mangler.", "gold")
+
 
 
 with tab3:
     st.header("Odds")
-    lro_note("Før sesongstart", "Her ligger vinnerodds, topp 3-odds og egen duellgenerator. Oddsene er laget for intern banter, men modellen er justert for at FPL-miniligaer har høy varians.", "")
+    lro_note("Før sesongstart", "Vinnerodds, topp 3-odds, maks spill og egen duellgenerator. Oddsen er laget for intern LRO-lek med lave innsatser og tydelige grenser.", "")
 
     if "summary_df" in st.session_state and not st.session_state["summary_df"].empty:
         summary_df = st.session_state["summary_df"]
@@ -2761,20 +3069,33 @@ with tab3:
         odds_view = odds_df.copy()
         odds_view["top3_odds_float"] = pd.to_numeric(odds_view["top3_odds_float"], errors="coerce")
         odds_view = add_sortable_display_columns(odds_view)
-        render_odds_table_component(odds_view)
+
+        favs = odds_view[odds_view["odds_float"] <= 8.0].head(9)
+        challengers = odds_view[(odds_view["odds_float"] > 8.0) & (odds_view["odds_float"] <= 25.0)].head(12)
+        longshots = odds_view[odds_view["odds_float"] > 25.0].head(12)
+
+        market_tabs = st.tabs(["Favoritter", "Utfordrere", "Langskudd", "Full oddstabell"])
+        with market_tabs[0]:
+            render_odds_cards(favs, "Favoritter", "Ingen favoritter i dette sjiktet.")
+        with market_tabs[1]:
+            render_odds_cards(challengers, "Utfordrere", "Ingen utfordrere i dette sjiktet.")
+        with market_tabs[2]:
+            render_odds_cards(longshots, "Langskudd", "Ingen langskudd i dette sjiktet.")
+        with market_tabs[3]:
+            render_odds_table_component(odds_view)
 
         st.download_button(
             label="Last ned odds som CSV",
-            data=odds_view[["odds_rank", "manager", "team", "odds", "top3_odds"]].rename(columns={"team": "lagnavn"}).to_csv(index=False).encode("utf-8"),
+            data=odds_view[["odds_rank", "manager", "team", "odds", "winner_max_stake", "top3_odds", "top3_max_stake"]].rename(columns={"team": "lagnavn", "winner_max_stake": "maks spill vinner", "top3_max_stake": "maks spill topp 3"}).to_csv(index=False).encode("utf-8"),
             file_name="lro_odds.csv",
             mime="text/csv",
         )
     else:
-        st.info("Hent ligadata/historikk først. Da fylles oddsgrunnlaget automatisk her.")
+        st.info("Oddsgrunnlaget hentes automatisk. Bruk Oppdater fra FPL nå i venstremenyen hvis noe mangler.")
 
     st.subheader("Lag egne dueller")
     st.write("Skriv én duell eller gruppe per linje. Bruk `vs` mellom navnene.")
-    market_text = st.text_area("Dueller/grupper", value="", height=260)
+    market_text = st.text_area("Dueller/grupper", value="", height=240)
 
     if st.button("Lag duellodds"):
         ensure_history_loaded(DEFAULT_LEAGUE_ID)
@@ -2798,6 +3119,7 @@ with tab3:
                 st.dataframe(missing_df, use_container_width=True, hide_index=True)
 
 
+
 with tab4:
     st.header("Hall of Fame")
     lro_note("Ligaens pokalskap", "Sammenlagt-seier vektes tyngst, cupgull deretter, månedsseiere lavere. Månedspodier gir ekstra historisk krydder.", "gold")
@@ -2810,8 +3132,20 @@ with tab4:
         hof_df = hof_df.sort_values(["hof_score", "display_name"], ascending=[False, True]).reset_index(drop=True)
         hof_df["rank_display"] = [f"{medal_for_position(i + 1)} {i + 1}".strip() for i in range(len(hof_df))]
 
-        st.subheader("Meritt-tabell")
-        render_hof_table_component(hof_df)
+        most_decorated = hof_df.iloc[0]
+        overall_king = hof_df.sort_values(["overall_count", "hof_score"], ascending=[False, False]).iloc[0]
+        cup_king = hof_df.sort_values(["cup_count", "hof_score"], ascending=[False, False]).iloc[0]
+        monthly_king = hof_df.sort_values(["monthly_titles", "hof_score"], ascending=[False, False]).iloc[0]
+
+        lro_cards([
+            {"label": "Mest merittert", "value": most_decorated["display_name"], "caption": f"{int(most_decorated['hof_score'])} merittpoeng"},
+            {"label": "Flest sammenlagtseiere", "value": overall_king["display_name"], "caption": f"{int(overall_king['overall_count'])} seiere"},
+            {"label": "Flest cupgull", "value": cup_king["display_name"], "caption": f"{int(cup_king['cup_count'])} cupgull"},
+            {"label": "Flest månedsseiere", "value": monthly_king["display_name"], "caption": f"{int(monthly_king['monthly_titles'])} månedsseiere"},
+        ])
+
+        st.subheader("Pokalskap")
+        render_hof_table_component(hof_df.head(12))
 
         hof_main = hof_df[[
             "rank_display",
@@ -2874,25 +3208,29 @@ with tab4:
             })
             st.dataframe(detailed_hof, use_container_width=True, hide_index=True)
 
-        st.subheader("Sesongdetaljer per manager")
-        detail_columns = [
-            "display_name",
-            "overall_seasons",
-            "overall_runner_up_seasons",
-            "overall_third_seasons",
-            "cup_seasons",
-            "cup_runner_up_seasons",
-        ]
-        display_table(hof_df, detail_columns, HOF_LABELS, column_config={"display_name": st.column_config.TextColumn("Manager", width="large")})
+        with st.expander("Sesongdetaljer per manager"):
+            detail_columns = [
+                "display_name",
+                "overall_seasons",
+                "overall_runner_up_seasons",
+                "overall_third_seasons",
+                "cup_seasons",
+                "cup_runner_up_seasons",
+            ]
+            display_table(hof_df, detail_columns, HOF_LABELS, column_config={"display_name": st.column_config.TextColumn("Manager", width="large")})
 
         st.subheader("Månedskonger")
         month_specialists = build_month_specialist_table()
-
         if month_specialists.empty:
             st.warning("Fant ingen månedskonge-data.")
         else:
-            month_specialist_columns = ["month", "king", "leaders_count", "king_points", "month_merits", "podiums", "comment"]
-            display_table(month_specialists, month_specialist_columns, MONTH_SPECIALIST_LABELS)
+            render_month_king_cards(month_specialists)
+            with st.expander("Månedskonge-detaljer"):
+                display_table(
+                    month_specialists,
+                    ["month", "king", "leaders_count", "king_points", "month_merits", "podiums", "comment"],
+                    MONTH_SPECIALIST_LABELS,
+                )
 
         st.subheader("Hvem gjør det best i hvilken måned?")
         monthly_df = build_monthly_podium_df()
@@ -2901,7 +3239,7 @@ with tab4:
             st.warning("Fant ingen månedspodier.")
         else:
             seasons = ["Alle"] + sorted(monthly_df["season"].dropna().unique().tolist())
-            selected_season = st.selectbox("Velg sesong", seasons, key="monthly_season_filter_v23")
+            selected_season = st.selectbox("Velg sesong", seasons, key="monthly_season_filter_v28")
             monthly_medals = build_monthly_medal_table(selected_season)
 
             medal_columns = ["monthly_rank", "manager", "month_points", "gold", "silver", "bronze", "podiums"]
@@ -2938,19 +3276,19 @@ with tab4:
         display_table(random_df, ["season", "winner", "placement"], RANDOM_LABELS)
 
 
+
 with tab5:
     st.header("Sesongradar")
     lro_note("Blir best når sesongen er i gang", "Her kommer største klatrere, største fall, form siste tre runder og hvem som over-/underpresterer mot før-sesong-odds.", "")
 
-    if st.button("Hent sesongradar"):
-        ensure_history_loaded(DEFAULT_LEAGUE_ID)
-
-    if "managers" in st.session_state:
+    if "managers" not in st.session_state:
+        render_preseason_radar_preview()
+    else:
         summary_df = st.session_state.get("summary_df", pd.DataFrame())
         radar = build_season_radar_tables(st.session_state["managers"], summary_df)
 
         if not radar:
-            st.info("Sesongradaren våkner for alvor når FPL-sesongen er i gang og ligaen har live plasseringer/rundedata.")
+            render_preseason_radar_preview()
         else:
             c1, c2 = st.columns(2)
 
@@ -3037,7 +3375,7 @@ with tab6:
                 else:
                     st.success("Kartdata matcher FPL-lista.")
             else:
-                st.info("Trykk Hent ligadata i Ligatabell for å sjekke om noen påmeldte mangler kartplassering.")
+                st.info("FPL-lista hentes automatisk. Bruk Oppdater fra FPL nå i venstremenyen hvis kartkontrollen ikke er klar.")
 
         if pdk is not None:
             layer = pdk.Layer(
