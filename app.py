@@ -21,7 +21,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-kontrollrom-v35-nav-predicted"
+APP_VERSION = "lofthus-road-open-kontrollrom-v36-banner-months"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -58,36 +58,47 @@ st.markdown(
             position: relative;
             overflow: hidden;
             background:
-                radial-gradient(circle at 92% 18%, rgba(56, 189, 248, 0.34), transparent 18%),
-                radial-gradient(circle at 8% 90%, rgba(251, 191, 36, 0.20), transparent 20%),
-                linear-gradient(135deg, #061426 0%, #111827 46%, #7f1d1d 100%);
-            border-radius: 26px;
-            padding: 34px 38px;
+                linear-gradient(90deg, rgba(8, 18, 36, 0.96) 0%, rgba(8, 31, 22, 0.90) 44%, rgba(83, 19, 19, 0.90) 100%),
+                repeating-linear-gradient(90deg, rgba(255,255,255,0.055) 0 2px, transparent 2px 74px),
+                linear-gradient(135deg, #075f37 0%, #0f7a42 46%, #0b3d2a 100%);
+            border-radius: 28px;
+            padding: 36px 40px;
             color: white;
             margin-bottom: 18px;
-            box-shadow: 0 16px 42px rgba(15, 23, 42, 0.22);
-            border: 1px solid rgba(255, 255, 255, 0.10);
+            box-shadow: 0 18px 46px rgba(15, 23, 42, 0.25);
+            border: 1px solid rgba(255, 255, 255, 0.12);
         }
         .lro-hero:before {
             content: "";
             position: absolute;
-            inset: 0;
+            right: -12px;
+            top: 22px;
+            width: min(46vw, 520px);
+            height: 210px;
+            border: 2px solid rgba(255,255,255,0.20);
+            border-radius: 22px;
+            transform: rotate(-7deg);
             background:
-                linear-gradient(120deg, transparent 0 47%, rgba(255,255,255,0.08) 47% 49%, transparent 49% 100%),
-                repeating-linear-gradient(135deg, rgba(255,255,255,0.045) 0 1px, transparent 1px 34px);
+                radial-gradient(circle at 50% 50%, transparent 0 38px, rgba(255,255,255,0.22) 39px 41px, transparent 42px),
+                linear-gradient(90deg, transparent 0 49%, rgba(255,255,255,0.20) 49% 51%, transparent 51% 100%),
+                linear-gradient(90deg, rgba(255,255,255,0.14) 0 11%, transparent 11% 89%, rgba(255,255,255,0.14) 89% 100%);
+            opacity: 0.95;
             pointer-events: none;
         }
         .lro-hero:after {
-            content: "GW1  •  H2H  •  HALL OF FAME  •  ODDS";
+            content: "●";
             position: absolute;
-            right: -28px;
-            bottom: 24px;
-            transform: rotate(-8deg);
-            color: rgba(255,255,255,0.11);
-            font-size: clamp(1.2rem, 3vw, 2.7rem);
-            font-weight: 950;
-            letter-spacing: 0.14em;
-            white-space: nowrap;
+            right: 118px;
+            bottom: 42px;
+            width: 54px;
+            height: 54px;
+            border-radius: 999px;
+            display: grid;
+            place-items: center;
+            background: radial-gradient(circle, #ffffff 0 36%, #111827 37% 43%, #ffffff 44% 100%);
+            color: transparent;
+            opacity: 0.18;
+            box-shadow: 0 0 42px rgba(255,255,255,0.22);
         }
 
         .lro-hero h1 {
@@ -235,6 +246,24 @@ st.markdown(
             color: white;
         }
 
+        .lro-section-title {
+            margin: 18px 0 10px 0;
+            padding: 10px 14px;
+            border-radius: 14px;
+            background: linear-gradient(90deg, #111827 0%, #7f1d1d 100%);
+            color: white;
+            font-weight: 850;
+            letter-spacing: -0.01em;
+        }
+        .lro-section-title span {
+            display:block;
+            color:#fde68a;
+            font-size:0.78rem;
+            text-transform:uppercase;
+            letter-spacing:0.08em;
+            margin-bottom:2px;
+        }
+
         @media (max-width: 760px) {
             .lro-hero {padding: 24px 22px; border-radius: 20px;}
             .lro-hero h1 {font-size: 2.4rem;}
@@ -350,6 +379,87 @@ def display_table(
         hide_index=True,
         column_config=translated_config,
     )
+
+
+def render_static_table_component(
+    df: pd.DataFrame,
+    columns: list[str],
+    labels: dict[str, str],
+    wide_columns: set[str] | None = None,
+    height: int = 520,
+):
+    """Render a clean wide table where long text wraps instead of disappearing."""
+    if df.empty:
+        st.caption("Ingen data å vise.")
+        return
+
+    wide_columns = wide_columns or set()
+    existing = [column for column in columns if column in df.columns]
+    header_cells = []
+    for column in existing:
+        cls = "wide" if column in wide_columns else ""
+        header_cells.append(f'<th class="{cls}">{html.escape(labels.get(column, column))}</th>')
+
+    body_rows = []
+    for _, row in df[existing].iterrows():
+        cells = []
+        for column in existing:
+            value = "" if pd.isna(row.get(column)) else str(row.get(column))
+            safe_value = html.escape(value).replace(" | ", "<br>")
+            cls = "wide" if column in wide_columns else ""
+            cells.append(f'<td class="{cls}">{safe_value}</td>')
+        body_rows.append("<tr>" + "".join(cells) + "</tr>")
+
+    component_html = f"""
+    <div class="static-table-wrap">
+      <style>
+        .static-table-wrap {{
+          width: 100%;
+          overflow-x: auto;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }}
+        table.static-table {{
+          border-collapse: collapse;
+          width: 100%;
+          min-width: 940px;
+          background: white;
+          border: 1px solid #e5e7eb;
+          border-radius: 14px;
+          overflow: hidden;
+        }}
+        .static-table th {{
+          background: #111827;
+          color: white;
+          text-align: left;
+          font-size: 12px;
+          letter-spacing: .04em;
+          text-transform: uppercase;
+          padding: 10px 12px;
+          white-space: nowrap;
+        }}
+        .static-table td {{
+          padding: 11px 12px;
+          border-bottom: 1px solid #eef2f7;
+          vertical-align: top;
+          color: #111827;
+          font-size: 14px;
+          line-height: 1.42;
+          white-space: nowrap;
+        }}
+        .static-table td.wide, .static-table th.wide {{
+          min-width: 560px;
+          max-width: 860px;
+          white-space: normal;
+        }}
+        .static-table tr:nth-child(even) td {{ background: #f9fafb; }}
+      </style>
+      <table class="static-table">
+        <thead><tr>{''.join(header_cells)}</tr></thead>
+        <tbody>{''.join(body_rows)}</tbody>
+      </table>
+    </div>
+    """
+    components.html(component_html, height=height, scrolling=True)
 
 
 def csv_bytes(df: pd.DataFrame, columns: list[str], labels: dict[str, str]) -> bytes:
@@ -2697,28 +2807,15 @@ def render_month_king_cards(month_specialists: pd.DataFrame):
 
 
 def nav_choice(label: str, options: list[str], key: str, default: str | None = None) -> str:
-    """Stable pill/button navigation without radio dots."""
+    """Stable button navigation without radio dots or segmented-control indicators."""
     if not options:
         return ""
 
     if key not in st.session_state or st.session_state[key] not in options:
         st.session_state[key] = default or options[0]
 
-    segmented = getattr(st, "segmented_control", None)
-    if callable(segmented):
-        try:
-            choice = segmented(
-                label or "Velg",
-                options,
-                default=st.session_state[key],
-                key=f"{key}_segmented",
-                label_visibility="collapsed" if not label else "visible",
-            )
-            if choice and choice in options:
-                st.session_state[key] = choice
-            return st.session_state[key]
-        except Exception:
-            pass
+    if label:
+        st.caption(label)
 
     cols = st.columns(len(options))
     for option, col in zip(options, cols):
@@ -3212,7 +3309,7 @@ NUMERIC_CONFIG = {
 # -----------------------------
 
 MAIN_PAGES = ["Ligatabell", "Sesongradar", "Odds", "Hall of Fame og historikk"]
-main_page = nav_choice("", MAIN_PAGES, "main_page_v35", default="Ligatabell")
+main_page = nav_choice("", MAIN_PAGES, "main_page_v36", default="Ligatabell")
 
 
 if main_page == "Ligatabell":
@@ -3224,7 +3321,7 @@ if main_page == "Ligatabell":
         if not managers:
             st.warning("Fant ingen påmeldte/managere.")
         else:
-            league_view = nav_choice("", ["Ligatabell", "Predicted tabell"], "league_view_v35", default="Ligatabell")
+            league_view = nav_choice("", ["Ligatabell", "Tabelltips"], "league_view_v36", default="Ligatabell")
 
             table_df = pd.DataFrame(managers)
             table_df["rank_num"] = pd.to_numeric(table_df["rank"], errors="coerce")
@@ -3236,15 +3333,15 @@ if main_page == "Ligatabell":
 
             has_live_table = table_df["rank_num"].notna().any()
 
-            if league_view == "Predicted tabell":
+            if league_view == "Tabelltips":
                 ensure_history_for_page()
                 summary_df = st.session_state.get("summary_df", pd.DataFrame())
 
                 if summary_df.empty:
-                    st.warning("Fant ikke nok historikk til å lage predicted tabell.")
+                    st.warning("Fant ikke nok historikk til å lage tabelltips.")
                 else:
                     odds_df = build_preseason_odds(summary_df)
-                    st.subheader("Predicted tabell")
+                    st.subheader("Tabelltips")
                     st.caption("Modellens før-sesongtips basert på FPL-historikk, fersk form og Lofthus Road Open-meritter.")
                     render_prediction_table_component(odds_df)
             else:
@@ -3304,7 +3401,7 @@ elif main_page == "Sesongradar":
             if cards:
                 lro_cards(cards[:4])
 
-            radar_section = nav_choice("", ["Tabellbevegelse", "Form", "Mot oddsen"], "radar_section_v35", default="Tabellbevegelse")
+            radar_section = nav_choice("", ["Tabellbevegelse", "Form", "Mot oddsen"], "radar_section_v36", default="Tabellbevegelse")
 
             if radar_section == "Tabellbevegelse":
                 c1, c2 = st.columns(2)
@@ -3360,7 +3457,7 @@ elif main_page == "Odds":
         challengers = odds_view[(odds_view["odds_float"] > 8.0) & (odds_view["odds_float"] <= 25.0)].head(12)
         longshots = odds_view[odds_view["odds_float"] > 25.0].head(12)
 
-        odds_section = nav_choice("", ["Favoritter", "Utfordrere", "Langskudd", "Fullstendig oddsliste"], "odds_section_v35", default="Favoritter")
+        odds_section = nav_choice("", ["Favoritter", "Utfordrere", "Langskudd", "Fullstendig oddsliste"], "odds_section_v36", default="Favoritter")
         if odds_section == "Favoritter":
             render_odds_cards(favs, "Favoritter", "Ingen favoritter i dette sjiktet.")
         elif odds_section == "Utfordrere":
@@ -3405,7 +3502,7 @@ elif main_page == "Hall of Fame og historikk":
     seasons_df = st.session_state.get("seasons_df", pd.DataFrame())
     errors_df = st.session_state.get("errors_df", pd.DataFrame())
 
-    hof_section = nav_choice("", ["Pokalskap", "Managerprofiler", "Månedskonger", "Resultatarkiv"], "hof_section_v35", default="Pokalskap")
+    hof_section = nav_choice("", ["Pokalskap", "Managerprofiler", "Månedskonger", "Resultatarkiv"], "hof_section_v36", default="Pokalskap")
 
     if hof_section == "Managerprofiler":
         ensure_history_for_page()
@@ -3455,50 +3552,50 @@ elif main_page == "Hall of Fame og historikk":
             st.subheader("Pokalskap")
             render_hof_table_component(hof_df.head(12))
 
-            with st.expander("Detaljert meritt-tabell"):
-                detailed_hof = hof_df[[
-                    "rank_display",
-                    "display_name",
-                    "hof_score",
-                    "overall_count",
-                    "overall_runner_up_count",
-                    "overall_third_count",
-                    "cup_count",
-                    "cup_runner_up_count",
-                    "monthly_titles",
-                    "monthly_silver",
-                    "monthly_bronze",
-                    "monthly_podiums",
-                    "random_count",
-                    "merits",
-                ]].rename(columns={
-                    "rank_display": "Rangering",
-                    "display_name": "Manager",
-                    "hof_score": "Merittpoeng",
-                    "overall_count": "Sammenlagt-seiere",
-                    "overall_runner_up_count": "Sammenlagt-sølv",
-                    "overall_third_count": "Sammenlagt-bronse",
-                    "cup_count": "Cupgull",
-                    "cup_runner_up_count": "Cupsølv",
-                    "monthly_titles": "Månedsseiere",
-                    "monthly_silver": "Månedssølv",
-                    "monthly_bronze": "Månedsbronse",
-                    "monthly_podiums": "Månedspodier",
-                    "random_count": "Random",
-                    "merits": "Meritter",
-                })
-                st.dataframe(detailed_hof, use_container_width=True, hide_index=True)
+            st.markdown('<div class="lro-section-title"><span>Detaljer</span>Detaljert meritt-tabell</div>', unsafe_allow_html=True)
+            detailed_hof = hof_df[[
+                "rank_display",
+                "display_name",
+                "hof_score",
+                "overall_count",
+                "overall_runner_up_count",
+                "overall_third_count",
+                "cup_count",
+                "cup_runner_up_count",
+                "monthly_titles",
+                "monthly_silver",
+                "monthly_bronze",
+                "monthly_podiums",
+                "random_count",
+                "merits",
+            ]].rename(columns={
+                "rank_display": "Rangering",
+                "display_name": "Manager",
+                "hof_score": "Merittpoeng",
+                "overall_count": "Sammenlagt-seiere",
+                "overall_runner_up_count": "Sammenlagt-sølv",
+                "overall_third_count": "Sammenlagt-bronse",
+                "cup_count": "Cupgull",
+                "cup_runner_up_count": "Cupsølv",
+                "monthly_titles": "Månedsseiere",
+                "monthly_silver": "Månedssølv",
+                "monthly_bronze": "Månedsbronse",
+                "monthly_podiums": "Månedspodier",
+                "random_count": "Random",
+                "merits": "Meritter",
+            })
+            st.dataframe(detailed_hof, use_container_width=True, hide_index=True)
 
-            with st.expander("Sesongdetaljer per manager"):
-                detail_columns = [
-                    "display_name",
-                    "overall_seasons",
-                    "overall_runner_up_seasons",
-                    "overall_third_seasons",
-                    "cup_seasons",
-                    "cup_runner_up_seasons",
-                ]
-                display_table(hof_df, detail_columns, HOF_LABELS, column_config={"display_name": st.column_config.TextColumn("Manager", width="large")})
+            st.markdown('<div class="lro-section-title"><span>Arkiv</span>Sesongdetaljer per manager</div>', unsafe_allow_html=True)
+            detail_columns = [
+                "display_name",
+                "overall_seasons",
+                "overall_runner_up_seasons",
+                "overall_third_seasons",
+                "cup_seasons",
+                "cup_runner_up_seasons",
+            ]
+            display_table(hof_df, detail_columns, HOF_LABELS, column_config={"display_name": st.column_config.TextColumn("Manager", width="large")})
 
     elif hof_section == "Månedskonger":
         st.subheader("Månedskonger")
@@ -3523,10 +3620,12 @@ elif main_page == "Hall of Fame og historikk":
             if month_specialists.empty:
                 st.warning("Fant ingen månedskonge-data.")
             else:
-                display_table(
+                render_static_table_component(
                     month_specialists,
                     ["month", "king", "gold", "silver", "bronze", "podiums"],
                     MONTH_SPECIALIST_LABELS,
+                    wide_columns={"king"},
+                    height=430,
                 )
 
             st.subheader("Pallplasser per sesong og måned")
@@ -3534,10 +3633,12 @@ elif main_page == "Hall of Fame og historikk":
             if calendar_df.empty:
                 st.caption("Fant ingen måned-for-måned-data.")
             else:
-                display_table(
+                render_static_table_component(
                     calendar_df,
                     ["season", "month", "winner", "second_place", "third_place"],
                     MONTHLY_CALENDAR_LABELS,
+                    wide_columns={"winner", "second_place", "third_place"},
+                    height=620,
                 )
 
             st.subheader("Månedsvinnere gjennom tidene")
@@ -3545,11 +3646,12 @@ elif main_page == "Hall of Fame og historikk":
             if winners_history.empty:
                 st.caption("Fant ingen månedsvinnere.")
             else:
-                display_table(
+                render_static_table_component(
                     winners_history,
                     ["month", "winners_history"],
                     MONTH_WINNER_HISTORY_LABELS,
-                    column_config={"winners_history": st.column_config.TextColumn("Vinnere gjennom tidene", width="large")},
+                    wide_columns={"winners_history"},
+                    height=520,
                 )
 
     elif hof_section == "Resultatarkiv":
