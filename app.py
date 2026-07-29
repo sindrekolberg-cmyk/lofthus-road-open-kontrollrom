@@ -21,7 +21,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-kontrollrom-v31-history-redesign"
+APP_VERSION = "lofthus-road-open-kontrollrom-v32-prelaunch-polish"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -55,26 +55,54 @@ st.markdown(
         }
 
         .lro-hero {
+            position: relative;
+            overflow: hidden;
             background:
-                radial-gradient(circle at 92% 18%, rgba(251, 191, 36, 0.18), transparent 22%),
-                linear-gradient(135deg, #0b1220 0%, #111827 52%, #7f1d1d 100%);
-            border-radius: 24px;
-            padding: 30px 34px;
+                radial-gradient(circle at 92% 18%, rgba(56, 189, 248, 0.34), transparent 18%),
+                radial-gradient(circle at 8% 90%, rgba(251, 191, 36, 0.20), transparent 20%),
+                linear-gradient(135deg, #061426 0%, #111827 46%, #7f1d1d 100%);
+            border-radius: 26px;
+            padding: 34px 38px;
             color: white;
-            margin-bottom: 20px;
-            box-shadow: 0 14px 36px rgba(15, 23, 42, 0.20);
-            border: 1px solid rgba(255, 255, 255, 0.08);
+            margin-bottom: 18px;
+            box-shadow: 0 16px 42px rgba(15, 23, 42, 0.22);
+            border: 1px solid rgba(255, 255, 255, 0.10);
+        }
+        .lro-hero:before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background:
+                linear-gradient(120deg, transparent 0 47%, rgba(255,255,255,0.08) 47% 49%, transparent 49% 100%),
+                repeating-linear-gradient(135deg, rgba(255,255,255,0.045) 0 1px, transparent 1px 34px);
+            pointer-events: none;
+        }
+        .lro-hero:after {
+            content: "GW1  •  H2H  •  HALL OF FAME  •  ODDS";
+            position: absolute;
+            right: -28px;
+            bottom: 24px;
+            transform: rotate(-8deg);
+            color: rgba(255,255,255,0.11);
+            font-size: clamp(1.2rem, 3vw, 2.7rem);
+            font-weight: 950;
+            letter-spacing: 0.14em;
+            white-space: nowrap;
         }
 
         .lro-hero h1 {
-            font-size: clamp(2.2rem, 4.3vw, 4.1rem);
-            line-height: 1.0;
+            position: relative;
+            z-index: 1;
+            font-size: clamp(2.25rem, 4.5vw, 4.4rem);
+            line-height: 0.98;
             margin: 0;
             color: white;
-            letter-spacing: -0.05em;
+            letter-spacing: -0.055em;
         }
 
         .lro-beta {
+            position: relative;
+            z-index: 1;
             display: inline-flex;
             align-items: center;
             gap: 8px;
@@ -727,6 +755,33 @@ def build_month_specialist_table() -> pd.DataFrame:
 
     return pd.DataFrame(rows).sort_values("month_order").reset_index(drop=True)
 
+
+def build_month_winner_history_table() -> pd.DataFrame:
+    df = build_monthly_podium_df()
+
+    if df.empty:
+        return df
+
+    winners = df[df["place"].astype(int) == 1].copy()
+    if winners.empty:
+        return pd.DataFrame(columns=["month", "winners_history"])
+
+    rows = []
+    for (month_order, month), month_df in winners.groupby(["month_order", "month"]):
+        month_df = month_df.sort_values(["season", "manager"])
+        history_parts = []
+        for season, season_df in month_df.groupby("season"):
+            names = ", ".join(season_df["manager"].tolist())
+            history_parts.append(f"{season}: {names}")
+        rows.append({
+            "month_order": int(month_order),
+            "month": month,
+            "winners_history": " | ".join(history_parts),
+        })
+
+    return pd.DataFrame(rows).sort_values("month_order").reset_index(drop=True)
+
+
 def build_hof_people() -> pd.DataFrame:
     people = {}
 
@@ -909,27 +964,39 @@ def enrich_summary_with_hof(summary_df: pd.DataFrame) -> pd.DataFrame:
 
     hof_index = hof_df.set_index("key")
 
-    monthly_titles = []
+    hof_columns = [
+        "monthly_titles",
+        "monthly_silver",
+        "monthly_bronze",
+        "overall_count",
+        "overall_runner_up_count",
+        "overall_third_count",
+        "cup_count",
+        "cup_runner_up_count",
+        "random_count",
+        "hof_score",
+    ]
+
+    collected = {column: [] for column in hof_columns}
     merits = []
-    hof_scores = []
 
     for _, row in summary_df.iterrows():
         key = hof_key(row["manager"])
 
         if key in hof_index.index:
             hof_row = hof_index.loc[key]
-            monthly_titles.append(int(hof_row["monthly_titles"]))
             merits.append(hof_row["merits"])
-            hof_scores.append(int(hof_row["hof_score"]))
+            for column in hof_columns:
+                collected[column].append(int(hof_row.get(column, 0) or 0))
         else:
-            monthly_titles.append(0)
             merits.append("")
-            hof_scores.append(0)
+            for column in hof_columns:
+                collected[column].append(0)
 
     summary_df = summary_df.copy()
-    summary_df["monthly_titles"] = monthly_titles
+    for column, values in collected.items():
+        summary_df[column] = values
     summary_df["merits"] = merits
-    summary_df["hof_score"] = hof_scores
 
     return summary_df
 
@@ -1419,7 +1486,7 @@ def plackett_luce_top3_probs(probs: list[float]) -> list[float]:
 
 
 def recommended_stake_by_odds(odds: float | None, market: str = "winner") -> int:
-    """Social stake limits for the internal LRO odds game.
+    """Social stake limits for the internal Lofthus Road Open odds game.
 
     The limits keep big longshot payouts fun, but stop anyone from placing
     ruinous stakes on 50.00+ prices.
@@ -1458,7 +1525,7 @@ def recommended_stake_by_odds(odds: float | None, market: str = "winner") -> int
 
 def build_preseason_odds(summary_df: pd.DataFrame) -> pd.DataFrame:
     """
-    LRO bookmaker-ish preseason market.
+    Lofthus Road Open bookmaker-ish preseason market.
 
     This is intentionally NOT a pure fair-probability model. The goal is a
     playable internal market:
@@ -1485,6 +1552,11 @@ def build_preseason_odds(summary_df: pd.DataFrame) -> pd.DataFrame:
     consistency_score = series_num("consistency_score")
     hof_score = series_num("hof_score")
     monthly_titles = series_num("monthly_titles")
+    overall_titles = series_num("overall_count")
+    overall_silver = series_num("overall_runner_up_count")
+    overall_bronze = series_num("overall_third_count")
+    cup_gold = series_num("cup_count")
+    cup_silver = series_num("cup_runner_up_count")
     seasons = series_num("seasons")
     top_100k = series_num("top_100k_seasons")
     top_500k = series_num("top_500k_seasons")
@@ -1503,10 +1575,16 @@ def build_preseason_odds(summary_df: pd.DataFrame) -> pd.DataFrame:
         + 0.04 * top_100k.clip(0, 6) * 6
     )
 
-    # Small LRO-respect bonus. Enough to matter in a private league, not enough
-    # to rescue a bad FPL profile alone.
-    market_score += hof_score.clip(0, 220) / 75.0
-    market_score += monthly_titles.clip(0, 6) * 0.18
+    # Lofthus Road Open-respect bonus. We deliberately avoid monthly silver/bronze
+    # here, because that part of the old data is incomplete. Full-season medals,
+    # cupgull and official monthly wins can move the price a little; FPL-history
+    # still drives the odds.
+    market_score += overall_titles.clip(0, 3) * 0.75
+    market_score += overall_silver.clip(0, 3) * 0.32
+    market_score += overall_bronze.clip(0, 3) * 0.16
+    market_score += cup_gold.clip(0, 4) * 0.24
+    market_score += cup_silver.clip(0, 4) * 0.10
+    market_score += monthly_titles.clip(0, 6) * 0.10
     market_score += top_500k.clip(0, 12) * 0.06
 
     # Human bookmaker-style adjustments.
@@ -1530,7 +1608,7 @@ def build_preseason_odds(summary_df: pd.DataFrame) -> pd.DataFrame:
     elite_mask = (
         (avg3_rank <= 350_000)
         | (top_100k >= 4)
-        | ((hof_score >= 100) & (top_500k >= 5))
+        | (((overall_titles * 2 + overall_silver + cup_gold) >= 2) & (top_500k >= 5))
     )
     df.loc[elite_mask, "odds_float"] *= 0.88
 
@@ -2446,7 +2524,7 @@ def render_manager_profile(summary: pd.DataFrame, seasons_df: pd.DataFrame):
         "Velg managerprofil",
         names,
         key="history_profile_picker_v31",
-        help="Velg en manager for å se FPL-historikk og LRO-meritter samlet.",
+        help="Velg en manager for å se FPL-historikk og Lofthus Road Open-meritter samlet.",
     )
 
     selected = ordered[ordered["manager"] == selected_name].iloc[0]
@@ -2481,10 +2559,10 @@ def render_manager_profile(summary: pd.DataFrame, seasons_df: pd.DataFrame):
 
     merits = clean_cell(selected.get("merits"))
     if merits:
-        st.markdown("**LRO-meritter**")
+        st.markdown("**Lofthus Road Open-meritter**")
         st.write(merits)
     else:
-        st.caption("Ingen LRO-meritter registrert på denne manageren ennå.")
+        st.caption("Ingen Lofthus Road Open-meritter registrert på denne manageren ennå.")
 
     entry = selected.get("entry")
     manager_history = seasons_df[seasons_df["entry"].astype(str) == str(entry)].copy() if "entry" in seasons_df.columns else pd.DataFrame()
@@ -2972,23 +3050,15 @@ NUMERIC_CONFIG = {
 # UI
 # -----------------------------
 
-pages = [
+tab_liga, tab_radar, tab_odds, tab_hof = st.tabs([
     "Ligatabell",
     "Sesongradar",
     "Odds",
     "Hall of Fame og historikk",
-]
-
-page = st.radio(
-    "Navigasjon",
-    pages,
-    horizontal=True,
-    label_visibility="collapsed",
-    key="main_page_v31",
-)
+])
 
 
-if page == "Ligatabell":
+with tab_liga:
     st.header("Ligatabell")
 
     if "managers" in st.session_state:
@@ -3037,7 +3107,7 @@ if page == "Ligatabell":
         lro_note("Ikke hentet ennå", "FPL-data hentes automatisk. Bruk Oppdater fra FPL nå i venstremenyen hvis noe mangler.", "gold")
 
 
-elif page == "Sesongradar":
+with tab_radar:
     st.header("Sesongradar")
     lro_note(
         "Live motor gjennom sesongen",
@@ -3111,7 +3181,7 @@ elif page == "Sesongradar":
                         display_table(radar["under"], ["player_name", "entry_name", "rank_num", "odds_rank", "performance_vs_odds", "odds"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
 
 
-elif page == "Odds":
+with tab_odds:
     st.header("Odds")
     lro_note("Før sesongstart", "Vinnerodds, topp 3-odds og egen duellgenerator. Oddsen er laget for intern moro.", "")
 
@@ -3125,7 +3195,7 @@ elif page == "Odds":
         challengers = odds_view[(odds_view["odds_float"] > 8.0) & (odds_view["odds_float"] <= 25.0)].head(12)
         longshots = odds_view[odds_view["odds_float"] > 25.0].head(12)
 
-        market_tabs = st.tabs(["Favoritter", "Utfordrere", "Langskudd", "Full oddstabell"])
+        market_tabs = st.tabs(["Favoritter", "Utfordrere", "Langskudd", "Fullstendig oddsliste"])
         with market_tabs[0]:
             render_odds_cards(favs, "Favoritter", "Ingen favoritter i dette sjiktet.")
         with market_tabs[1]:
@@ -3170,11 +3240,11 @@ elif page == "Odds":
                 st.dataframe(missing_df, use_container_width=True, hide_index=True)
 
 
-elif page == "Hall of Fame og historikk":
+with tab_hof:
     st.header("Hall of Fame og historikk")
     lro_note(
         "Historieboka",
-        "Her ligger LRO-meritter og FPL-historikk samlet. Velg manager for profil, eller gå til pokalskap/månedskonger for ligaens gamle bragder.",
+        "Her ligger Lofthus Road Open-meritter og FPL-historikk samlet. Velg manager for profil, eller gå til pokalskap/månedskonger for å se historikk på ligaen.<br><br>Hvis du ble nummer tre sammenlagt i 24/25, eventuelt vet hvem som ble det, og har informasjon om hvem som mangler på de ulike månedene - vennligst meld deg",
         "gold",
     )
 
@@ -3289,48 +3359,40 @@ elif page == "Hall of Fame og historikk":
 
     with month_tab:
         st.subheader("Månedskonger")
-        month_specialists = build_month_specialist_table()
-        if month_specialists.empty:
-            st.warning("Fant ingen månedskonge-data.")
-        else:
-            render_month_king_cards(month_specialists)
-            with st.expander("Månedskonge-detaljer"):
-                display_table(
-                    month_specialists,
-                    ["month", "king", "leaders_count", "king_points", "month_merits", "podiums"],
-                    MONTH_SPECIALIST_LABELS,
-                )
-
-        st.subheader("Hvem gjør det best i hvilken måned?")
         monthly_df = build_monthly_podium_df()
 
         if monthly_df.empty:
             st.warning("Fant ingen månedspodier.")
         else:
-            seasons = ["Alle"] + sorted(monthly_df["season"].dropna().unique().tolist())
-            selected_season = st.selectbox("Velg sesong", seasons, key="monthly_season_filter_v31")
-            monthly_medals = build_monthly_medal_table(selected_season)
-
-            medal_columns = ["monthly_rank", "manager", "month_points", "gold", "silver", "bronze", "podiums"]
-            display_table(monthly_medals, medal_columns, MONTHLY_MEDAL_LABELS)
-
             lro_note(
-                "Ufullstendig sølv/bronse-historikk",
-                "Jeg har alle månedsvinnerne, men ikke full oversikt over 2. og 3. plass i hver eneste måned tilbake til september 2020. Tabellen under viser det som er dokumentert.",
+                "Datagrunnlag",
+                "Månedsvinnerne er mest komplette. Sølv, bronse og pallplasser bygger på det som er dokumentert, og mangler for enkelte måneder.",
                 "gold",
             )
 
-            with st.expander("Måned for måned"):
-                calendar_df = build_monthly_calendar_table(selected_season)
-                calendar_columns = ["season", "month", "winner", "second_place", "third_place"]
-                display_table(calendar_df, calendar_columns, MONTHLY_CALENDAR_LABELS)
+            monthly_medals = build_monthly_medal_table("Alle")
+            medal_columns = ["monthly_rank", "manager", "month_points", "gold", "silver", "bronze", "podiums"]
+            display_table(monthly_medals, medal_columns, MONTHLY_MEDAL_LABELS)
 
-            with st.expander("Månedspodier"):
-                podium_view = monthly_df.copy()
-                if selected_season != "Alle":
-                    podium_view = podium_view[podium_view["season"] == selected_season]
-                podium_columns = ["season", "month", "place", "manager", "points"]
-                display_table(podium_view, podium_columns, MONTHLY_PODIUM_LABELS)
+            st.subheader("Måned for måned - total oversikt")
+            month_specialists = build_month_specialist_table()
+            if month_specialists.empty:
+                st.warning("Fant ingen månedskonge-data.")
+            else:
+                month_specialist_view = month_specialists.copy()
+                winners_history = build_month_winner_history_table()
+                if not winners_history.empty:
+                    month_specialist_view = month_specialist_view.merge(
+                        winners_history[["month", "winners_history"]],
+                        on="month",
+                        how="left",
+                    )
+                display_table(
+                    month_specialist_view,
+                    ["month", "king", "leaders_count", "king_points", "gold", "silver", "bronze", "podiums", "winners_history"],
+                    MONTH_SPECIALIST_LABELS,
+                    column_config={"winners_history": st.column_config.TextColumn("Vinnere gjennom tidene", width="large")},
+                )
 
     with archive_tab:
         st.subheader("Sammenlagtvinnere")
