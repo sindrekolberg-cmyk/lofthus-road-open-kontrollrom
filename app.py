@@ -21,7 +21,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-kontrollrom-v31-oddslist"
+APP_VERSION = "lofthus-road-open-kontrollrom-v32-odds-button-risk"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -1448,12 +1448,11 @@ def build_preseason_odds(summary_df: pd.DataFrame) -> pd.DataFrame:
     """
     LRO bookmaker-ish preseason market.
 
-    This is intentionally NOT a pure fair-probability model. The goal is a
-    playable internal market:
-    - the known elite should be protected hard, with the favourite around 3-ish;
+    This is calibrated for a social/internal market, not pure fair probability:
+    - proven elite managers are protected hard and should start around 3-ish;
     - the field still spreads naturally down the list;
-    - top-3 prices must not collapse into 1.14 nonsense;
-    - stake limits are shown because high odds must never allow huge liability.
+    - no absurd 200+ longshot prices;
+    - top-3 prices are linked to winner prices, but never collapse into 1.14.
     """
     if summary_df.empty:
         return pd.DataFrame()
@@ -1479,90 +1478,106 @@ def build_preseason_odds(summary_df: pd.DataFrame) -> pd.DataFrame:
     last_rank = series_num("last_season_rank_num", 9_999_999)
     avg3_rank = series_num("avg_rank_last_3_num", 9_999_999)
 
-    # Betting strength. Recent FPL years drive the model, but elite peak,
-    # consistency and LRO track record still matter.
+    # Recent FPL performance is the backbone. Peak and LRO-merits matter, but
+    # they should not overrule a clearly weak recent profile.
     market_score = (
-        0.30 * total_rating
-        + 0.30 * last_3_score
-        + 0.12 * recent_score
+        0.28 * total_rating
+        + 0.33 * last_3_score
+        + 0.13 * recent_score
         + 0.10 * last_5_score
         + 0.08 * best_score
-        + 0.06 * consistency_score
-        + 0.04 * top_100k.clip(0, 6) * 6
+        + 0.05 * consistency_score
+        + 0.03 * top_100k.clip(0, 6) * 7
     )
 
-    # Small LRO-respect bonus. Enough to matter in a private league, not enough
-    # to rescue a bad FPL profile alone.
-    market_score += hof_score.clip(0, 220) / 75.0
-    market_score += monthly_titles.clip(0, 6) * 0.18
-    market_score += top_500k.clip(0, 12) * 0.06
+    # Private-league respect. This tightens the known Lofthus elite, but is not
+    # enough alone to save someone with bad FPL data.
+    market_score += hof_score.clip(0, 240) / 62.0
+    market_score += monthly_titles.clip(0, 6) * 0.22
+    market_score += top_500k.clip(0, 12) * 0.07
 
-    # Human bookmaker-style adjustments.
+    # Downside protection for weak/recently poor profiles.
     market_score = market_score.where(seasons > 2, market_score - 2.2)
-    market_score = market_score.where(last_rank <= 2_000_000, market_score - 1.4)
-    market_score = market_score.where(avg3_rank <= 1_700_000, market_score - 1.4)
-    market_score = market_score.where(avg3_rank <= 2_500_000, market_score - 1.0)
+    market_score = market_score.where(last_rank <= 2_000_000, market_score - 1.35)
+    market_score = market_score.where(avg3_rank <= 1_700_000, market_score - 1.45)
+    market_score = market_score.where(avg3_rank <= 2_500_000, market_score - 0.80)
 
     df["market_score"] = market_score.round(2)
-
     max_score = float(market_score.max()) if len(market_score) else 0.0
 
-    # Start from a score-based price ladder, not a fully normalised probability
-    # model. This gives the right bookmaker-feel for a social market.
-    base_favourite_odds = 3.25
-    spread = 8.8
+    # The first price is intentionally around 3.00 because these are playable
+    # social odds. If the known best players are too high, people can exploit
+    # the early small field before everyone has joined.
+    base_favourite_odds = 3.05
+    spread = 9.7
     df["odds_float"] = base_favourite_odds * ((max_score - market_score) / spread).apply(math.exp)
 
-    # Extra protection on obvious elite profiles. We would rather be a bit short
-    # on the proven best players than give away 5-6 odds before the field is full.
+    # Protect obvious elite profiles. Better to be short on the best managers
+    # than hand out gift prices before GW1.
     elite_mask = (
         (avg3_rank <= 350_000)
         | (top_100k >= 4)
         | ((hof_score >= 100) & (top_500k >= 5))
     )
-    df.loc[elite_mask, "odds_float"] *= 0.88
+    df.loc[elite_mask, "odds_float"] *= 0.84
 
-    # Dark horses can still be tempting, but don't make weak recent form too cheap.
+    # Widen weak recent profiles, but do not let anyone drift beyond a level that
+    # is socially dangerous to offer in an internal market.
     df.loc[avg3_rank > 1_500_000, "odds_float"] *= 1.18
     df.loc[last_rank > 2_500_000, "odds_float"] *= 1.12
     df.loc[seasons <= 2, "odds_float"] *= 1.18
+    df["odds_float"] = df["odds_float"].clip(lower=3.00, upper=151.00)
 
-    # Guardrails. Known elite starts around 3, longshots are allowed to drift.
-    df["odds_float"] = df["odds_float"].clip(lower=3.00, upper=251.00)
-
-    # Keep the very top compact. If there are several genuinely strong managers,
-    # they should not all drift to 10+ before the season starts.
+    # Human market shaping: compact top, natural staircase. This makes the first
+    # few names feel like a real market instead of a passive ranking table.
     df = df.sort_values("odds_float", ascending=True).reset_index(drop=True)
-    top_caps = {0: 3.25, 1: 4.00, 2: 4.75, 3: 5.75, 4: 7.25}
+    top_caps = {
+        0: 3.00,
+        1: 3.25,
+        2: 3.65,
+        3: 4.15,
+        4: 4.85,
+        5: 5.75,
+        6: 6.90,
+        7: 8.25,
+    }
     for idx, cap in top_caps.items():
         if idx < len(df) and float(df.loc[idx, "odds_float"]) > cap:
             df.loc[idx, "odds_float"] = cap
 
-    # Avoid a completely flat top: later rows must be at least marginally longer.
+    # Avoid identical prices through the list, while still letting the top tier
+    # sit close together.
     for idx in range(1, len(df)):
-        min_allowed = float(df.loc[idx - 1, "odds_float"]) + 0.10
+        min_gap = 0.08 if idx <= 4 else 0.15 if idx <= 10 else 0.25
+        min_allowed = float(df.loc[idx - 1, "odds_float"]) + min_gap
         if float(df.loc[idx, "odds_float"]) < min_allowed:
             df.loc[idx, "odds_float"] = min_allowed
 
-    # Top-3 odds derived from vinnerodds, but softened for a 37-62-player FPL field.
-    # This is a practical market relation: strong favourites can be 1.70-ish,
-    # but no one should be 1.14 before GW1.
-    win_odds = pd.to_numeric(df["odds_float"], errors="coerce").fillna(251.0)
+    df["odds_float"] = df["odds_float"].clip(lower=3.00, upper=151.00)
+
+    # Top-3 odds are derived from winner prices, with guardrails. Strongest names
+    # can be short, but no 1.14 nonsense in a 37-62 manager FPL field.
+    win_odds = pd.to_numeric(df["odds_float"], errors="coerce").fillna(151.0)
     top3_odds = []
     for odd in win_odds:
         odd = float(odd)
         implied = 1 / max(odd, 1.01)
-        # Multiplying implied win chance gives a rough top-3 chance. The factor
-        # slowly falls as odds rise, preventing silly low top-3 prices on outsiders.
-        factor = 2.25 if odd <= 5 else 2.05 if odd <= 10 else 1.85 if odd <= 25 else 1.65
+        if odd <= 4.0:
+            factor = 2.15
+        elif odd <= 8.0:
+            factor = 2.00
+        elif odd <= 16.0:
+            factor = 1.82
+        elif odd <= 35.0:
+            factor = 1.62
+        else:
+            factor = 1.42
+
         top3_prob = implied * factor
-        top3_prob = min(max(top3_prob, 0.006), 0.56)
-        # Tiny margin, then guardrails.
-        top3_odds.append(min(max(1 / (top3_prob * 1.04), 1.70), 151.00))
+        top3_prob = min(max(top3_prob, 0.010), 0.54)
+        top3_odds.append(min(max(1 / (top3_prob * 1.04), 1.78), 75.00))
 
     df["top3_odds_float"] = pd.Series(top3_odds, index=df.index)
-
-    # Final display columns.
     df["odds"] = df["odds_float"].apply(format_odds)
     df["top3_odds"] = df["top3_odds_float"].apply(format_odds)
 
@@ -2721,32 +2736,39 @@ with tab1:
             st.caption(f"Fant {len(table_df)} lag.")
 
             if not summary_df.empty:
-                st.subheader("Oddsliste før sesongstart")
-                lro_note(
-                    "Vinnerodds og topp 3",
-                    "Markedet er basert på historikk, siste tre sesonger, toppnivå og meritter i Lofthus Road Open. Topp 3-oddsen er avledet av vinneroddsen, men justert for FPL-varians.",
-                    "",
-                )
-                odds_list = build_preseason_odds(summary_df)
-                if not odds_list.empty:
-                    odds_list = add_sortable_display_columns(odds_list)
-                    odds_columns = [
-                        "odds_rank",
-                        "manager",
-                        "team",
-                        "odds_float",
-                        "top3_odds_float",
-                        "tag_display",
-                        "tier_display",
-                    ]
-                    display_table(
-                        odds_list,
-                        odds_columns,
-                        ODDS_LIST_LABELS,
-                        column_config=NUMERIC_CONFIG,
+                if "show_preseason_odds_list" not in st.session_state:
+                    st.session_state["show_preseason_odds_list"] = False
+
+                if st.button("Vis/skjul oddsliste før sesongstart", key="toggle_preseason_odds_list"):
+                    st.session_state["show_preseason_odds_list"] = not st.session_state["show_preseason_odds_list"]
+
+                if st.session_state["show_preseason_odds_list"]:
+                    st.subheader("Oddsliste før sesongstart")
+                    lro_note(
+                        "Vinnerodds og topp 3",
+                        "Markedet er basert på historikk, siste tre sesonger, toppnivå og meritter i Lofthus Road Open. Oddsen er kalibrert som sosialt spillbar før-sesongodds, med favoritter priset hardere og longshots stoppet før det blir økonomisk idiotisk.",
+                        "",
                     )
-                else:
-                    st.caption("Oddslista kommer når historikkgrunnlaget er hentet.")
+                    odds_list = build_preseason_odds(summary_df)
+                    if not odds_list.empty:
+                        odds_list = add_sortable_display_columns(odds_list)
+                        odds_columns = [
+                            "odds_rank",
+                            "manager",
+                            "team",
+                            "odds_float",
+                            "top3_odds_float",
+                            "tag_display",
+                            "tier_display",
+                        ]
+                        display_table(
+                            odds_list,
+                            odds_columns,
+                            ODDS_LIST_LABELS,
+                            column_config=NUMERIC_CONFIG,
+                        )
+                    else:
+                        st.caption("Oddslista kommer når historikkgrunnlaget er hentet.")
 
             league_download_cols = [
                 "rank_display",
