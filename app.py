@@ -21,7 +21,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-kontrollrom-v37-layout-mobile"
+APP_VERSION = "lofthus-road-open-kontrollrom-v38-odds-table-microfix"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -2373,8 +2373,8 @@ def render_odds_table_component(odds_view: pd.DataFrame):
             <th data-key="rank" class="sortable">Odds-rangering</th>
             <th data-key="manager" class="sortable">Manager</th>
             <th data-key="team" class="sortable">Lagnavn</th>
-            <th data-key="winOdds" class="sortable col-win">Vinnerodds</th>
-            <th data-key="top3Odds" class="sortable col-top3">Topp 3-odds</th>
+            <th data-key="winOdds" class="sortable col-win">Odds - vinner</th>
+            <th data-key="top3Odds" class="sortable col-top3">Odds - topp 3</th>
             <th data-key="avg3" class="sortable">Snitt siste tre sesonger</th>
             <th data-key="bestRank" class="sortable">Beste FPL-plassering</th>
           </tr>
@@ -2832,24 +2832,13 @@ def render_history_overview_table(summary: pd.DataFrame):
     )
 
 def render_odds_cards(df: pd.DataFrame, title: str, empty_text: str):
+    """Render selected odds section as compact table, not metric cards."""
     st.subheader(title)
     if df.empty:
         st.caption(empty_text)
         return
 
-    cards_per_row = 3
-    for start in range(0, len(df), cards_per_row):
-        cols = st.columns(cards_per_row)
-        for col, (_, row) in zip(cols, df.iloc[start:start + cards_per_row].iterrows()):
-            with col:
-                with st.container(border=True):
-                    rank = int(row.get("odds_rank") or 0)
-                    st.markdown(f"**#{rank} · {row.get('manager', '')}**")
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        st.metric("Vinner", format_odds(row.get("odds_float")))
-                    with c2:
-                        st.metric("Topp 3", format_odds(row.get("top3_odds_float")))
+    render_odds_table_component(df)
 
 
 def render_month_king_cards(month_specialists: pd.DataFrame):
@@ -2929,8 +2918,8 @@ def render_prediction_table_component(odds_df: pd.DataFrame):
         <thead><tr>
           <th data-key="tip" class="sortable">Tips</th>
           <th data-key="manager" class="sortable">Manager</th>
-          <th data-key="winOdds" class="sortable col-win">Vinnerodds</th>
-          <th data-key="top3Odds" class="sortable col-top3">Topp 3-odds</th>
+          <th data-key="winOdds" class="sortable col-win">Odds - vinner</th>
+          <th data-key="top3Odds" class="sortable col-top3">Odds - topp 3</th>
           <th data-key="lastRank" class="sortable">Plassering forrige sesong</th>
           <th data-key="avg3" class="sortable">Snitt siste tre sesonger</th>
           <th data-key="bestRank" class="sortable">Beste FPL-plassering</th>
@@ -3221,9 +3210,9 @@ LIGATABELL_LABELS = {
     "total_num": "Poeng totalt",
     "form_curve": "Formkurve",
     "form_delta": "Endring i plassering",
-    "odds_before": "Vinnerodds før sesongstart",
-    "top3_odds": "Topp 3-odds før sesongstart",
-    "top3_odds_float": "Topp 3-odds før sesongstart",
+    "odds_before": "Odds - vinner",
+    "top3_odds": "Odds - topp 3",
+    "top3_odds_float": "Odds - topp 3",
 }
 
 HISTORY_LABELS = {
@@ -3353,8 +3342,8 @@ RADAR_LABELS = {
     "form_curve": "Formkurve",
     "event_total_num": "Rundepoeng",
     "total_num": "Poeng",
-    "odds": "Vinnerodds før sesongstart",
-    "top3_odds": "Topp 3-odds før sesongstart",
+    "odds": "Odds - vinner",
+    "top3_odds": "Odds - topp 3",
     "odds_rank": "Odds-rangering",
     "performance_vs_odds": "Avvik mot odds",
     "last_three_points": "Poeng siste tre runder",
@@ -3363,15 +3352,15 @@ RADAR_LABELS = {
 }
 
 NUMERIC_CONFIG = {
-    "odds_before": st.column_config.NumberColumn("Vinnerodds før sesongstart", format="%.2f"),
+    "odds_before": st.column_config.NumberColumn("Odds - vinner", format="%.2f"),
     "best_rank_numeric": st.column_config.NumberColumn("Beste FPL-plassering gjennom tidene", format="%d"),
     "last_season_rank_display": st.column_config.TextColumn("Plassering forrige sesong", width="medium"),
     "avg_rank_last_3_display": st.column_config.TextColumn("Snitt siste tre sesonger", width="medium"),
     "event_total_num": st.column_config.NumberColumn("Rundepoeng", format="%d"),
     "total_num": st.column_config.NumberColumn("Poeng", format="%d"),
     "rank_num": st.column_config.NumberColumn("Plassering", format="%d"),
-    "odds": st.column_config.NumberColumn("Vinnerodds før sesongstart", format="%.2f"),
-    "top3_odds_float": st.column_config.NumberColumn("Topp 3-odds før sesongstart", format="%.2f"),
+    "odds": st.column_config.NumberColumn("Odds - vinner", format="%.2f"),
+    "top3_odds_float": st.column_config.NumberColumn("Odds - topp 3", format="%.2f"),
     "odds_rank": st.column_config.NumberColumn("Odds-rangering", format="%d"),
     "performance_vs_odds": st.column_config.NumberColumn("Avvik mot odds", format="%d"),
     "last_three_points": st.column_config.NumberColumn("Poeng siste tre runder", format="%d"),
