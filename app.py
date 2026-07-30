@@ -21,7 +21,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-kontrollrom-v28-odds-page-cleanup"
+APP_VERSION = "lofthus-road-open-kontrollrom-v29-clean-odds-no-map"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -1966,8 +1966,6 @@ def render_league_table_component(table_df: pd.DataFrame, has_live_table: bool):
 
     for _, row in table_df.reset_index(drop=True).iterrows():
         form_text, form_sort = form_curve_badge(row.get("form_delta"), big_threshold)
-        winner_stake = None if pd.isna(row.get("winner_max_stake")) else int(row.get("winner_max_stake"))
-        top3_stake = None if pd.isna(row.get("top3_max_stake")) else int(row.get("top3_max_stake"))
         rows.append({
             "rank": clean_cell(row.get("rank_display")),
             "rankValue": None if pd.isna(row.get("rank_num")) else float(row.get("rank_num")),
@@ -1979,7 +1977,6 @@ def render_league_table_component(table_df: pd.DataFrame, has_live_table: bool):
             "formSort": form_sort,
             "winOdds": None if pd.isna(row.get("odds_float")) else float(row.get("odds_float")),
             "top3Odds": None if pd.isna(row.get("top3_odds_float")) else float(row.get("top3_odds_float")),
-            "stakeText": "" if winner_stake is None and top3_stake is None else f"V: {winner_stake or 0} kr · T3: {top3_stake or 0} kr",
         })
 
     rows_json = json.dumps(rows, ensure_ascii=False)
@@ -2000,7 +1997,6 @@ def render_league_table_component(table_df: pd.DataFrame, has_live_table: bool):
             <th data-key="formSort" class="sortable">Formkurve</th>
             <th data-key="winOdds" class="sortable col-win">Vinnerodds</th>
             <th data-key="top3Odds" class="sortable col-top3">Topp 3</th>
-            <th data-key="stakeText" class="sortable">Maks spill</th>
           </tr>
         </thead>
         <tbody id="lro-table-body"></tbody>
@@ -2026,7 +2022,6 @@ def render_league_table_component(table_df: pd.DataFrame, has_live_table: bool):
       .lro-table tr:hover td.col-win {{background:#bbf7d0;}}
       .lro-table tr:hover td.col-top3 {{background:#ddd6fe;}}
       .rank-cell {{font-weight: 850; white-space: nowrap;}}
-      .stake-cell {{white-space:nowrap; color:#475569; font-size:12.5px;}}
       .sort-mark {{margin-left: 6px; font-size: 11px; color: #b91c1c;}}
     </style>
     <script>
@@ -2090,7 +2085,6 @@ def render_league_table_component(table_df: pd.DataFrame, has_live_table: bool):
             <td>${{esc(row.form)}}</td>
             <td class="col-win">${{fmtOdds(row.winOdds)}}</td>
             <td class="col-top3">${{fmtOdds(row.top3Odds)}}</td>
-            <td class="stake-cell">${{esc(row.stakeText)}}</td>
           `;
           tbody.appendChild(tr);
         }});
@@ -2124,104 +2118,6 @@ def render_league_table_component(table_df: pd.DataFrame, has_live_table: bool):
     components.html(component_html, height=900, scrolling=True)
 
 
-
-def render_odds_table_component(odds_view: pd.DataFrame):
-    rows = []
-    for _, row in odds_view.reset_index(drop=True).iterrows():
-        rows.append({
-            "rank": None if pd.isna(row.get("odds_rank")) else int(row.get("odds_rank")),
-            "manager": clean_cell(row.get("manager")),
-            "team": clean_cell(row.get("team")),
-            "winOdds": None if pd.isna(row.get("odds_float")) else float(row.get("odds_float")),
-            "winnerMaxStake": None if pd.isna(row.get("winner_max_stake")) else int(row.get("winner_max_stake")),
-            "top3Odds": None if pd.isna(row.get("top3_odds_float")) else float(row.get("top3_odds_float")),
-            "top3MaxStake": None if pd.isna(row.get("top3_max_stake")) else int(row.get("top3_max_stake")),
-            "avg3": None if pd.isna(row.get("avg_rank_last_3_num")) else float(row.get("avg_rank_last_3_num")),
-            "bestRank": None if pd.isna(row.get("best_rank_num")) else float(row.get("best_rank_num")),
-            "tag": clean_cell(row.get("tag")),
-            "tagSort": 99 if pd.isna(row.get("tag_sort")) else int(row.get("tag_sort")),
-        })
-
-    rows_json = json.dumps(rows, ensure_ascii=False)
-    component_html = f"""
-    <div class="lro-table-wrap">
-      <div class="lro-table-note">Trykk på kolonneoverskriftene for å sortere. Maks spill er sosial grense per enkeltspill, ikke oppfordring.</div>
-      <table class="lro-table lro-odds-table">
-        <thead>
-          <tr>
-            <th data-key="rank" class="sortable">Odds-rangering</th>
-            <th data-key="manager" class="sortable">Manager</th>
-            <th data-key="team" class="sortable">Lagnavn</th>
-            <th data-key="winOdds" class="sortable col-win">Vinnerodds</th>
-            <th data-key="winnerMaxStake" class="sortable col-stake">Maks spill vinner</th>
-            <th data-key="top3Odds" class="sortable col-top3">Topp 3-odds</th>
-            <th data-key="top3MaxStake" class="sortable col-stake">Maks spill topp 3</th>
-            <th data-key="avg3" class="sortable">Snitt siste tre sesonger</th>
-            <th data-key="bestRank" class="sortable">Beste FPL-plassering</th>
-            <th data-key="tagSort" class="sortable">Merknad</th>
-          </tr>
-        </thead>
-        <tbody id="lro-odds-body"></tbody>
-      </table>
-    </div>
-    <style>
-      .lro-table-wrap {{font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;}}
-      .lro-table-note {{font-size: 13px; color: #64748b; margin: 0 0 10px 0;}}
-      .lro-table {{border-collapse: collapse; width: 100%; font-size: 13.5px; border: 1px solid #e5e7eb; border-radius: 14px; overflow: hidden;}}
-      .lro-table th {{text-align: left; background: #f8fafc; color: #334155; padding: 11px 9px; border-bottom: 1px solid #e5e7eb; cursor: pointer; user-select: none; white-space: nowrap;}}
-      .lro-table td {{padding: 10px 9px; border-bottom: 1px solid #eef2f7; color: #0f172a; vertical-align: top;}}
-      .lro-table tr:hover td {{background: #fafafa;}}
-      .lro-table .col-win {{background: #eff6ff;}}
-      .lro-table .col-top3 {{background: #fff7ed;}}
-      .lro-table .col-stake {{background: #f8fafc;}}
-      .lro-table td.col-win {{background: #dbeafe; font-weight: 850;}}
-      .lro-table td.col-top3 {{background: #ffedd5; font-weight: 850;}}
-      .lro-table td.col-stake {{background: #f8fafc; font-weight: 800; color:#334155;}}
-      .sort-mark {{margin-left: 6px; font-size: 11px; color: #b91c1c;}}
-      .badge-tag {{display:inline-block; border-radius:999px; padding:3px 8px; background:#f1f5f9; color:#334155; font-weight:700; font-size:12px; white-space:nowrap;}}
-    </style>
-    <script>
-      const oddsRows = {rows_json};
-      let sortKey = 'rank';
-      let sortDir = 'asc';
-      const tbody = document.getElementById('lro-odds-body');
-      function esc(value) {{ if (value === null || value === undefined) return ''; return String(value).replace(/[&<>"']/g, m => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[m])); }}
-      function fmtNum(value) {{ if (value === null || value === undefined || Number.isNaN(value)) return ''; return Number(value).toLocaleString('nb-NO'); }}
-      function fmtOdds(value) {{ if (value === null || value === undefined || Number.isNaN(value)) return ''; return Number(value).toFixed(2); }}
-      function fmtKr(value) {{ if (value === null || value === undefined || Number.isNaN(value)) return ''; return `${{Number(value).toLocaleString('nb-NO')}} kr`; }}
-      function compareRows(a,b) {{
-        const numericKeys = new Set(['rank','winOdds','winnerMaxStake','top3Odds','top3MaxStake','avg3','bestRank','tagSort']);
-        let av = a[sortKey]; let bv = b[sortKey];
-        if (numericKeys.has(sortKey)) {{
-          const am = av === null || av === undefined || Number.isNaN(av);
-          const bm = bv === null || bv === undefined || Number.isNaN(bv);
-          if (am && bm) return String(a.manager).localeCompare(String(b.manager), 'nb');
-          if (am) return 1; if (bm) return -1;
-          const diff = sortDir === 'asc' ? av - bv : bv - av;
-          if (diff !== 0) return diff;
-          if (sortKey === 'tagSort') return (a.winOdds || 999) - (b.winOdds || 999);
-          return String(a.manager).localeCompare(String(b.manager), 'nb');
-        }}
-        av = String(av || '').toLowerCase(); bv = String(bv || '').toLowerCase();
-        return sortDir === 'asc' ? av.localeCompare(bv, 'nb') : bv.localeCompare(av, 'nb');
-      }}
-      function render() {{
-        const sorted = [...oddsRows].sort(compareRows); tbody.innerHTML = '';
-        sorted.forEach(row => {{
-          const tr = document.createElement('tr');
-          tr.innerHTML = `<td><strong>${{fmtNum(row.rank)}}</strong></td><td><strong>${{esc(row.manager)}}</strong></td><td>${{esc(row.team)}}</td><td class="col-win">${{fmtOdds(row.winOdds)}}</td><td class="col-stake">${{fmtKr(row.winnerMaxStake)}}</td><td class="col-top3">${{fmtOdds(row.top3Odds)}}</td><td class="col-stake">${{fmtKr(row.top3MaxStake)}}</td><td>${{fmtNum(row.avg3)}}</td><td>${{fmtNum(row.bestRank)}}</td><td><span class="badge-tag">${{esc(row.tag)}}</span></td>`;
-          tbody.appendChild(tr);
-        }});
-        document.querySelectorAll('.lro-odds-table th.sortable').forEach(th => {{
-          const key = th.getAttribute('data-key'); th.querySelectorAll('.sort-mark').forEach(s => s.remove());
-          if (key === sortKey) {{ const span = document.createElement('span'); span.className = 'sort-mark'; span.textContent = sortDir === 'asc' ? '▲' : '▼'; th.appendChild(span); }}
-        }});
-      }}
-      document.querySelectorAll('.lro-odds-table th.sortable').forEach(th => {{ th.addEventListener('click', () => {{ const key = th.getAttribute('data-key'); if (sortKey === key) {{ sortDir = sortDir === 'asc' ? 'desc' : 'asc'; }} else {{ sortKey = key; sortDir = (key === 'manager' || key === 'team' || key === 'tagSort') ? 'asc' : 'asc'; }} render(); }}); }});
-      render();
-    </script>
-    """
-    components.html(component_html, height=900, scrolling=True)
 
 
 
@@ -2595,8 +2491,6 @@ LIGATABELL_LABELS = {
     "odds_before": "Vinnerodds før sesongstart",
     "top3_odds": "Topp 3-odds før sesongstart",
     "top3_odds_float": "Topp 3-odds før sesongstart",
-    "winner_max_stake": "Maks spill vinner",
-    "top3_max_stake": "Maks spill topp 3",
     "odds_float": "Vinnerodds før sesongstart",
 }
 
@@ -2753,13 +2647,12 @@ NUMERIC_CONFIG = {
 # UI
 # -----------------------------
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "Ligatabell",
     "Historikk",
     "Odds",
     "Hall of Fame",
     "Sesongradar",
-    "Norgeskart",
 ])
 
 with tab1:
@@ -2788,22 +2681,18 @@ with tab1:
                 odds_df = build_preseason_odds(summary_df)
                 if not odds_df.empty:
                     table_df = table_df.merge(
-                        odds_df[["entry", "odds_float", "top3_odds_float", "winner_max_stake", "top3_max_stake"]],
+                        odds_df[["entry", "odds_float", "top3_odds_float"]],
                         on="entry",
                         how="left",
                     )
                 else:
                     table_df["odds_float"] = pd.NA
                     table_df["top3_odds_float"] = pd.NA
-                    table_df["winner_max_stake"] = pd.NA
-                    table_df["top3_max_stake"] = pd.NA
             else:
                 table_df["tier"] = ""
                 table_df["tag"] = ""
                 table_df["odds_float"] = pd.NA
                 table_df["top3_odds_float"] = pd.NA
-                table_df["winner_max_stake"] = pd.NA
-                table_df["top3_max_stake"] = pd.NA
 
             table_df["rank_num"] = pd.to_numeric(table_df["rank"], errors="coerce")
             table_df["last_rank_num"] = pd.to_numeric(table_df["last_rank"], errors="coerce")
@@ -2833,7 +2722,7 @@ with tab1:
 
             st.caption(f"Fant {len(table_df)} lag.")
 
-            download_columns = ["rank_display", "player_name", "entry_name", "event_total_num", "total_num", "form_delta", "odds_float", "top3_odds_float", "winner_max_stake", "top3_max_stake"]
+            download_columns = ["rank_display", "player_name", "entry_name", "event_total_num", "total_num", "form_delta", "odds_float", "top3_odds_float"]
             st.download_button(
                 label="Last ned ligadata som CSV",
                 data=csv_bytes(table_df, download_columns, LIGATABELL_LABELS),
@@ -3148,92 +3037,3 @@ with tab5:
                     st.caption("Trenger live-tabell og oddsdata.")
                 else:
                     display_table(radar["under"], ["player_name", "entry_name", "rank_num", "odds_rank", "performance_vs_odds", "odds"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
-
-
-with tab6:
-    st.header("Norgeskart")
-    lro_note("Ligaen på kartet", "Geografisk fordeling av managerne i ligaen. Kartet viser klynger; bruk tabellen under for full navneliste.", "")
-
-    active_manager_names = []
-    if "managers" in st.session_state:
-        active_manager_names = [manager.get("player_name", "") for manager in st.session_state.get("managers", [])]
-
-    place_df = build_place_data(active_manager_names if active_manager_names else None)
-
-    if place_df.empty:
-        st.warning("Fant ingen steder i data/places.csv.")
-    else:
-        total_people = int(place_df["Antall"].sum())
-        top_city = place_df.sort_values("Antall", ascending=False).iloc[0]
-
-        c1, c2, c3 = st.columns(3)
-
-        with c1:
-            st.metric("Registrerte på kartet", total_people)
-
-        with c2:
-            st.metric("Byer/steder", len(place_df))
-
-        with c3:
-            st.metric("Største miljø", top_city["By"], int(top_city["Antall"]))
-
-        raw_places = read_csv_file("places.csv", ["manager", "place", "lat", "lon"])
-        mapped_keys = set(raw_places["manager"].map(hof_key).tolist()) if not raw_places.empty else set()
-
-        with st.expander("Kartdata-kontroll"):
-            if "managers" in st.session_state:
-                missing = []
-                for manager in st.session_state.get("managers", []):
-                    manager_name = manager.get("player_name", "")
-                    if manager_name and hof_key(manager_name) not in mapped_keys:
-                        missing.append(manager_name)
-
-                if missing:
-                    st.warning("Mangler kartplassering/alias for: " + ", ".join(sorted(set(missing))))
-                    st.caption("Hvis personen egentlig finnes på kartet, legg navnevarianten inn i data/aliases.csv. Hvis personen mangler helt, legg vedkommende inn i data/places.csv.")
-                elif total_people != len(st.session_state.get("managers", [])):
-                    st.info(f"Kartet har {total_people} personer, mens FPL-lista har {len(st.session_state.get('managers', []))}. Sjekk mulige alias/duplikater.")
-                else:
-                    st.success("Kartdata matcher FPL-lista.")
-            else:
-                st.info("Trykk Hent ligadata i Ligatabell for å sjekke om noen påmeldte mangler kartplassering.")
-
-        if pdk is not None:
-            layer = pdk.Layer(
-                "ScatterplotLayer",
-                data=place_df,
-                get_position="[lon, lat]",
-                get_radius="radius",
-                get_fill_color="[185, 28, 28, 210]",
-                get_line_color="[15, 23, 42]",
-                line_width_min_pixels=1,
-                pickable=True,
-            )
-
-            view_state = pdk.ViewState(latitude=64.9, longitude=13.5, zoom=3.85, pitch=20)
-
-            deck = pdk.Deck(
-                map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
-                initial_view_state=view_state,
-                layers=[layer],
-                tooltip={
-                    "text": "{By}\n{Antall} managere\n{Deltakere}",
-                    "style": {
-                        "backgroundColor": "white",
-                        "color": "black",
-                        "padding": "14px",
-                        "borderRadius": "12px",
-                        "maxWidth": "760px",
-                        "fontSize": "13px",
-                    },
-                },
-            )
-
-            st.pydeck_chart(deck, use_container_width=True)
-
-        else:
-            map_df = place_df.rename(columns={"lat": "latitude", "lon": "longitude"})
-            st.map(map_df, latitude="latitude", longitude="longitude")
-
-        st.subheader("Steder og deltakere")
-        render_city_cards(place_df)
