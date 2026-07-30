@@ -21,7 +21,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-kontrollrom-v38-odds-table-microfix"
+APP_VERSION = "lofthus-road-open-kontrollrom-v39-wow-factor"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -289,10 +289,129 @@ st.markdown(
             .lro-note {font-size: 0.88rem;}
             .stButton > button {font-size: 0.82rem; padding: 0.35rem 0.45rem;}
         }
+
+
+        /* v39 wow-layer: still clean, but more like a matchday control room */
+        .lro-hero {
+            min-height: 220px;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            background:
+                radial-gradient(circle at 78% 18%, rgba(255,255,255,0.22) 0 2px, transparent 3px),
+                radial-gradient(circle at 74% 26%, rgba(255,255,255,0.15) 0 2px, transparent 3px),
+                radial-gradient(circle at 82% 30%, rgba(255,255,255,0.18) 0 2px, transparent 3px),
+                linear-gradient(120deg, rgba(6, 15, 32, 0.98) 0%, rgba(13, 33, 53, 0.96) 38%, rgba(111, 22, 31, 0.94) 100%),
+                repeating-linear-gradient(120deg, rgba(255,255,255,0.07) 0 1px, transparent 1px 64px);
+        }
+        .lro-hero .hero-eyebrow {
+            position: relative;
+            z-index: 2;
+            color: #fecaca;
+            font-size: .75rem;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: .16em;
+            margin-bottom: 10px;
+        }
+        .lro-hero .hero-subline {
+            position: relative;
+            z-index: 2;
+            margin-top: 14px;
+            max-width: 900px;
+            color: #e5e7eb;
+            font-size: clamp(.95rem, 1.4vw, 1.15rem);
+            font-weight: 650;
+        }
+        .lro-hero .hero-chip-row {
+            position: relative;
+            z-index: 2;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 18px;
+        }
+        .hero-chip {
+            padding: 7px 10px;
+            border-radius: 999px;
+            border: 1px solid rgba(255,255,255,.18);
+            background: rgba(255,255,255,.08);
+            color: #f8fafc;
+            font-weight: 800;
+            font-size: .78rem;
+            letter-spacing: .02em;
+        }
+        .hero-chip.gold {background: rgba(251, 191, 36, .15); border-color: rgba(251, 191, 36, .40); color: #fde68a;}
+        .lro-scoreboard {
+            display:grid;
+            grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+            gap: 12px;
+            margin: 16px 0 22px 0;
+        }
+        .lro-score-card {
+            border: 1px solid #e5e7eb;
+            border-radius: 18px;
+            padding: 14px 16px;
+            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+            box-shadow: 0 12px 32px rgba(15,23,42,.07);
+        }
+        .lro-score-card.dark {
+            background: linear-gradient(135deg, #0f172a 0%, #1f2937 100%);
+            border-color: rgba(255,255,255,.12);
+            color: white;
+        }
+        .lro-score-label {font-size:.72rem; text-transform:uppercase; letter-spacing:.12em; font-weight:900; color:#64748b; margin-bottom:6px;}
+        .lro-score-card.dark .lro-score-label {color:#fde68a;}
+        .lro-score-value {font-size:1.45rem; font-weight:950; letter-spacing:-.04em; line-height:1.05;}
+        .lro-score-caption {font-size:.86rem; color:#64748b; margin-top:6px;}
+        .lro-score-card.dark .lro-score-caption {color:#cbd5e1;}
+        .lro-story-grid {
+            display:grid;
+            grid-template-columns: 1.15fr .85fr;
+            gap: 14px;
+            margin: 14px 0 22px 0;
+        }
+        .lro-story-panel {
+            border-radius: 22px;
+            border: 1px solid #e5e7eb;
+            padding: 18px;
+            background: #ffffff;
+            box-shadow: 0 12px 32px rgba(15,23,42,.06);
+        }
+        .lro-story-panel.dark {
+            background: linear-gradient(135deg, #0b1220 0%, #111827 55%, #3b1115 100%);
+            color:white;
+            border-color: rgba(255,255,255,.12);
+        }
+        .lro-story-kicker {font-size:.72rem;text-transform:uppercase;letter-spacing:.14em;font-weight:950;color:#991b1b;margin-bottom:7px;}
+        .lro-story-panel.dark .lro-story-kicker {color:#fde68a;}
+        .lro-story-title {font-size:1.5rem;font-weight:950;letter-spacing:-.04em;line-height:1.07;margin-bottom:8px;}
+        .lro-story-text {color:#475569;line-height:1.52;font-weight:550;}
+        .lro-story-panel.dark .lro-story-text {color:#e5e7eb;}
+        .lro-pills {display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
+        .lro-pill {border-radius:999px;padding:6px 9px;background:#f1f5f9;color:#0f172a;font-size:.82rem;font-weight:800;}
+        .lro-pill.gold {background:#fffbeb;color:#92400e;border:1px solid #fde68a;}
+        .lro-record-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:14px 0 22px 0;}
+        .lro-record-card {border:1px solid #e5e7eb;border-radius:18px;padding:14px 16px;background:white;box-shadow:0 8px 24px rgba(15,23,42,.05);}
+        .lro-record-label {font-size:.72rem;text-transform:uppercase;letter-spacing:.12em;font-weight:950;color:#64748b;margin-bottom:6px;}
+        .lro-record-value {font-size:1.1rem;font-weight:950;letter-spacing:-.02em;line-height:1.18;}
+        .lro-record-caption {font-size:.85rem;color:#64748b;margin-top:5px;}
+        @media (max-width: 900px) {
+            .lro-story-grid {grid-template-columns: 1fr;}
+            .lro-hero {min-height: 190px;}
+        }
+
     </style>
     <div class="lro-hero">
-        <div class="lro-beta">Beta · lanseringsklar prototype</div>
+        <div class="hero-eyebrow">Mini league control room · 2026/27</div>
         <h1>Lofthus Road Open</h1>
+        <div class="hero-subline">Ligaens egen tavle: tabelltips, odds, historikk, pokalskap og sesongradar samlet i ett kontrollrom.</div>
+        <div class="hero-chip-row">
+            <span class="hero-chip gold">Beta før 1. august</span>
+            <span class="hero-chip">Live fra FPL</span>
+            <span class="hero-chip">Historikk siden 2020</span>
+            <span class="hero-chip">Bygget for banter</span>
+        </div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -3198,6 +3317,234 @@ handle_refresh_and_autoload()
 
 
 
+
+
+# -----------------------------
+# v39 launch candy / wow layer
+# -----------------------------
+
+def display_number(value: Any) -> str:
+    return format_rank(value)
+
+
+def safe_int_value(row: pd.Series | dict, key: str, default: int | None = None) -> int | None:
+    try:
+        value = row.get(key) if hasattr(row, "get") else None
+        if value is None or pd.isna(value):
+            return default
+        return int(float(value))
+    except Exception:
+        return default
+
+
+def score_cards(cards: list[dict]):
+    if not cards:
+        return
+    html_cards = []
+    for i, card in enumerate(cards):
+        theme = " dark" if i == 0 or card.get("dark") else ""
+        label = html.escape(str(card.get("label", "")))
+        value = html.escape(str(card.get("value", "")))
+        caption = html.escape(str(card.get("caption", "")))
+        html_cards.append(
+            f"""<div class=\"lro-score-card{theme}\">
+                <div class=\"lro-score-label\">{label}</div>
+                <div class=\"lro-score-value\">{value}</div>
+                <div class=\"lro-score-caption\">{caption}</div>
+            </div>"""
+        )
+    st.markdown('<div class="lro-scoreboard">' + ''.join(html_cards) + '</div>', unsafe_allow_html=True)
+
+
+def story_panel(kicker: str, title: str, text: str, pills: list[str] | None = None, dark: bool = False):
+    pills = pills or []
+    theme = " dark" if dark else ""
+    pill_html = ''.join(
+        f'<span class="lro-pill{(" gold" if i == 0 else "")}">{html.escape(str(pill))}</span>'
+        for i, pill in enumerate(pills)
+    )
+    st.markdown(
+        f"""
+        <div class=\"lro-story-panel{theme}\">
+            <div class=\"lro-story-kicker\">{html.escape(kicker)}</div>
+            <div class=\"lro-story-title\">{html.escape(title)}</div>
+            <div class=\"lro-story-text\">{html.escape(text)}</div>
+            <div class=\"lro-pills\">{pill_html}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def record_cards(records: list[dict]):
+    if not records:
+        return
+    cards = []
+    for rec in records:
+        cards.append(
+            f"""<div class=\"lro-record-card\">
+                <div class=\"lro-record-label\">{html.escape(str(rec.get('label', '')))}</div>
+                <div class=\"lro-record-value\">{html.escape(str(rec.get('value', '')))}</div>
+                <div class=\"lro-record-caption\">{html.escape(str(rec.get('caption', '')))}</div>
+            </div>"""
+        )
+    st.markdown('<div class="lro-record-grid">' + ''.join(cards) + '</div>', unsafe_allow_html=True)
+
+
+def get_hof_safe() -> pd.DataFrame:
+    try:
+        return build_hof_people()
+    except Exception:
+        return pd.DataFrame()
+
+
+def build_record_book(summary_df: pd.DataFrame, hof_df: pd.DataFrame) -> list[dict]:
+    records: list[dict] = []
+    if not summary_df.empty:
+        df = summary_df.copy()
+        if "best_rank_num" in df.columns:
+            best = df.sort_values("best_rank_num", ascending=True, na_position="last").head(1)
+            if not best.empty:
+                row = best.iloc[0]
+                records.append({"label": "Beste FPL-peak", "value": clean_cell(row.get("manager")), "caption": f"{display_number(row.get('best_rank_num'))} ({clean_cell(row.get('best_season'))})"})
+        if "last_season_rank_num" in df.columns:
+            last = df.sort_values("last_season_rank_num", ascending=True, na_position="last").head(1)
+            if not last.empty:
+                row = last.iloc[0]
+                records.append({"label": "Best forrige sesong", "value": clean_cell(row.get("manager")), "caption": display_number(row.get("last_season_rank_num"))})
+        if "avg_rank_last_3_num" in df.columns:
+            avg = df.sort_values("avg_rank_last_3_num", ascending=True, na_position="last").head(1)
+            if not avg.empty:
+                row = avg.iloc[0]
+                records.append({"label": "Beste snitt siste tre", "value": clean_cell(row.get("manager")), "caption": display_number(row.get("avg_rank_last_3_num"))})
+        if "seasons" in df.columns:
+            ses = df.sort_values("seasons", ascending=False, na_position="last").head(1)
+            if not ses.empty:
+                row = ses.iloc[0]
+                records.append({"label": "Flest FPL-sesonger", "value": clean_cell(row.get("manager")), "caption": f"{safe_int_value(row, 'seasons', 0)} sesonger"})
+    if not hof_df.empty:
+        df = hof_df.copy()
+        if "hof_score" in df.columns:
+            row = df.sort_values("hof_score", ascending=False).iloc[0]
+            records.append({"label": "Mest merittert", "value": clean_cell(row.get("display_name")), "caption": f"{safe_int_value(row, 'hof_score', 0)} merittpoeng"})
+        if "overall_count" in df.columns:
+            row = df.sort_values(["overall_count", "hof_score"], ascending=[False, False]).iloc[0]
+            records.append({"label": "Flest sammenlagtseiere", "value": clean_cell(row.get("display_name")), "caption": f"{safe_int_value(row, 'overall_count', 0)} seier(e)"})
+        if "cup_count" in df.columns:
+            row = df.sort_values(["cup_count", "hof_score"], ascending=[False, False]).iloc[0]
+            records.append({"label": "Flest cupgull", "value": clean_cell(row.get("display_name")), "caption": f"{safe_int_value(row, 'cup_count', 0)} cupgull"})
+        if "monthly_titles" in df.columns:
+            row = df.sort_values(["monthly_titles", "hof_score"], ascending=[False, False]).iloc[0]
+            records.append({"label": "Flest månedsseiere", "value": clean_cell(row.get("display_name")), "caption": f"{safe_int_value(row, 'monthly_titles', 0)} månedsseiere"})
+    unique=[]; seen=set()
+    for rec in records:
+        key=(rec.get("label"), rec.get("value"), rec.get("caption"))
+        if key not in seen:
+            seen.add(key)
+            unique.append(rec)
+    return unique[:8]
+
+
+def build_archive_gaps() -> pd.DataFrame:
+    calendar = build_monthly_calendar_table("Alle")
+    if calendar.empty:
+        return pd.DataFrame(columns=["season", "month", "missing"])
+    rows=[]
+    for _, row in calendar.iterrows():
+        missing=[]
+        if not clean_cell(row.get("second_place")):
+            missing.append("2. plass")
+        if not clean_cell(row.get("third_place")):
+            missing.append("3. plass")
+        if missing:
+            rows.append({"season": row.get("season"), "month": row.get("month"), "missing": ", ".join(missing)})
+    return pd.DataFrame(rows)
+
+
+def render_kontrollrom_page():
+    st.header("Kontrollrom")
+    managers = st.session_state.get("managers", [])
+    current_count = len(managers) if managers else 0
+    ensure_history_for_page()
+    summary_df = st.session_state.get("summary_df", pd.DataFrame())
+    hof_df = get_hof_safe()
+    odds_df = build_preseason_odds(summary_df) if not summary_df.empty else pd.DataFrame()
+
+    fav = odds_df.iloc[0] if not odds_df.empty else None
+    top_peak = summary_df.sort_values("best_rank_num", ascending=True, na_position="last").iloc[0] if not summary_df.empty else None
+    hof_top = hof_df.sort_values("hof_score", ascending=False).iloc[0] if not hof_df.empty else None
+
+    score_cards([
+        {"label": "Påmeldte nå", "value": f"{current_count}", "caption": "lag registrert fra FPL", "dark": True},
+        {"label": "Bookiens favoritt", "value": clean_cell(fav.get("manager")) if fav is not None else "Ikke klar", "caption": f"Odds {format_odds(fav.get('odds_float'))}" if fav is not None else "henter historikk"},
+        {"label": "Beste FPL-peak", "value": clean_cell(top_peak.get("manager")) if top_peak is not None else "Ikke klar", "caption": display_number(top_peak.get("best_rank_num")) if top_peak is not None else ""},
+        {"label": "Mest merittert", "value": clean_cell(hof_top.get("display_name")) if hof_top is not None else "Ikke klar", "caption": f"{safe_int_value(hof_top, 'hof_score', 0)} merittpoeng" if hof_top is not None else ""},
+    ])
+
+    left, right = st.columns([1.15, .85])
+    with left:
+        if fav is not None:
+            story_panel(
+                "Før sesongstart",
+                f"Modellen peker på {clean_cell(fav.get('manager'))}",
+                "Vinneroddsen er bare en før-sesongpris, men den gir et tydelig bilde av hvem modellen mener starter med kortest vei til pokalen.",
+                [f"Vinner: {format_odds(fav.get('odds_float'))}", f"Topp 3: {format_odds(fav.get('top3_odds_float'))}", "Intern moro"],
+                dark=True,
+            )
+        else:
+            story_panel("Før sesongstart", "Radaren varmer opp", "Når FPL-historikken er hentet får du favoritt, topp 3-bilde og tabelltips her.", ["Live fra FPL"], dark=True)
+    with right:
+        month_specialists = build_month_specialist_table()
+        if not month_specialists.empty:
+            strong_months = month_specialists.head(3)
+            text = " · ".join([f"{r['month']}: {r['king']}" for _, r in strong_months.iterrows()])
+            story_panel("Månedskonger", "Hvem eier kalenderen?", text, ["August til mai", "Facebook-arkiv"], dark=False)
+        else:
+            story_panel("Månedskonger", "Arkivet fylles", "Månedsvinnerne ligger klare når historikkdata er tilgjengelig.", [], dark=False)
+
+    st.subheader("Rekordbok")
+    record_cards(build_record_book(summary_df, hof_df))
+
+    st.subheader("Modellens topp 5")
+    if not odds_df.empty:
+        render_prediction_table_component(odds_df.head(5))
+    else:
+        st.caption("Mangler historikkgrunnlag.")
+
+    gaps = build_archive_gaps()
+    if not gaps.empty:
+        with st.expander("Mangler i arkivet"):
+            st.caption("Pallplass-data er basert på det som er dokumentert i Facebook-gruppa. Har du screenshot eller fasit, meld fra.")
+            display_table(gaps.head(20), ["season", "month", "missing"], {"season": "Sesong", "month": "Måned", "missing": "Mangler"})
+
+
+def render_record_book_page(summary_df: pd.DataFrame, hof_df: pd.DataFrame):
+    st.subheader("Rekordbok")
+    lro_note("Ligaens rekordtavle", "De største historiske tallene samlet ett sted. Rekordene oppdateres når FPL-historikk er hentet.")
+    record_cards(build_record_book(summary_df, hof_df))
+    gaps = build_archive_gaps()
+    if not gaps.empty:
+        st.subheader("Mangler i arkivet")
+        st.caption("Pallplass-data er basert på det som er dokumentert i Facebook-gruppa. Har du screenshot eller fasit, meld fra.")
+        display_table(gaps, ["season", "month", "missing"], {"season": "Sesong", "month": "Måned", "missing": "Mangler"})
+
+
+def render_preseason_radar_board(summary_df: pd.DataFrame, hof_df: pd.DataFrame):
+    odds_df = build_preseason_odds(summary_df) if not summary_df.empty else pd.DataFrame()
+    records = build_record_book(summary_df, hof_df)
+    if odds_df.empty and not records:
+        render_preseason_radar_preview()
+        return
+    st.subheader("Før sesongstart")
+    top3_row = odds_df.sort_values("top3_odds_float").iloc[0] if not odds_df.empty else None
+    score_cards([
+        {"label": "Favoritt", "value": clean_cell(odds_df.iloc[0].get("manager")) if not odds_df.empty else "Ikke klar", "caption": f"Odds {format_odds(odds_df.iloc[0].get('odds_float'))}" if not odds_df.empty else "", "dark": True},
+        {"label": "Topp 3-favoritt", "value": clean_cell(top3_row.get("manager")) if top3_row is not None else "Ikke klar", "caption": f"Topp 3: {format_odds(top3_row.get('top3_odds_float'))}" if top3_row is not None else ""},
+        {"label": "Beste peak", "value": records[0]["value"] if records else "Ikke klar", "caption": records[0]["caption"] if records else ""},
+        {"label": "Arkivstatus", "value": "Beta", "caption": "pallplasser kvalitetssikres fram mot sesongstart"},
+    ])
+
+
 # -----------------------------
 # Labels
 # -----------------------------
@@ -3372,11 +3719,14 @@ NUMERIC_CONFIG = {
 # UI
 # -----------------------------
 
-MAIN_PAGES = ["Ligatabell", "Sesongradar", "Odds", "Hall of Fame og historikk"]
-main_page = nav_choice("", MAIN_PAGES, "main_page_v36", default="Ligatabell")
+MAIN_PAGES = ["Kontrollrom", "Ligatabell", "Sesongradar", "Odds", "Hall of Fame og historikk"]
+main_page = nav_choice("", MAIN_PAGES, "main_page_v39", default="Kontrollrom")
 
 
-if main_page == "Ligatabell":
+if main_page == "Kontrollrom":
+    render_kontrollrom_page()
+
+elif main_page == "Ligatabell":
     st.header("Ligatabell")
 
     if "managers" in st.session_state:
@@ -3440,13 +3790,14 @@ elif main_page == "Sesongradar":
     )
 
     if "managers" not in st.session_state:
-        render_preseason_radar_preview()
+        render_preseason_radar_board(st.session_state.get("summary_df", pd.DataFrame()), get_hof_safe())
     else:
         summary_df = st.session_state.get("summary_df", pd.DataFrame())
         radar = build_season_radar_tables(st.session_state["managers"], summary_df)
 
         if not radar or all(value.empty for value in radar.values() if isinstance(value, pd.DataFrame)):
-            render_preseason_radar_preview()
+            ensure_history_for_page()
+            render_preseason_radar_board(st.session_state.get("summary_df", pd.DataFrame()), get_hof_safe())
         else:
             cards = []
             if not radar["climbers"].empty:
@@ -3566,7 +3917,7 @@ elif main_page == "Hall of Fame og historikk":
     seasons_df = st.session_state.get("seasons_df", pd.DataFrame())
     errors_df = st.session_state.get("errors_df", pd.DataFrame())
 
-    hof_section = nav_choice("", ["Pokalskap", "Managerprofiler", "Månedskonger", "Resultatarkiv"], "hof_section_v36", default="Pokalskap")
+    hof_section = nav_choice("", ["Pokalskap", "Managerprofiler", "Rekordbok", "Månedskonger", "Resultatarkiv"], "hof_section_v39", default="Pokalskap")
 
     if hof_section == "Managerprofiler":
         ensure_history_for_page()
@@ -3660,6 +4011,10 @@ elif main_page == "Hall of Fame og historikk":
                 "cup_runner_up_seasons",
             ]
             display_table(hof_df, detail_columns, HOF_LABELS, column_config={"display_name": st.column_config.TextColumn("Manager", width="large")})
+
+    elif hof_section == "Rekordbok":
+        ensure_history_for_page()
+        render_record_book_page(st.session_state.get("summary_df", pd.DataFrame()), hof_df)
 
     elif hof_section == "Månedskonger":
         st.subheader("Månedskonger")
