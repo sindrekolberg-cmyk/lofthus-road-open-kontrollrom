@@ -21,7 +21,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-kontrollrom-v30-history-merge"
+APP_VERSION = "lofthus-road-open-kontrollrom-v31-oddslist"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -2622,6 +2622,17 @@ RADAR_LABELS = {
     "last_three_detail": "Siste tre runder",
 }
 
+
+ODDS_LIST_LABELS = {
+    "odds_rank": "Odds-rangering",
+    "manager": "Manager",
+    "team": "Lagnavn",
+    "odds_float": "Vinnerodds før sesongstart",
+    "top3_odds_float": "Topp 3-odds før sesongstart",
+    "tag_display": "Merknad",
+    "tier_display": "Nivå",
+}
+
 NUMERIC_CONFIG = {
     "odds_before": st.column_config.NumberColumn("Vinnerodds før sesongstart", format="%.2f"),
     "best_rank_numeric": st.column_config.NumberColumn("Beste FPL-plassering gjennom tidene", format="%d"),
@@ -2708,6 +2719,34 @@ with tab1:
 
             render_league_table_component(table_df, has_live_table)
             st.caption(f"Fant {len(table_df)} lag.")
+
+            if not summary_df.empty:
+                st.subheader("Oddsliste før sesongstart")
+                lro_note(
+                    "Vinnerodds og topp 3",
+                    "Markedet er basert på historikk, siste tre sesonger, toppnivå og meritter i Lofthus Road Open. Topp 3-oddsen er avledet av vinneroddsen, men justert for FPL-varians.",
+                    "",
+                )
+                odds_list = build_preseason_odds(summary_df)
+                if not odds_list.empty:
+                    odds_list = add_sortable_display_columns(odds_list)
+                    odds_columns = [
+                        "odds_rank",
+                        "manager",
+                        "team",
+                        "odds_float",
+                        "top3_odds_float",
+                        "tag_display",
+                        "tier_display",
+                    ]
+                    display_table(
+                        odds_list,
+                        odds_columns,
+                        ODDS_LIST_LABELS,
+                        column_config=NUMERIC_CONFIG,
+                    )
+                else:
+                    st.caption("Oddslista kommer når historikkgrunnlaget er hentet.")
 
             league_download_cols = [
                 "rank_display",
