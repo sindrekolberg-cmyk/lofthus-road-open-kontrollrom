@@ -21,7 +21,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-kontrollrom-v43-cosmetic-polish"
+APP_VERSION = "lofthus-road-open-kontrollrom-v45-pokalskap-fix"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -3578,7 +3578,7 @@ elif main_page == "Hall of Fame og historikk":
             ])
 
             st.subheader("Pokalskap")
-            render_hof_table_component(hof_df.head(12))
+            render_hof_table_component(hof_df[hof_df["overall_count"].gt(0) | hof_df["overall_runner_up_count"].gt(0) | hof_df["overall_third_count"].gt(0) | hof_df["cup_count"].gt(0) | hof_df["cup_runner_up_count"].gt(0)].reset_index(drop=True))
 
             st.markdown('<div class="lro-section-title"><span>Detaljer</span>Detaljert meritt-tabell</div>', unsafe_allow_html=True)
             detailed_hof = hof_df[[
