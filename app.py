@@ -21,7 +21,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-kontrollrom-v45-pokalskap-fix"
+APP_VERSION = "lofthus-road-open-kontrollrom-v46-home-dashboard"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -3347,11 +3347,80 @@ NUMERIC_CONFIG = {
 # UI
 # -----------------------------
 
-MAIN_PAGES = ["Ligatabell", "Sesongradar", "Odds", "Hall of Fame og historikk"]
-main_page = nav_choice("", MAIN_PAGES, "main_page_v36", default="Ligatabell")
+MAIN_PAGES = ["Hjem", "Sesongradar", "Odds", "Hall of Fame og historikk"]
+main_page = nav_choice("", MAIN_PAGES, "main_page_v37", default="Hjem")
 
 
-if main_page == "Ligatabell":
+
+if main_page == "Hjem":
+    st.header("Lofthus Road Open 2026/27")
+
+    lro_note(
+        "Kontrollrommet",
+        "Velkommen til Lofthus Road Open. Her finner du det viktigste først – tabellen, form og de store historiene i ligaen.",
+        "dark",
+    )
+
+    ensure_managers_loaded(DEFAULT_LEAGUE_ID)
+
+    managers = st.session_state.get("managers", [])
+    table_df = pd.DataFrame(managers)
+
+    if not table_df.empty:
+        table_df["rank_num"] = pd.to_numeric(table_df["rank"], errors="coerce")
+        table_df["total_num"] = pd.to_numeric(table_df["total"], errors="coerce")
+        table_df = table_df.sort_values(["rank_num", "player_name"], na_position="last")
+
+        lro_cards([
+            {
+                "label": "Liga",
+                "value": f"{len(table_df)} managere",
+                "caption": "Klar for sesongen"
+            },
+            {
+                "label": "Første side",
+                "value": "Ligatabellen",
+                "caption": "Direkte oversikt"
+            },
+            {
+                "label": "Neste steg",
+                "value": "Sesongradar",
+                "caption": "Form og utvikling"
+            }
+        ])
+
+        st.subheader("Ligatabell")
+        render_league_table_component(table_df.head(10), table_df["rank_num"].notna().any())
+        st.caption("Viser topp 10. Åpne Ligatabellen for full oversikt.")
+
+    else:
+        lro_note(
+            "Venter på FPL-data",
+            "FPL-data hentes automatisk. Bruk Oppdater fra FPL nå i venstremenyen hvis noe mangler.",
+            "gold",
+        )
+
+    st.subheader("Utforsk ligaen")
+    lro_cards([
+        {
+            "label": "📡 Sesongradar",
+            "value": "Form og bevegelser",
+            "caption": "Se hvem som er på vei opp"
+        },
+        {
+            "label": "💰 Odds",
+            "value": "Hvem tror modellen på?",
+            "caption": "Vinner og topp 3"
+        },
+        {
+            "label": "👑 Historikk",
+            "value": "Pokaler og meritter",
+            "caption": "Ligaens historie"
+        }
+    ])
+
+
+elif main_page == "Ligatabell":
     st.header("Ligatabell")
 
     if "managers" in st.session_state:
