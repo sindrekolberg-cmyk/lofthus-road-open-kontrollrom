@@ -21,7 +21,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-kontrollrom-v45-pokalskap-fix"
+APP_VERSION = "lofthus-road-open-kontrollrom-v46-home-dashboard"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -2967,13 +2967,37 @@ def render_prediction_table_component(odds_df: pd.DataFrame):
     components.html(component_html, height=620, scrolling=True)
 
 def render_preseason_radar_preview():
-    st.info("Sesongradaren våkner når ligaen får live plasseringer og runde-data fra FPL.")
+    st.info("Demo-visning før sesongstart. Rundeplasseringer fylles automatisk inn når FPL-sesongen starter.")
+
+    demo = pd.DataFrame({
+        "GW": list(range(1, 11)),
+        "Øyvind": [4, 2, 1, 3, 2, 1, 1, 2, 1, 1],
+        "Simen": [1, 1, 3, 2, 5, 4, 3, 4, 5, 3],
+        "Rasmus": [7, 5, 4, 6, 3, 2, 4, 3, 6, 5],
+        "Mats": [12, 9, 7, 5, 4, 5, 2, 5, 3, 4],
+        "Robin": [3, 6, 8, 7, 8, 7, 9, 8, 7, 6],
+    }).set_index("GW")
+
+    st.subheader("📈 Plassering runde for runde")
+    st.caption("Lavere plassering er bedre. Eksempelet under bruker fiktive data.")
+    st.line_chart(demo)
+
     lro_cards([
-        {"label": "Kommer", "value": "Største klatrere", "caption": "Hvem flyr oppover tabellen"},
-        {"label": "Kommer", "value": "Største fall", "caption": "Hvem faller mest"},
-        {"label": "Kommer", "value": "Form siste tre runder", "caption": "Hvem har momentum"},
-        {"label": "Kommer", "value": "Mot oddsen", "caption": "Over- og underprestasjon"},
+        {"label": "Lengst på topp", "value": "Øyvind", "caption": "3 runder som serieleder"},
+        {"label": "Største klatrer", "value": "Mats", "caption": "12. plass → 4. plass"},
+        {"label": "Største fall", "value": "Robin", "caption": "Sterk start, falt senere"},
+        {"label": "Demo", "value": "GW 1–10", "caption": "Klar for live-data"},
     ])
+
+    selected = st.selectbox("Velg managerprofil", ["Øyvind", "Simen", "Rasmus", "Mats", "Robin"])
+    profile = demo[selected]
+    st.subheader(selected)
+    st.write({
+        "Beste plassering": int(profile.min()),
+        "Dårligste plassering": int(profile.max()),
+        "Snittplassering": round(float(profile.mean()), 1),
+        "Ledet ligaen": int((profile == 1).sum()),
+    })
 
 def build_season_radar_tables(managers: list[dict], summary_df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     if not managers:
@@ -3347,11 +3371,80 @@ NUMERIC_CONFIG = {
 # UI
 # -----------------------------
 
-MAIN_PAGES = ["Ligatabell", "Sesongradar", "Odds", "Hall of Fame og historikk"]
-main_page = nav_choice("", MAIN_PAGES, "main_page_v36", default="Ligatabell")
+MAIN_PAGES = ["Hjem", "Sesongradar", "Odds", "Hall of Fame og historikk"]
+main_page = nav_choice("", MAIN_PAGES, "main_page_v37", default="Hjem")
 
 
-if main_page == "Ligatabell":
+
+if main_page == "Hjem":
+    st.header("Lofthus Road Open 2026/27")
+
+    lro_note(
+        "Kontrollrommet",
+        "Velkommen til Lofthus Road Open. Her finner du det viktigste først – tabellen, form og de store historiene i ligaen.",
+        "dark",
+    )
+
+    ensure_managers_loaded(DEFAULT_LEAGUE_ID)
+
+    managers = st.session_state.get("managers", [])
+    table_df = pd.DataFrame(managers)
+
+    if not table_df.empty:
+        table_df["rank_num"] = pd.to_numeric(table_df["rank"], errors="coerce")
+        table_df["total_num"] = pd.to_numeric(table_df["total"], errors="coerce")
+        table_df = table_df.sort_values(["rank_num", "player_name"], na_position="last")
+
+        lro_cards([
+            {
+                "label": "Liga",
+                "value": f"{len(table_df)} managere",
+                "caption": "Klar for sesongen"
+            },
+            {
+                "label": "Første side",
+                "value": "Ligatabellen",
+                "caption": "Direkte oversikt"
+            },
+            {
+                "label": "Neste steg",
+                "value": "Sesongradar",
+                "caption": "Form og utvikling"
+            }
+        ])
+
+        st.subheader("Ligatabell")
+        render_league_table_component(table_df.head(10), table_df["rank_num"].notna().any())
+        st.caption("Viser topp 10. Åpne Ligatabellen for full oversikt.")
+
+    else:
+        lro_note(
+            "Venter på FPL-data",
+            "FPL-data hentes automatisk. Bruk Oppdater fra FPL nå i venstremenyen hvis noe mangler.",
+            "gold",
+        )
+
+    st.subheader("Utforsk ligaen")
+    lro_cards([
+        {
+            "label": "📡 Sesongradar",
+            "value": "Form og bevegelser",
+            "caption": "Se hvem som er på vei opp"
+        },
+        {
+            "label": "💰 Odds",
+            "value": "Hvem tror modellen på?",
+            "caption": "Vinner og topp 3"
+        },
+        {
+            "label": "👑 Historikk",
+            "value": "Pokaler og meritter",
+            "caption": "Ligaens historie"
+        }
+    ])
+
+
+elif main_page == "Ligatabell":
     st.header("Ligatabell")
 
     if "managers" in st.session_state:
