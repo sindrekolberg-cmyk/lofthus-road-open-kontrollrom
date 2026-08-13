@@ -21,7 +21,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-kontrollrom-v45-pokalskap-fix"
+APP_VERSION = "lofthus-road-open-kontrollrom-v50-premium-redesign"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -289,10 +289,35 @@ st.markdown(
             .lro-note {font-size: 0.88rem;}
             .stButton > button {font-size: 0.82rem; padding: 0.35rem 0.45rem;}
         }
+
+        .lro-premium-line {
+            margin-top: 14px;
+            position: relative;
+            z-index: 1;
+            color: rgba(255,255,255,0.86);
+            font-size: 1.05rem;
+            font-weight: 650;
+        }
+
+        .lro-club-mark {
+            display:inline-flex;
+            align-items:center;
+            gap:8px;
+            padding:6px 12px;
+            border-radius:999px;
+            background:rgba(255,255,255,0.12);
+            border:1px solid rgba(255,255,255,0.18);
+            margin-top:12px;
+            font-size:0.82rem;
+            font-weight:800;
+            letter-spacing:0.08em;
+            text-transform:uppercase;
+        }
+
     </style>
     <div class="lro-hero">
-        <div class="lro-beta">Beta · lanseringsklar prototype</div>
-        <h1>Lofthus Road Open</h1>
+        <div class="lro-beta">Sesong 2026/27</div>
+        <h1>Lofthus Road Open<br><span style="font-size:0.45em;letter-spacing:-0.02em;">Fantasy Football Club</span></h1><div class="lro-premium-line">Kontrollrommet for ligaen</div><div class="lro-club-mark">🏆 LRO 2026/27</div>
     </div>
     """,
     unsafe_allow_html=True,
