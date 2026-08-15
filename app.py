@@ -1,3 +1,4 @@
+
 import math
 import re
 import unicodedata
@@ -21,7 +22,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-kontrollrom-v50-premium-redesign"
+APP_VERSION = "lofthus-road-open-v60-redesign"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -316,15 +317,15 @@ st.markdown(
 
     </style>
     <div class="lro-hero">
-        <div class="lro-beta">Sesong 2026/27</div>
-        <h1>Lofthus Road Open<br><span style="font-size:0.45em;letter-spacing:-0.02em;">Fantasy Football Club</span></h1><div class="lro-premium-line">Kontrollrommet for ligaen</div><div class="lro-club-mark">🏆 LRO 2026/27</div>
+        <div class="lro-beta">OFFISIELL SESONG 2026/27</div>
+        <h1>Lofthus Road Open<br><span style="font-size:0.45em;letter-spacing:-0.02em;">Fantasy Football Club</span></h1><div class="lro-premium-line">Den offisielle hjemmebanen til Lofthus Road Open</div><div class="lro-club-mark">🏆 LRO 2026/27</div>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
 with st.sidebar:
-    st.header("Kontrollrom")
+    st.header("Lofthus Road Open")
     st.caption(f"Liga-ID: {DEFAULT_LEAGUE_ID}")
     if st.session_state.get("last_updated"):
         st.caption(f"Sist hentet: {st.session_state['last_updated']}")
@@ -332,7 +333,7 @@ with st.sidebar:
         st.session_state["_refresh_fpl_now"] = True
         st.rerun()
     st.markdown("---")
-    st.caption("Beta fram mot 1. august. Meld feil i gruppa, særlig på gamle meritter, navn og bosted.")
+    st.caption("Lofthus Road Open 2026/27")
 
 
 # -----------------------------
@@ -560,6 +561,44 @@ def lro_cards(cards: list[dict]):
                     st.markdown(f"**{value}**")
                 if caption:
                     st.caption(caption)
+
+
+
+
+# -----------------------------
+# v60 design helpers
+# -----------------------------
+
+def v60_section(title: str, subtitle: str = ""):
+    st.markdown(
+        f"""
+        <div class="lro-section-title">
+            <span>{subtitle}</span>
+            {title}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def v60_stat_cards(summary_df):
+    if summary_df is None or summary_df.empty:
+        return
+    leader = summary_df.iloc[0]
+    cards = [
+        {
+            "label": "Serieledelse",
+            "value": str(leader.get("player_name", "")),
+            "caption": str(leader.get("entry_name", "")),
+        }
+    ]
+    if len(summary_df) > 1:
+        cards.append({
+            "label": "Utfordrer",
+            "value": str(summary_df.iloc[1].get("player_name", "")),
+            "caption": "2. plass",
+        })
+    lro_cards(cards)
 
 
 # -----------------------------
