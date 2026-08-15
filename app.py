@@ -22,11 +22,11 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-v61-clubhouse-redesign"
+APP_VERSION = "lofthus-road-open-ferrari-v100-matchday-pass2"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
-st.set_page_config(page_title="Lofthus Road Open - Official Clubhouse", layout="wide")
+st.set_page_config(page_title="Lofthus Road Open", layout="wide")
 
 if st.session_state.get("_app_version") != APP_VERSION:
     st.session_state.clear()
@@ -333,7 +333,7 @@ with st.sidebar:
         st.session_state["_refresh_fpl_now"] = True
         st.rerun()
     st.markdown("---")
-    st.caption("Official LRO 2026/27")
+    st.caption("Lofthus Road Open 2026/27")
 
 
 # -----------------------------
@@ -599,6 +599,134 @@ def v60_stat_cards(summary_df):
             "caption": "2. plass",
         })
     lro_cards(cards)
+
+
+
+
+# ============================================================
+# FERRARI EDITION V100 - CLUBHOUSE COMPONENTS
+# ============================================================
+
+def ferrari_story_card(title, body, emoji="🏟️"):
+    st.markdown(
+        f"""
+        <div class="lro-card">
+            <div class="lro-card-label">{emoji} {title}</div>
+            <div class="lro-card-value">{body}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def ferrari_home_intro():
+    st.markdown(
+        """
+        <div class="lro-section-title">
+            <span>LIVE FRA LIGAEN</span>
+            Kampdag på Lofthus Road
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def ferrari_empty_state(title, text):
+    st.markdown(
+        f"""
+        <div class="lro-note dark">
+            <strong>{title}</strong>
+            <span>{text}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+
+
+# ============================================================
+# FERRARI PASS 2 - MATCHDAY EXPERIENCE
+# ============================================================
+
+def ferrari_matchday_block():
+    st.markdown(
+        """
+        <div class="lro-section-title">
+            <span>LOFTHUS ROAD OPEN</span>
+            Matchday
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def ferrari_rank_card(place, manager, team, points, trend=""):
+    medal = ""
+    if str(place) == "1":
+        medal = "🥇"
+    elif str(place) == "2":
+        medal = "🥈"
+    elif str(place) == "3":
+        medal = "🥉"
+
+    st.markdown(
+        f"""
+        <div class="lro-card">
+            <div class="lro-card-label">{medal} Plass {place}</div>
+            <div class="lro-card-value">{manager}</div>
+            <div class="lro-card-caption">
+                {team}<br>
+                {points} poeng {trend}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def ferrari_story_engine(summary_df):
+    if summary_df is None or summary_df.empty:
+        return
+
+    top = summary_df.iloc[0]
+
+    st.markdown(
+        """
+        <div class="lro-section-title">
+            <span>DAGENS OVERSKRIFTER</span>
+            Ligaens historier
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    ferrari_story_card(
+        "Serieleder",
+        f"{top.get('manager', 'Ukjent')} topper ligaen"
+    )
+
+    if "form" in summary_df.columns:
+        best_form = summary_df.iloc[0]
+        ferrari_story_card(
+            "Heteste manager",
+            f"{best_form.get('manager', 'Ukjent')} er i flyt"
+        )
+
+
+def ferrari_profile_header(name):
+    st.markdown(
+        f"""
+        <div class="lro-hero">
+            <div class="lro-beta">MANAGERPROFILE</div>
+            <h1>{name}</h1>
+            <div class="lro-premium-line">
+                Lofthus Road Open-legende under utvikling
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 # -----------------------------
