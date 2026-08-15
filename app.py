@@ -22,11 +22,11 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-v60-redesign"
+APP_VERSION = "lofthus-road-open-v61-clubhouse-redesign"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
-st.set_page_config(page_title="Lofthus Road Open - Kontrollrom", layout="wide")
+st.set_page_config(page_title="Lofthus Road Open - Official Clubhouse", layout="wide")
 
 if st.session_state.get("_app_version") != APP_VERSION:
     st.session_state.clear()
@@ -325,7 +325,7 @@ st.markdown(
 )
 
 with st.sidebar:
-    st.header("Lofthus Road Open")
+    st.header("Lofthus Road Open Clubhouse")
     st.caption(f"Liga-ID: {DEFAULT_LEAGUE_ID}")
     if st.session_state.get("last_updated"):
         st.caption(f"Sist hentet: {st.session_state['last_updated']}")
@@ -333,7 +333,7 @@ with st.sidebar:
         st.session_state["_refresh_fpl_now"] = True
         st.rerun()
     st.markdown("---")
-    st.caption("Lofthus Road Open 2026/27")
+    st.caption("Official LRO 2026/27")
 
 
 # -----------------------------
