@@ -22,7 +22,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-ferrari-v100-matchday-pass2"
+APP_VERSION = "lofthus-road-open-ferrari-v100-pass3-clubhouse"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -727,6 +727,91 @@ def ferrari_profile_header(name):
         """,
         unsafe_allow_html=True,
     )
+
+
+
+
+# ============================================================
+# FERRARI PASS 3 - CLUBHOUSE FRONT PAGE ENGINE
+# ============================================================
+
+def ferrari_stat_card(title, value, subtitle="", icon="⚽"):
+    st.markdown(
+        f"""
+        <div class="lro-card">
+            <div class="lro-card-label">{icon} {title}</div>
+            <div class="lro-card-value">{value}</div>
+            <div class="lro-card-caption">{subtitle}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def ferrari_headline(title, text, icon="🔥"):
+    st.markdown(
+        f"""
+        <div class="lro-note dark">
+            <strong>{icon} {title}</strong>
+            <span>{text}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def ferrari_clubhouse_frontpage(summary_df):
+    if summary_df is None or summary_df.empty:
+        ferrari_empty_state("Ingen livedata", "Ligaen har ikke nok data enda.")
+        return
+
+    leader = summary_df.iloc[0]
+
+    v60_section("Kampdag på Lofthus Road", "LIVE LIGA")
+
+    lro_cards([
+        {
+            "label": "Serieledelse",
+            "value": str(leader.get("player_name", "")),
+            "caption": f"{leader.get('total', '')} poeng"
+        },
+        {
+            "label": "Lag",
+            "value": str(leader.get("entry_name", "")),
+            "caption": "Tabelltopp"
+        },
+        {
+            "label": "Status",
+            "value": "🔥 I flyt",
+            "caption": "Sesongen lever"
+        }
+    ])
+
+    v60_section("Ukens overskrifter", "LIGAENS DRAMA")
+
+    ferrari_headline(
+        "Seriepress",
+        f"{leader.get('player_name', 'Ukjent')} leder ligaen akkurat nå."
+    )
+
+    if len(summary_df) > 1:
+        challenger = summary_df.iloc[1]
+        ferrari_headline(
+            "Nærmeste utfordrer",
+            f"{challenger.get('player_name', 'Ukjent')} jakter bakfra.",
+            "⚔️"
+        )
+
+    v60_section("Topp 5 i ligaen", "LIVE TABELL")
+
+    for idx, row in summary_df.head(5).iterrows():
+        ferrari_rank_card(
+            idx + 1,
+            row.get("player_name", ""),
+            row.get("entry_name", ""),
+            row.get("total", ""),
+            ""
+        )
 
 
 # -----------------------------
