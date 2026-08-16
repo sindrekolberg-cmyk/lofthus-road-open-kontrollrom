@@ -22,7 +22,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-ferrari-v100-pass3-clubhouse"
+APP_VERSION = "lofthus-road-open-ferrari-v101-pass5-sesonglop"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -3333,6 +3333,237 @@ def build_season_radar_tables(managers: list[dict], summary_df: pd.DataFrame) ->
         "over": over,
         "under": under,
     }
+
+
+def build_round_by_round_league_history(managers: list[dict]) -> pd.DataFrame:
+    """Build LRO mini-league positions for every played FPL gameweek.
+
+    FPL's entry history gives each manager's cumulative points after every
+    gameweek. Ranking those totals inside the Lofthus Road Open field lets us
+    reconstruct the league table round by round without storing snapshots.
+    """
+    rows = []
+
+    for manager in managers or []:
+        entry = manager.get("entry")
+        if not entry:
+            continue
+
+        try:
+            history = get_entry_history(int(entry))
+            current = history.get("current", []) or []
+        except Exception:
+            current = []
+
+        player_name = str(manager.get("player_name") or "Ukjent manager")
+        entry_name = str(manager.get("entry_name") or "Ukjent lag")
+        manager_label = player_name
+
+        for gw in current:
+            event = gw.get("event")
+            total_points = gw.get("total_points")
+
+            if event is None or total_points is None:
+                continue
+
+            try:
+                event = int(event)
+                total_points = int(total_points)
+            except (TypeError, ValueError):
+                continue
+
+            if event <= 0:
+                continue
+
+            rows.append({
+                "event": event,
+                "entry": int(entry),
+                "player_name": player_name,
+                "entry_name": entry_name,
+                "manager_label": manager_label,
+                "total_points": total_points,
+            })
+
+    history_df = pd.DataFrame(rows)
+    if history_df.empty:
+        return pd.DataFrame(columns=[
+            "event", "entry", "player_name", "entry_name",
+            "manager_label", "total_points", "league_rank",
+        ])
+
+    # If two managers have the same display name, add team name so the chart
+    # never merges two different people into one line.
+    duplicate_names = history_df.groupby("player_name")["entry"].nunique()
+    duplicate_names = set(duplicate_names[duplicate_names > 1].index)
+    if duplicate_names:
+        mask = history_df["player_name"].isin(duplicate_names)
+        history_df.loc[mask, "manager_label"] = (
+            history_df.loc[mask, "player_name"]
+            + " · "
+            + history_df.loc[mask, "entry_name"]
+        )
+
+    # Dense ranking keeps tied point totals tied. That is more honest than
+    # inventing FPL tie-breakers we cannot reconstruct reliably from history.
+    history_df["league_rank"] = (
+        history_df.groupby("event")["total_points"]
+        .rank(method="min", ascending=False)
+        .astype(int)
+    )
+
+    return history_df.sort_values(
+        ["event", "league_rank", "player_name"],
+        ascending=[True, True, True],
+    ).reset_index(drop=True)
+
+
+def build_round_by_round_summary(history_df: pd.DataFrame) -> pd.DataFrame:
+    if history_df is None or history_df.empty:
+        return pd.DataFrame()
+
+    rows = []
+    for manager_label, manager_df in history_df.groupby("manager_label", sort=False):
+        manager_df = manager_df.sort_values("event")
+        first = manager_df.iloc[0]
+        last = manager_df.iloc[-1]
+        start_rank = int(first["league_rank"])
+        current_rank = int(last["league_rank"])
+        best_rank = int(manager_df["league_rank"].min())
+        worst_rank = int(manager_df["league_rank"].max())
+        movement = start_rank - current_rank
+
+        if movement > 0:
+            movement_text = f"▲ {movement}"
+        elif movement < 0:
+            movement_text = f"▼ {abs(movement)}"
+        else:
+            movement_text = "0"
+
+        rows.append({
+            "manager_label": manager_label,
+            "entry_name": last["entry_name"],
+            "start_rank": start_rank,
+            "current_rank": current_rank,
+            "best_rank": best_rank,
+            "worst_rank": worst_rank,
+            "movement": movement,
+            "movement_text": movement_text,
+            "total_points": int(last["total_points"]),
+        })
+
+    return pd.DataFrame(rows).sort_values(
+        ["current_rank", "total_points", "manager_label"],
+        ascending=[True, False, True],
+    ).reset_index(drop=True)
+
+
+def render_round_by_round_league_history(managers: list[dict]):
+    history_df = build_round_by_round_league_history(managers)
+
+    if history_df.empty:
+        st.info("Runde-for-runde-grafen våkner så snart FPL har registrert første spilte runde.")
+        return
+
+    latest_event = int(history_df["event"].max())
+    summary = build_round_by_round_summary(history_df)
+
+    st.subheader("Plassering runde for runde")
+    st.caption(
+        "Hver linje viser managerens plassering i Lofthus Road Open etter hver FPL-runde. "
+        "1. plass ligger øverst. Ved lik poengsum vises delt plassering."
+    )
+
+    available = summary["manager_label"].tolist()
+    default_managers = available[: min(10, len(available))]
+
+    selected = st.multiselect(
+        "Managere i grafen",
+        options=available,
+        default=default_managers,
+        key="season_race_managers_v101",
+        help="Velg én, flere eller alle managerne for å følge tabellreisen gjennom sesongen.",
+    )
+
+    if not selected:
+        st.caption("Velg minst én manager for å vise grafen.")
+    else:
+        chart_df = history_df[history_df["manager_label"].isin(selected)].copy()
+        chart_df = chart_df.rename(columns={
+            "event": "Runde",
+            "league_rank": "Plassering",
+            "manager_label": "Manager",
+            "entry_name": "Lag",
+            "total_points": "Poeng",
+        })
+
+        max_rank = max(int(history_df["league_rank"].max()), 2)
+        chart_spec = {
+            "mark": {"type": "line", "point": True, "strokeWidth": 2.5},
+            "encoding": {
+                "x": {
+                    "field": "Runde",
+                    "type": "quantitative",
+                    "title": "Runde",
+                    "axis": {"tickMinStep": 1},
+                },
+                "y": {
+                    "field": "Plassering",
+                    "type": "quantitative",
+                    "title": "Plassering",
+                    "scale": {"reverse": True, "domain": [1, max_rank], "zero": False},
+                    "axis": {"tickMinStep": 1},
+                },
+                "color": {
+                    "field": "Manager",
+                    "type": "nominal",
+                    "title": "Manager",
+                },
+                "detail": {"field": "Manager", "type": "nominal"},
+                "tooltip": [
+                    {"field": "Manager", "type": "nominal"},
+                    {"field": "Lag", "type": "nominal"},
+                    {"field": "Runde", "type": "quantitative"},
+                    {"field": "Plassering", "type": "quantitative"},
+                    {"field": "Poeng", "type": "quantitative"},
+                ],
+            },
+            "height": 520,
+        }
+        st.vega_lite_chart(chart_df, chart_spec, use_container_width=True)
+
+    st.subheader(f"Sesongløpet etter runde {latest_event}")
+    display_table(
+        summary,
+        [
+            "current_rank",
+            "manager_label",
+            "entry_name",
+            "total_points",
+            "start_rank",
+            "best_rank",
+            "worst_rank",
+            "movement_text",
+        ],
+        {
+            "current_rank": "Nå",
+            "manager_label": "Manager",
+            "entry_name": "Lagnavn",
+            "total_points": "Poeng",
+            "start_rank": "Etter første runde",
+            "best_rank": "Beste",
+            "worst_rank": "Laveste",
+            "movement_text": "Netto",
+        },
+        column_config={
+            "current_rank": st.column_config.NumberColumn("Nå", format="%d"),
+            "total_points": st.column_config.NumberColumn("Poeng", format="%d"),
+            "start_rank": st.column_config.NumberColumn("Etter første runde", format="%d"),
+            "best_rank": st.column_config.NumberColumn("Beste", format="%d"),
+            "worst_rank": st.column_config.NumberColumn("Laveste", format="%d"),
+        },
+    )
+
+
 # -----------------------------
 # Norgeskart
 # -----------------------------
@@ -3687,13 +3918,16 @@ elif main_page == "Sesongradar":
     st.header("Sesongradar")
     lro_note(
         "Live motor gjennom sesongen",
-        "Her samles tabellbevegelse, form siste tre runder og hvem som over- eller underpresterer mot før-sesong-oddsen.",
+        "Her følger du plassering runde for runde, tabellbevegelse, form og hvem som over- eller underpresterer mot før-sesong-oddsen.",
         "",
     )
 
     if "managers" not in st.session_state:
         render_preseason_radar_preview()
     else:
+        # Sesongradaren trenger historikk både til odds-sammenligning og
+        # runde-for-runde-data. Cache gjør at dette bare er tungt første gang.
+        ensure_history_for_page()
         summary_df = st.session_state.get("summary_df", pd.DataFrame())
         radar = build_season_radar_tables(st.session_state["managers"], summary_df)
 
@@ -3717,9 +3951,17 @@ elif main_page == "Sesongradar":
             if cards:
                 lro_cards(cards[:4])
 
-            radar_section = nav_choice("", ["Tabellbevegelse", "Form", "Mot oddsen"], "radar_section_v36", default="Tabellbevegelse")
+            radar_section = nav_choice(
+                "",
+                ["Sesongløp", "Tabellbevegelse", "Form", "Mot oddsen"],
+                "radar_section_v101",
+                default="Sesongløp",
+            )
 
-            if radar_section == "Tabellbevegelse":
+            if radar_section == "Sesongløp":
+                render_round_by_round_league_history(st.session_state["managers"])
+
+            elif radar_section == "Tabellbevegelse":
                 c1, c2 = st.columns(2)
                 with c1:
                     st.subheader("Største klatrere")
