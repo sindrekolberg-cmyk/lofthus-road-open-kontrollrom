@@ -22,7 +22,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-ferrari-v101-pass5-sesonglop"
+APP_VERSION = "lofthus-road-open-ferrari-v102-pass6-fullapp-demo"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -3417,6 +3417,87 @@ def build_round_by_round_league_history(managers: list[dict]) -> pd.DataFrame:
     ).reset_index(drop=True)
 
 
+def build_demo_round_by_round_history(managers: list[dict], rounds: int = 8) -> pd.DataFrame:
+    """Create a deterministic, clearly fictional LRO season race for preview use.
+
+    The demo uses the real managers currently registered in the league, but every
+    gameweek position and point total is fictional. It is shown only until FPL
+    supplies genuine current-season history.
+    """
+    clean_managers = []
+    for manager in managers or []:
+        entry = manager.get("entry")
+        if not entry:
+            continue
+        clean_managers.append({
+            "entry": int(entry),
+            "player_name": str(manager.get("player_name") or "Ukjent manager"),
+            "entry_name": str(manager.get("entry_name") or "Ukjent lag"),
+        })
+
+    if not clean_managers:
+        return pd.DataFrame(columns=[
+            "event", "entry", "player_name", "entry_name",
+            "manager_label", "total_points", "league_rank",
+        ])
+
+    # Stable starting order: entry id gives us a repeatable seed without adding
+    # random state or another dependency. From there, small round-specific swings
+    # make the chart look like an actual season rather than a barcode convention.
+    clean_managers = sorted(clean_managers, key=lambda item: (item["entry"] % 997, item["player_name"]))
+    n = len(clean_managers)
+    rows = []
+    cumulative = {item["entry"]: 0 for item in clean_managers}
+
+    for event in range(1, rounds + 1):
+        event_rows = []
+        for idx, manager in enumerate(clean_managers):
+            entry = manager["entry"]
+            # Fictional GW score, stable across reloads, with enough spread to
+            # create believable movement while keeping totals football-ish.
+            seed = (entry * 37 + event * 71 + idx * 19) % 43
+            gw_points = 43 + seed
+            if (entry + event) % 7 == 0:
+                gw_points += 13
+            if (entry + event * 3) % 11 == 0:
+                gw_points -= 9
+            gw_points = max(28, min(102, gw_points))
+            cumulative[entry] += gw_points
+            event_rows.append({
+                "event": event,
+                "entry": entry,
+                "player_name": manager["player_name"],
+                "entry_name": manager["entry_name"],
+                "manager_label": manager["player_name"],
+                "total_points": cumulative[entry],
+            })
+
+        event_df = pd.DataFrame(event_rows)
+        event_df["league_rank"] = (
+            event_df["total_points"]
+            .rank(method="first", ascending=False)
+            .astype(int)
+        )
+        rows.extend(event_df.to_dict("records"))
+
+    history_df = pd.DataFrame(rows)
+
+    duplicate_names = history_df.groupby("player_name")["entry"].nunique()
+    duplicate_names = set(duplicate_names[duplicate_names > 1].index)
+    if duplicate_names:
+        mask = history_df["player_name"].isin(duplicate_names)
+        history_df.loc[mask, "manager_label"] = (
+            history_df.loc[mask, "player_name"]
+            + " · "
+            + history_df.loc[mask, "entry_name"]
+        )
+
+    return history_df.sort_values(
+        ["event", "league_rank", "player_name"],
+        ascending=[True, True, True],
+    ).reset_index(drop=True)
+
+
 def build_round_by_round_summary(history_df: pd.DataFrame) -> pd.DataFrame:
     if history_df is None or history_df.empty:
         return pd.DataFrame()
@@ -3459,19 +3540,34 @@ def build_round_by_round_summary(history_df: pd.DataFrame) -> pd.DataFrame:
 
 def render_round_by_round_league_history(managers: list[dict]):
     history_df = build_round_by_round_league_history(managers)
+    is_demo = history_df.empty
 
-    if history_df.empty:
-        st.info("Runde-for-runde-grafen våkner så snart FPL har registrert første spilte runde.")
-        return
+    if is_demo:
+        history_df = build_demo_round_by_round_history(managers, rounds=8)
+        if history_df.empty:
+            st.info("Sesongløpet våkner så snart ligaen har managere å vise.")
+            return
+        st.warning(
+            "🧪 DEMO – fiktive plasseringer. Grafen under bruker de ekte managerne i ligaen, "
+            "men plasseringer og poeng i GW1–GW8 er kun eksempeldata. Når FPL har ekte "
+            "rundedata, bytter Sesongradaren automatisk til den virkelige sesongen."
+        )
 
     latest_event = int(history_df["event"].max())
     summary = build_round_by_round_summary(history_df)
 
-    st.subheader("Plassering runde for runde")
-    st.caption(
-        "Hver linje viser managerens plassering i Lofthus Road Open etter hver FPL-runde. "
-        "1. plass ligger øverst. Ved lik poengsum vises delt plassering."
-    )
+    title = "Plassering runde for runde" if not is_demo else "Plassering runde for runde · DEMO"
+    st.subheader(title)
+    if is_demo:
+        st.caption(
+            "Forhåndsvisning av hvordan sesongløpet vil se ut. 1. plass ligger øverst. "
+            "Alle resultater i denne grafen er oppdiktet."
+        )
+    else:
+        st.caption(
+            "Hver linje viser managerens plassering i Lofthus Road Open etter hver FPL-runde. "
+            "1. plass ligger øverst. Ved lik poengsum vises delt plassering."
+        )
 
     available = summary["manager_label"].tolist()
     default_managers = available[: min(10, len(available))]
@@ -3480,7 +3576,7 @@ def render_round_by_round_league_history(managers: list[dict]):
         "Managere i grafen",
         options=available,
         default=default_managers,
-        key="season_race_managers_v101",
+        key="season_race_managers_v102",
         help="Velg én, flere eller alle managerne for å følge tabellreisen gjennom sesongen.",
     )
 
@@ -3531,7 +3627,12 @@ def render_round_by_round_league_history(managers: list[dict]):
         }
         st.vega_lite_chart(chart_df, chart_spec, use_container_width=True)
 
-    st.subheader(f"Sesongløpet etter runde {latest_event}")
+    table_title = (
+        f"DEMO-tabell etter runde {latest_event}"
+        if is_demo
+        else f"Sesongløpet etter runde {latest_event}"
+    )
+    st.subheader(table_title)
     display_table(
         summary,
         [
@@ -3931,72 +4032,76 @@ elif main_page == "Sesongradar":
         summary_df = st.session_state.get("summary_df", pd.DataFrame())
         radar = build_season_radar_tables(st.session_state["managers"], summary_df)
 
-        if not radar or all(value.empty for value in radar.values() if isinstance(value, pd.DataFrame)):
-            render_preseason_radar_preview()
-        else:
-            cards = []
-            if not radar["climbers"].empty:
-                row = radar["climbers"].iloc[0]
-                cards.append({"label": "Største klatrer", "value": row.get("player_name", ""), "caption": row.get("form_curve", "")})
-            if not radar["fallers"].empty:
-                row = radar["fallers"].iloc[0]
-                cards.append({"label": "Største fall", "value": row.get("player_name", ""), "caption": row.get("form_curve", "")})
-            if not radar["form_three"].empty:
-                row = radar["form_three"].iloc[0]
-                cards.append({"label": "Form siste tre", "value": row.get("player_name", ""), "caption": f"{int(row.get('last_three_points') or 0)} poeng"})
-            if not radar["over"].empty:
-                row = radar["over"].iloc[0]
-                cards.append({"label": "Mest mot oddsen", "value": row.get("player_name", ""), "caption": f"Avvik: {int(row.get('performance_vs_odds') or 0)}"})
+        radar_has_live = bool(radar) and not all(
+            value.empty for value in radar.values() if isinstance(value, pd.DataFrame)
+        )
 
-            if cards:
-                lro_cards(cards[:4])
+        if not radar_has_live:
+            st.info("Live-radaren venter på første FPL-runde. Sesongløp kan likevel forhåndsvises med demo-data nå.")
 
-            radar_section = nav_choice(
-                "",
-                ["Sesongløp", "Tabellbevegelse", "Form", "Mot oddsen"],
-                "radar_section_v101",
-                default="Sesongløp",
-            )
+        cards = []
+        if not radar["climbers"].empty:
+            row = radar["climbers"].iloc[0]
+            cards.append({"label": "Største klatrer", "value": row.get("player_name", ""), "caption": row.get("form_curve", "")})
+        if not radar["fallers"].empty:
+            row = radar["fallers"].iloc[0]
+            cards.append({"label": "Største fall", "value": row.get("player_name", ""), "caption": row.get("form_curve", "")})
+        if not radar["form_three"].empty:
+            row = radar["form_three"].iloc[0]
+            cards.append({"label": "Form siste tre", "value": row.get("player_name", ""), "caption": f"{int(row.get('last_three_points') or 0)} poeng"})
+        if not radar["over"].empty:
+            row = radar["over"].iloc[0]
+            cards.append({"label": "Mest mot oddsen", "value": row.get("player_name", ""), "caption": f"Avvik: {int(row.get('performance_vs_odds') or 0)}"})
 
-            if radar_section == "Sesongløp":
-                render_round_by_round_league_history(st.session_state["managers"])
+        if cards:
+            lro_cards(cards[:4])
 
-            elif radar_section == "Tabellbevegelse":
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.subheader("Største klatrere")
-                    if radar["climbers"].empty:
-                        st.caption("Ingen live-bevegelse ennå.")
-                    else:
-                        display_table(radar["climbers"], ["player_name", "entry_name", "rank_num", "form_curve", "total_num"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
-                with c2:
-                    st.subheader("Største fall")
-                    if radar["fallers"].empty:
-                        st.caption("Ingen live-bevegelse ennå.")
-                    else:
-                        display_table(radar["fallers"], ["player_name", "entry_name", "rank_num", "form_curve", "total_num"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
+        radar_section = nav_choice(
+            "",
+            ["Sesongløp", "Tabellbevegelse", "Form", "Mot oddsen"],
+            "radar_section_v101",
+            default="Sesongløp",
+        )
 
-            elif radar_section == "Form":
-                st.subheader("Form siste tre runder")
-                if radar["form_three"].empty:
-                    st.caption("Ikke nok runde-data ennå.")
+        if radar_section == "Sesongløp":
+            render_round_by_round_league_history(st.session_state["managers"])
+
+        elif radar_section == "Tabellbevegelse":
+            c1, c2 = st.columns(2)
+            with c1:
+                st.subheader("Største klatrere")
+                if radar["climbers"].empty:
+                    st.caption("Ingen live-bevegelse ennå.")
                 else:
-                    display_table(radar["form_three"], ["player_name", "entry_name", "last_three_points", "last_three_avg", "last_three_detail", "rank_num"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
+                    display_table(radar["climbers"], ["player_name", "entry_name", "rank_num", "form_curve", "total_num"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
+            with c2:
+                st.subheader("Største fall")
+                if radar["fallers"].empty:
+                    st.caption("Ingen live-bevegelse ennå.")
+                else:
+                    display_table(radar["fallers"], ["player_name", "entry_name", "rank_num", "form_curve", "total_num"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
 
-            elif radar_section == "Mot oddsen":
-                c3, c4 = st.columns(2)
-                with c3:
-                    st.subheader("Overpresterer")
-                    if radar["over"].empty:
-                        st.caption("Trenger live-tabell og oddsdata.")
-                    else:
-                        display_table(radar["over"], ["player_name", "entry_name", "rank_num", "odds_rank", "performance_vs_odds", "odds"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
-                with c4:
-                    st.subheader("Underpresterer")
-                    if radar["under"].empty:
-                        st.caption("Trenger live-tabell og oddsdata.")
-                    else:
-                        display_table(radar["under"], ["player_name", "entry_name", "rank_num", "odds_rank", "performance_vs_odds", "odds"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
+        elif radar_section == "Form":
+            st.subheader("Form siste tre runder")
+            if radar["form_three"].empty:
+                st.caption("Ikke nok runde-data ennå.")
+            else:
+                display_table(radar["form_three"], ["player_name", "entry_name", "last_three_points", "last_three_avg", "last_three_detail", "rank_num"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
+
+        elif radar_section == "Mot oddsen":
+            c3, c4 = st.columns(2)
+            with c3:
+                st.subheader("Overpresterer")
+                if radar["over"].empty:
+                    st.caption("Trenger live-tabell og oddsdata.")
+                else:
+                    display_table(radar["over"], ["player_name", "entry_name", "rank_num", "odds_rank", "performance_vs_odds", "odds"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
+            with c4:
+                st.subheader("Underpresterer")
+                if radar["under"].empty:
+                    st.caption("Trenger live-tabell og oddsdata.")
+                else:
+                    display_table(radar["under"], ["player_name", "entry_name", "rank_num", "odds_rank", "performance_vs_odds", "odds"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
 
 
 elif main_page == "Odds":
