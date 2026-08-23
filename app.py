@@ -22,7 +22,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-ferrari-v102-pass6-fullapp-demo"
+APP_VERSION = "lofthus-road-open-ferrari-v108-stable-package"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -334,6 +334,7 @@ with st.sidebar:
         st.rerun()
     st.markdown("---")
     st.caption("Lofthus Road Open 2026/27")
+    st.caption("Build: V108 · Live-radar + eierskap")
 
 
 # -----------------------------
@@ -351,6 +352,18 @@ def get_json(path: str) -> Any:
 @st.cache_data(ttl=3600)
 def get_entry_history(entry_id: int) -> dict:
     return get_json(f"/entry/{entry_id}/history/")
+
+
+@st.cache_data(ttl=300)
+def get_bootstrap_static() -> dict:
+    """FPL master data: events, players and clubs."""
+    return get_json("/bootstrap-static/")
+
+
+@st.cache_data(ttl=300)
+def get_entry_event_picks(entry_id: int, event_id: int) -> dict:
+    """Public squad/line-up for one manager after the gameweek deadline."""
+    return get_json(f"/entry/{int(entry_id)}/event/{int(event_id)}/picks/")
 
 
 def normalize_text(value: str) -> str:
@@ -2484,11 +2497,12 @@ def render_league_table_component(table_df: pd.DataFrame, has_live_table: bool):
     n = max(len(table_df), 1)
     big_threshold = max(5, round(n * 0.15))
 
-    for _, row in table_df.reset_index(drop=True).iterrows():
+    for fallback_index, row in table_df.reset_index(drop=True).iterrows():
         form_text, form_sort = form_curve_badge(row.get("form_delta"), big_threshold)
         rows.append({
             "rank": clean_cell(row.get("rank_display")),
             "rankValue": None if pd.isna(row.get("rank_num")) else float(row.get("rank_num")),
+            "fallbackPosition": int(fallback_index + 1),
             "manager": clean_cell(row.get("player_name")),
             "team": clean_cell(row.get("entry_name")),
             "eventPoints": None if pd.isna(row.get("event_total_num")) else int(row.get("event_total_num")),
@@ -2528,6 +2542,18 @@ def render_league_table_component(table_df: pd.DataFrame, has_live_table: bool):
       .rank-cell {{font-weight: 850; white-space: nowrap;}}
       .sort-mark {{margin-left: 6px; font-size: 11px; color: #b91c1c;}}
       .lro-table tr:nth-child(even) td {{background:#f8fafc;}}
+      .rank-number {
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        min-width:28px;
+        height:28px;
+        border-radius:999px;
+        background:#eef2f7;
+        color:#111827;
+        font-weight:900;
+        font-variant-numeric:tabular-nums;
+      }
       @media (max-width: 760px) {{
         .lro-table-wrap, .lro-history-wrap, .lro-hof-wrap {{overflow-x:auto; max-width:100%;}}
         .lro-table {{min-width: 780px; font-size: 11.2px;}}
@@ -2571,9 +2597,14 @@ def render_league_table_component(table_df: pd.DataFrame, has_live_table: bool):
       }}
 
       function rankCell(row, index) {{
-        const medal = index === 0 ? '🥇 ' : index === 1 ? '🥈 ' : index === 2 ? '🥉 ' : '';
-        const label = row.rank || '';
-        return `<span class="rank-cell">${{medal}}${{esc(label)}}</span>`;
+        const rawRank = row.rankValue !== null && row.rankValue !== undefined && !Number.isNaN(row.rankValue)
+          ? Number(row.rankValue)
+          : Number(row.fallbackPosition || (index + 1));
+        const place = Math.max(1, Math.round(rawRank));
+        if (place === 1) return '<span class="rank-cell">🥇</span>';
+        if (place === 2) return '<span class="rank-cell">🥈</span>';
+        if (place === 3) return '<span class="rank-cell">🥉</span>';
+        return `<span class="rank-cell rank-number">${{place}}</span>`;
       }}
 
       function render() {{
@@ -3336,11 +3367,11 @@ def build_season_radar_tables(managers: list[dict], summary_df: pd.DataFrame) ->
 
 
 def build_round_by_round_league_history(managers: list[dict]) -> pd.DataFrame:
-    """Build LRO mini-league positions for every played FPL gameweek.
+    """Reconstruct LRO positions after every played FPL gameweek.
 
-    FPL's entry history gives each manager's cumulative points after every
-    gameweek. Ranking those totals inside the Lofthus Road Open field lets us
-    reconstruct the league table round by round without storing snapshots.
+    FPL exposes each manager's current-season history with gameweek points and
+    cumulative points. Ranking the cumulative totals inside this league gives us
+    the Lofthus Road Open table round by round without storing snapshots.
     """
     rows = []
 
@@ -3357,11 +3388,11 @@ def build_round_by_round_league_history(managers: list[dict]) -> pd.DataFrame:
 
         player_name = str(manager.get("player_name") or "Ukjent manager")
         entry_name = str(manager.get("entry_name") or "Ukjent lag")
-        manager_label = player_name
 
         for gw in current:
             event = gw.get("event")
             total_points = gw.get("total_points")
+            round_points = gw.get("points")
 
             if event is None or total_points is None:
                 continue
@@ -3369,6 +3400,7 @@ def build_round_by_round_league_history(managers: list[dict]) -> pd.DataFrame:
             try:
                 event = int(event)
                 total_points = int(total_points)
+                round_points = int(round_points or 0)
             except (TypeError, ValueError):
                 continue
 
@@ -3380,19 +3412,20 @@ def build_round_by_round_league_history(managers: list[dict]) -> pd.DataFrame:
                 "entry": int(entry),
                 "player_name": player_name,
                 "entry_name": entry_name,
-                "manager_label": manager_label,
+                "manager_label": player_name,
+                "round_points": round_points,
                 "total_points": total_points,
             })
 
     history_df = pd.DataFrame(rows)
     if history_df.empty:
         return pd.DataFrame(columns=[
-            "event", "entry", "player_name", "entry_name",
-            "manager_label", "total_points", "league_rank",
+            "event", "entry", "player_name", "entry_name", "manager_label",
+            "round_points", "total_points", "league_rank",
         ])
 
-    # If two managers have the same display name, add team name so the chart
-    # never merges two different people into one line.
+    # Two people can share a display name. Keep their lines separate by adding
+    # the team name only when it is actually needed.
     duplicate_names = history_df.groupby("player_name")["entry"].nunique()
     duplicate_names = set(duplicate_names[duplicate_names > 1].index)
     if duplicate_names:
@@ -3403,8 +3436,8 @@ def build_round_by_round_league_history(managers: list[dict]) -> pd.DataFrame:
             + history_df.loc[mask, "entry_name"]
         )
 
-    # Dense ranking keeps tied point totals tied. That is more honest than
-    # inventing FPL tie-breakers we cannot reconstruct reliably from history.
+    # Ranking by cumulative points reconstructs the mini-league table. Ties get
+    # the same displayed place rather than a made-up tie-breaker.
     history_df["league_rank"] = (
         history_df.groupby("event")["total_points"]
         .rank(method="min", ascending=False)
@@ -3418,12 +3451,7 @@ def build_round_by_round_league_history(managers: list[dict]) -> pd.DataFrame:
 
 
 def build_demo_round_by_round_history(managers: list[dict], rounds: int = 8) -> pd.DataFrame:
-    """Create a deterministic, clearly fictional LRO season race for preview use.
-
-    The demo uses the real managers currently registered in the league, but every
-    gameweek position and point total is fictional. It is shown only until FPL
-    supplies genuine current-season history.
-    """
+    """Create deterministic, explicitly fictional gameweeks for preview use."""
     clean_managers = []
     for manager in managers or []:
         entry = manager.get("entry")
@@ -3437,38 +3465,39 @@ def build_demo_round_by_round_history(managers: list[dict], rounds: int = 8) -> 
 
     if not clean_managers:
         return pd.DataFrame(columns=[
-            "event", "entry", "player_name", "entry_name",
-            "manager_label", "total_points", "league_rank",
+            "event", "entry", "player_name", "entry_name", "manager_label",
+            "round_points", "total_points", "league_rank",
         ])
 
-    # Stable starting order: entry id gives us a repeatable seed without adding
-    # random state or another dependency. From there, small round-specific swings
-    # make the chart look like an actual season rather than a barcode convention.
-    clean_managers = sorted(clean_managers, key=lambda item: (item["entry"] % 997, item["player_name"]))
-    n = len(clean_managers)
-    rows = []
+    # Stable ordering plus arithmetic pseudo-variation. No random module, so the
+    # same league always gets the same demo after every refresh.
+    clean_managers = sorted(
+        clean_managers,
+        key=lambda item: (item["entry"] % 997, normalize_text(item["player_name"])),
+    )
     cumulative = {item["entry"]: 0 for item in clean_managers}
+    rows = []
 
     for event in range(1, rounds + 1):
         event_rows = []
         for idx, manager in enumerate(clean_managers):
             entry = manager["entry"]
-            # Fictional GW score, stable across reloads, with enough spread to
-            # create believable movement while keeping totals football-ish.
             seed = (entry * 37 + event * 71 + idx * 19) % 43
-            gw_points = 43 + seed
+            round_points = 43 + seed
             if (entry + event) % 7 == 0:
-                gw_points += 13
+                round_points += 13
             if (entry + event * 3) % 11 == 0:
-                gw_points -= 9
-            gw_points = max(28, min(102, gw_points))
-            cumulative[entry] += gw_points
+                round_points -= 9
+            round_points = max(28, min(102, round_points))
+            cumulative[entry] += round_points
+
             event_rows.append({
                 "event": event,
                 "entry": entry,
                 "player_name": manager["player_name"],
                 "entry_name": manager["entry_name"],
                 "manager_label": manager["player_name"],
+                "round_points": round_points,
                 "total_points": cumulative[entry],
             })
 
@@ -3504,7 +3533,7 @@ def build_round_by_round_summary(history_df: pd.DataFrame) -> pd.DataFrame:
 
     rows = []
     for manager_label, manager_df in history_df.groupby("manager_label", sort=False):
-        manager_df = manager_df.sort_values("event")
+        manager_df = manager_df.sort_values("event").reset_index(drop=True)
         first = manager_df.iloc[0]
         last = manager_df.iloc[-1]
         start_rank = int(first["league_rank"])
@@ -3514,11 +3543,32 @@ def build_round_by_round_summary(history_df: pd.DataFrame) -> pd.DataFrame:
         movement = start_rank - current_rank
 
         if movement > 0:
-            movement_text = f"▲ {movement}"
+            movement_text = f"🟢 +{movement}"
         elif movement < 0:
-            movement_text = f"▼ {abs(movement)}"
+            movement_text = f"🔴 {movement}"
         else:
-            movement_text = "0"
+            movement_text = "⚪ 0"
+
+        biggest_jump = 0
+        biggest_jump_event = None
+        biggest_jump_direction = 0
+        previous_rank = None
+        for _, row in manager_df.iterrows():
+            rank = int(row["league_rank"])
+            if previous_rank is not None:
+                delta = previous_rank - rank
+                if abs(delta) > abs(biggest_jump):
+                    biggest_jump = delta
+                    biggest_jump_direction = delta
+                    biggest_jump_event = int(row["event"])
+            previous_rank = rank
+
+        if biggest_jump_event is None or biggest_jump == 0:
+            biggest_jump_text = "⚪ 0"
+        elif biggest_jump_direction > 0:
+            biggest_jump_text = f"🟢 +{biggest_jump} (GW{biggest_jump_event})"
+        else:
+            biggest_jump_text = f"🔴 {biggest_jump} (GW{biggest_jump_event})"
 
         rows.append({
             "manager_label": manager_label,
@@ -3529,6 +3579,9 @@ def build_round_by_round_summary(history_df: pd.DataFrame) -> pd.DataFrame:
             "worst_rank": worst_rank,
             "movement": movement,
             "movement_text": movement_text,
+            "biggest_jump": int(biggest_jump),
+            "biggest_jump_text": biggest_jump_text,
+            "round_points": int(last.get("round_points", 0) or 0),
             "total_points": int(last["total_points"]),
         })
 
@@ -3547,122 +3600,519 @@ def render_round_by_round_league_history(managers: list[dict]):
         if history_df.empty:
             st.info("Sesongløpet våkner så snart ligaen har managere å vise.")
             return
-        st.warning(
-            "🧪 DEMO – fiktive plasseringer. Grafen under bruker de ekte managerne i ligaen, "
-            "men plasseringer og poeng i GW1–GW8 er kun eksempeldata. Når FPL har ekte "
-            "rundedata, bytter Sesongradaren automatisk til den virkelige sesongen."
-        )
 
     latest_event = int(history_df["event"].max())
     summary = build_round_by_round_summary(history_df)
+    league_size = int(summary.shape[0])
 
-    title = "Plassering runde for runde" if not is_demo else "Plassering runde for runde · DEMO"
-    st.subheader(title)
     if is_demo:
-        st.caption(
-            "Forhåndsvisning av hvordan sesongløpet vil se ut. 1. plass ligger øverst. "
-            "Alle resultater i denne grafen er oppdiktet."
-        )
+        st.warning("DEMO · Fiktive plasseringer. Ekte manager- og lagnavn, men oppdiktede GW1–GW8-resultater. Dette forsvinner automatisk når FPL har ekte rundedata.")
     else:
-        st.caption(
-            "Hver linje viser managerens plassering i Lofthus Road Open etter hver FPL-runde. "
-            "1. plass ligger øverst. Ved lik poengsum vises delt plassering."
-        )
+        st.markdown(
+            f'''<div style="display:flex;gap:10px;align-items:center;justify-content:space-between;background:linear-gradient(135deg,#052e2b,#0f172a 70%);color:white;border-radius:16px;padding:13px 16px;margin:2px 0 14px 0;border:1px solid rgba(255,255,255,.10)">
+            <div><div style="font-size:.7rem;color:#fde68a;font-weight:900;letter-spacing:.08em">LIVE SESONG 2026/27</div><div style="font-size:1.08rem;font-weight:900;margin-top:3px">Sesongløpet etter GW{latest_event}</div></div>
+            <div style="font-size:.78rem;color:#cbd5e1">{league_size} managere</div></div>''', unsafe_allow_html=True)
+
+    leader = summary.iloc[0] if not summary.empty else None
+    biggest_climber = summary.sort_values(["movement", "current_rank"], ascending=[False, True]).iloc[0] if not summary.empty else None
+    biggest_faller = summary.sort_values(["movement", "current_rank"], ascending=[True, True]).iloc[0] if not summary.empty else None
+    biggest_jump = summary.assign(_jump_abs=summary["biggest_jump"].abs()).sort_values(["_jump_abs", "current_rank"], ascending=[False, True]).iloc[0] if not summary.empty else None
+    radar_metric_strip([
+        {"label": "Ligaleder", "value": str(leader["manager_label"]) if leader is not None else "–", "caption": f"{int(leader['total_points'])} poeng" if leader is not None else ""},
+        {"label": "Mest opp", "value": str(biggest_climber["manager_label"]) if biggest_climber is not None else "–", "caption": str(biggest_climber["movement_text"]) if biggest_climber is not None else ""},
+        {"label": "Mest ned", "value": str(biggest_faller["manager_label"]) if biggest_faller is not None else "–", "caption": str(biggest_faller["movement_text"]) if biggest_faller is not None else ""},
+        {"label": "Villeste GW-hopp", "value": str(biggest_jump["manager_label"]) if biggest_jump is not None else "–", "caption": str(biggest_jump["biggest_jump_text"]) if biggest_jump is not None else ""},
+    ])
+
+    st.markdown("### Plassering runde for runde")
+    st.caption("1. plass ligger øverst. Standardvisningen holder grafen lesbar; hele ligaen er fortsatt ett klikk unna.")
 
     available = summary["manager_label"].tolist()
-    default_managers = available[: min(10, len(available))]
+    race_mode = nav_choice("", ["Topp 5", "Topp 10", "Hele ligaen", "Eget utvalg"], "race_mode_v107", default="Topp 5")
 
-    selected = st.multiselect(
-        "Managere i grafen",
-        options=available,
-        default=default_managers,
-        key="season_race_managers_v102",
-        help="Velg én, flere eller alle managerne for å følge tabellreisen gjennom sesongen.",
-    )
+    if race_mode == "Topp 5":
+        selected = available[:5]
+    elif race_mode == "Topp 10":
+        selected = available[:10]
+    elif race_mode == "Hele ligaen":
+        selected = available
+    else:
+        selected = st.multiselect(
+            "Velg managere",
+            options=available,
+            default=available[: min(5, len(available))],
+            key="season_race_custom_v107",
+        )
 
     if not selected:
-        st.caption("Velg minst én manager for å vise grafen.")
+        st.caption("Velg minst én manager.")
     else:
         chart_df = history_df[history_df["manager_label"].isin(selected)].copy()
         chart_df = chart_df.rename(columns={
-            "event": "Runde",
-            "league_rank": "Plassering",
-            "manager_label": "Manager",
-            "entry_name": "Lag",
-            "total_points": "Poeng",
+            "event": "Runde", "league_rank": "Plassering", "manager_label": "Manager",
+            "entry_name": "Lag", "round_points": "Rundepoeng", "total_points": "Poeng totalt",
         })
 
-        max_rank = max(int(history_df["league_rank"].max()), 2)
+        selected_max = int(chart_df["Plassering"].max()) if not chart_df.empty else league_size
+        max_rank = max(2, min(league_size, selected_max + 2)) if race_mode != "Hele ligaen" else max(2, league_size)
+        many_lines = len(selected) > 10
         chart_spec = {
-            "mark": {"type": "line", "point": True, "strokeWidth": 2.5},
+            "width": "container",
+            "height": 430 if not many_lines else 500,
+            "mark": {
+                "type": "line",
+                "point": False if many_lines else {"filled": True, "size": 54},
+                "strokeWidth": 1.5 if many_lines else 3.0,
+                "opacity": 0.72 if many_lines else 0.95,
+            },
             "encoding": {
-                "x": {
-                    "field": "Runde",
-                    "type": "quantitative",
-                    "title": "Runde",
-                    "axis": {"tickMinStep": 1},
-                },
-                "y": {
-                    "field": "Plassering",
-                    "type": "quantitative",
-                    "title": "Plassering",
-                    "scale": {"reverse": True, "domain": [1, max_rank], "zero": False},
-                    "axis": {"tickMinStep": 1},
-                },
-                "color": {
-                    "field": "Manager",
-                    "type": "nominal",
-                    "title": "Manager",
-                },
+                "x": {"field": "Runde", "type": "quantitative", "title": "Gameweek", "axis": {"tickMinStep": 1, "format": "d", "grid": False}},
+                "y": {"field": "Plassering", "type": "quantitative", "title": "Plassering", "scale": {"reverse": True, "domain": [1, max_rank], "zero": False}, "axis": {"tickMinStep": 1, "format": "d"}},
+                "color": {"field": "Manager", "type": "nominal", "title": "Manager", "legend": None if many_lines else {"orient": "bottom", "columns": 3, "labelLimit": 190, "symbolStrokeWidth": 3}},
                 "detail": {"field": "Manager", "type": "nominal"},
                 "tooltip": [
-                    {"field": "Manager", "type": "nominal"},
-                    {"field": "Lag", "type": "nominal"},
-                    {"field": "Runde", "type": "quantitative"},
-                    {"field": "Plassering", "type": "quantitative"},
-                    {"field": "Poeng", "type": "quantitative"},
+                    {"field": "Manager", "type": "nominal", "title": "Manager"},
+                    {"field": "Lag", "type": "nominal", "title": "Lag"},
+                    {"field": "Runde", "type": "quantitative", "title": "GW", "format": "d"},
+                    {"field": "Plassering", "type": "quantitative", "title": "Plass", "format": "d"},
+                    {"field": "Rundepoeng", "type": "quantitative", "title": "GW-poeng", "format": "d"},
+                    {"field": "Poeng totalt", "type": "quantitative", "title": "Totalt", "format": "d"},
                 ],
             },
-            "height": 520,
+            "config": {"view": {"stroke": None}, "axis": {"labelFontSize": 11, "titleFontSize": 12}, "legend": {"labelFontSize": 10, "titleFontSize": 11}},
         }
         st.vega_lite_chart(chart_df, chart_spec, use_container_width=True)
+        if many_lines:
+            st.caption("Hele ligaen vises uten legend/punkter for å unngå full spagettikatastrofe. Hold over linjene for detaljer.")
 
-    table_title = (
-        f"DEMO-tabell etter runde {latest_event}"
-        if is_demo
-        else f"Sesongløpet etter runde {latest_event}"
-    )
-    st.subheader(table_title)
+    st.markdown(f"### Status etter GW{latest_event}")
+    compact = summary.copy()
+    compact["trend"] = compact["movement"].apply(movement_text)
     display_table(
-        summary,
-        [
-            "current_rank",
-            "manager_label",
-            "entry_name",
-            "total_points",
-            "start_rank",
-            "best_rank",
-            "worst_rank",
-            "movement_text",
-        ],
-        {
-            "current_rank": "Nå",
-            "manager_label": "Manager",
-            "entry_name": "Lagnavn",
-            "total_points": "Poeng",
-            "start_rank": "Etter første runde",
-            "best_rank": "Beste",
-            "worst_rank": "Laveste",
-            "movement_text": "Netto",
-        },
-        column_config={
-            "current_rank": st.column_config.NumberColumn("Nå", format="%d"),
-            "total_points": st.column_config.NumberColumn("Poeng", format="%d"),
-            "start_rank": st.column_config.NumberColumn("Etter første runde", format="%d"),
-            "best_rank": st.column_config.NumberColumn("Beste", format="%d"),
-            "worst_rank": st.column_config.NumberColumn("Laveste", format="%d"),
-        },
+        compact,
+        ["current_rank", "manager_label", "entry_name", "round_points", "total_points", "trend", "best_rank", "worst_rank", "biggest_jump_text"],
+        {"current_rank": "#", "manager_label": "Manager", "entry_name": "Lag", "round_points": "GW", "total_points": "Totalt", "trend": "Fra GW1", "best_rank": "Beste", "worst_rank": "Laveste", "biggest_jump_text": "Største hopp"},
     )
+
+
+# ============================================================
+# V108 - LIVE RADAR + LIGAEIERSKAP
+# ============================================================
+
+POSITION_LABELS = {1: "Keeper", 2: "Forsvar", 3: "Midtbane", 4: "Angrep"}
+POSITION_SHORT = {1: "K", 2: "F", 3: "M", 4: "A"}
+
+
+def current_fpl_event_id() -> int | None:
+    """Return the event whose picks should be used right now."""
+    try:
+        data = get_bootstrap_static()
+    except Exception:
+        return None
+
+    events = data.get("events", []) or []
+    current = [event for event in events if event.get("is_current")]
+    if current:
+        try:
+            return int(current[0].get("id"))
+        except (TypeError, ValueError):
+            pass
+
+    finished = []
+    for event in events:
+        if event.get("finished"):
+            try:
+                finished.append(int(event.get("id")))
+            except (TypeError, ValueError):
+                pass
+    return max(finished) if finished else None
+
+
+def build_league_ownership(managers: list[dict], event_id: int | None = None) -> dict:
+    """Aggregate the whole LRO squad pool for one FPL gameweek."""
+    empty_players = pd.DataFrame(columns=[
+        "element", "player", "club", "position", "position_id", "ownership_count",
+        "ownership_pct", "started_count", "bench_count", "captain_count",
+        "vice_count", "total_points", "owners_text", "captains_text",
+    ])
+    empty_picks = pd.DataFrame(columns=[
+        "entry", "manager", "team", "element", "player", "club", "position",
+        "position_id", "squad_position", "multiplier", "is_captain", "is_vice_captain",
+        "on_bench",
+    ])
+
+    if not managers:
+        return {"event": event_id, "players": empty_players, "picks": empty_picks,
+                "loaded_managers": 0, "league_size": 0, "errors": []}
+
+    try:
+        bootstrap = get_bootstrap_static()
+    except Exception as error:
+        return {"event": event_id, "players": empty_players, "picks": empty_picks,
+                "loaded_managers": 0, "league_size": len(managers), "errors": [str(error)]}
+
+    if event_id is None:
+        event_id = current_fpl_event_id()
+    if event_id is None:
+        return {"event": None, "players": empty_players, "picks": empty_picks,
+                "loaded_managers": 0, "league_size": len(managers),
+                "errors": ["Fant ingen aktiv eller ferdig FPL-runde."]}
+
+    teams = {int(row.get("id")): str(row.get("short_name") or row.get("name") or "")
+             for row in (bootstrap.get("teams", []) or []) if row.get("id") is not None}
+    elements = {}
+    for row in bootstrap.get("elements", []) or []:
+        try:
+            element_id = int(row.get("id"))
+        except (TypeError, ValueError):
+            continue
+        position_id = int(row.get("element_type") or 0)
+        elements[element_id] = {
+            "player": str(row.get("web_name") or row.get("second_name") or row.get("first_name") or element_id),
+            "full_name": f"{row.get('first_name') or ''} {row.get('second_name') or ''}".strip(),
+            "club": teams.get(int(row.get("team") or 0), ""),
+            "position_id": position_id,
+            "position": POSITION_LABELS.get(position_id, "Ukjent"),
+            "total_points": int(row.get("total_points") or 0),
+        }
+
+    pick_rows = []
+    errors = []
+    loaded_entries = set()
+
+    for manager in managers:
+        entry = manager.get("entry")
+        if not entry:
+            continue
+        try:
+            entry = int(entry)
+            payload = get_entry_event_picks(entry, int(event_id))
+            picks = payload.get("picks", []) or []
+        except Exception as error:
+            errors.append({
+                "manager": str(manager.get("player_name") or "Ukjent manager"),
+                "entry": entry,
+                "error": str(error),
+            })
+            continue
+
+        if not picks:
+            errors.append({
+                "manager": str(manager.get("player_name") or "Ukjent manager"),
+                "entry": entry,
+                "error": "Ingen picks tilgjengelig",
+            })
+            continue
+
+        loaded_entries.add(entry)
+        manager_name = str(manager.get("player_name") or "Ukjent manager")
+        team_name = str(manager.get("entry_name") or "Ukjent lag")
+
+        for pick in picks:
+            try:
+                element = int(pick.get("element"))
+                squad_position = int(pick.get("position") or 0)
+                multiplier = int(pick.get("multiplier") or 0)
+            except (TypeError, ValueError):
+                continue
+            meta = elements.get(element, {
+                "player": f"Spiller {element}", "full_name": "", "club": "",
+                "position_id": 0, "position": "Ukjent", "total_points": 0,
+            })
+            pick_rows.append({
+                "entry": entry,
+                "manager": manager_name,
+                "team": team_name,
+                "element": element,
+                "player": meta["player"],
+                "full_name": meta.get("full_name", ""),
+                "club": meta["club"],
+                "position_id": meta["position_id"],
+                "position": meta["position"],
+                "squad_position": squad_position,
+                "multiplier": multiplier,
+                "is_captain": bool(pick.get("is_captain")),
+                "is_vice_captain": bool(pick.get("is_vice_captain")),
+                "on_bench": squad_position > 11,
+                "total_points": meta["total_points"],
+            })
+
+    picks_df = pd.DataFrame(pick_rows)
+    loaded_count = len(loaded_entries)
+    if picks_df.empty:
+        return {"event": int(event_id), "players": empty_players, "picks": empty_picks,
+                "loaded_managers": loaded_count, "league_size": len(managers), "errors": errors}
+
+    player_rows = []
+    for element, player_df in picks_df.groupby("element", sort=False):
+        first = player_df.iloc[0]
+        owners = player_df.sort_values(["manager", "team"])
+        captains = owners[owners["is_captain"]]
+        owner_count = int(owners["entry"].nunique())
+        player_rows.append({
+            "element": int(element),
+            "player": first["player"],
+            "full_name": first.get("full_name", ""),
+            "club": first["club"],
+            "position": first["position"],
+            "position_id": int(first["position_id"]),
+            "ownership_count": owner_count,
+            "ownership_pct": round(owner_count / loaded_count * 100, 1) if loaded_count else 0.0,
+            "started_count": int((~owners["on_bench"]).sum()),
+            "bench_count": int(owners["on_bench"].sum()),
+            "captain_count": int(owners["is_captain"].sum()),
+            "vice_count": int(owners["is_vice_captain"].sum()),
+            "total_points": int(first.get("total_points", 0) or 0),
+            "owners_text": " · ".join(owners["manager"].astype(str).tolist()),
+            "captains_text": " · ".join(captains["manager"].astype(str).tolist()),
+        })
+
+    players_df = pd.DataFrame(player_rows).sort_values(
+        ["ownership_count", "captain_count", "total_points", "player"],
+        ascending=[False, False, False, True],
+    ).reset_index(drop=True)
+    players_df.insert(0, "ownership_rank", range(1, len(players_df) + 1))
+
+    return {
+        "event": int(event_id),
+        "players": players_df,
+        "picks": picks_df,
+        "loaded_managers": loaded_count,
+        "league_size": len(managers),
+        "errors": errors,
+    }
+
+
+def build_template_xi(players_df: pd.DataFrame) -> tuple[pd.DataFrame, str]:
+    if players_df is None or players_df.empty:
+        return pd.DataFrame(), ""
+
+    candidates = players_df.copy().sort_values(
+        ["ownership_count", "captain_count", "total_points"], ascending=[False, False, False]
+    )
+    selected = []
+    selected_ids = set()
+    counts = {1: 0, 2: 0, 3: 0, 4: 0}
+    minimums = {1: 1, 2: 3, 3: 2, 4: 1}
+    maximums = {1: 1, 2: 5, 3: 5, 4: 3}
+
+    for pos, minimum in minimums.items():
+        pool = candidates[candidates["position_id"] == pos].head(minimum)
+        for _, row in pool.iterrows():
+            selected.append(row.to_dict())
+            selected_ids.add(int(row["element"]))
+            counts[pos] += 1
+
+    for _, row in candidates.iterrows():
+        if len(selected) >= 11:
+            break
+        element = int(row["element"])
+        pos = int(row["position_id"])
+        if element in selected_ids or pos not in maximums:
+            continue
+        if counts[pos] >= maximums[pos]:
+            continue
+        selected.append(row.to_dict())
+        selected_ids.add(element)
+        counts[pos] += 1
+
+    template = pd.DataFrame(selected)
+    if template.empty:
+        return template, ""
+    template = template.sort_values(["position_id", "ownership_count"], ascending=[True, False]).reset_index(drop=True)
+    formation = f"{counts[2]}-{counts[3]}-{counts[4]}"
+    return template, formation
+
+
+def radar_metric_strip(cards: list[dict]):
+    if not cards:
+        return
+    blocks = []
+    for card in cards[:4]:
+        eyebrow = html.escape(str(card.get("label", "")))
+        value = html.escape(str(card.get("value", "–")))
+        caption = html.escape(str(card.get("caption", "")))
+        blocks.append(f'<div class="radar-kpi"><div class="radar-kpi-label">{eyebrow}</div><div class="radar-kpi-value">{value}</div><div class="radar-kpi-caption">{caption}</div></div>')
+    st.markdown(
+        f'''<style>
+        .radar-kpis{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:8px 0 18px 0}}
+        .radar-kpi{{background:linear-gradient(145deg,#0f172a,#172033);border:1px solid rgba(255,255,255,.08);border-radius:17px;padding:15px 16px;color:white;min-height:104px;box-shadow:0 8px 20px rgba(15,23,42,.10)}}
+        .radar-kpi-label{{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:#fde68a;font-weight:850}}
+        .radar-kpi-value{{font-size:1.05rem;font-weight:900;margin-top:7px;line-height:1.12;overflow-wrap:anywhere}}
+        .radar-kpi-caption{{font-size:.82rem;color:#cbd5e1;margin-top:7px}}
+        @media(max-width:900px){{.radar-kpis{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
+        @media(max-width:560px){{.radar-kpis{{grid-template-columns:1fr}}}}
+        </style><div class="radar-kpis">{''.join(blocks)}</div>''',
+        unsafe_allow_html=True,
+    )
+
+
+def movement_text(delta: Any) -> str:
+    if delta is None or pd.isna(delta):
+        return "━ 0"
+    delta = int(delta)
+    if delta > 0:
+        return f"↑ +{delta}"
+    if delta < 0:
+        return f"↓ {delta}"
+    return "━ 0"
+
+
+def render_radar_overview(managers: list[dict], radar: dict[str, pd.DataFrame]):
+    df = pd.DataFrame(managers or []).copy()
+    if df.empty:
+        st.info("Ingen ligadata å vise ennå.")
+        return
+
+    df["rank_num"] = pd.to_numeric(df.get("rank"), errors="coerce")
+    df["last_rank_num"] = pd.to_numeric(df.get("last_rank"), errors="coerce")
+    df["event_total_num"] = pd.to_numeric(df.get("event_total"), errors="coerce")
+    df["total_num"] = pd.to_numeric(df.get("total"), errors="coerce")
+    df["form_delta"] = df["last_rank_num"] - df["rank_num"]
+    live = df["rank_num"].notna().any()
+
+    if live:
+        current = df.sort_values(["rank_num", "total_num", "player_name"], ascending=[True, False, True]).copy()
+        leader = current.iloc[0]
+        round_king = df.sort_values(["event_total_num", "rank_num"], ascending=[False, True], na_position="last").iloc[0]
+        climber = radar.get("climbers", pd.DataFrame())
+        form = radar.get("form_three", pd.DataFrame())
+        cards = [
+            {"label": "Ligaleder", "value": leader.get("player_name", "–"), "caption": f"{int(leader.get('total_num') or 0)} poeng"},
+            {"label": "Rundens beste", "value": round_king.get("player_name", "–"), "caption": f"{int(round_king.get('event_total_num') or 0)} poeng denne GW"},
+            {"label": "Største klatrer", "value": climber.iloc[0].get("player_name", "–") if not climber.empty else "–", "caption": climber.iloc[0].get("form_curve", "Ingen bevegelse") if not climber.empty else "Ingen bevegelse"},
+            {"label": "Formkonge", "value": form.iloc[0].get("player_name", "–") if not form.empty else "–", "caption": f"{int(form.iloc[0].get('last_three_points') or 0)} p siste tre" if not form.empty else "Venter på flere runder"},
+        ]
+        radar_metric_strip(cards)
+
+        st.markdown("### Tabellen akkurat nå")
+        preview = current.head(10).copy()
+        preview["plass"] = preview["rank_num"].apply(lambda v: "" if pd.isna(v) else int(v))
+        preview["bevegelse"] = preview["form_delta"].apply(movement_text)
+        display_table(
+            preview,
+            ["plass", "player_name", "entry_name", "event_total_num", "total_num", "bevegelse"],
+            {"plass": "#", "player_name": "Manager", "entry_name": "Lag", "event_total_num": "GW", "total_num": "Totalt", "bevegelse": "Bevegelse"},
+        )
+    else:
+        st.info("Live-radaren venter på første tellende FPL-tabell. Sesongløpet bruker demo til ekte plasseringer finnes.")
+        radar_metric_strip([
+            {"label": "Status", "value": "Før live-tabell", "caption": "FPL har ikke rangert ligaen ennå"},
+            {"label": "Sesongløpet", "value": "Demo klar", "caption": "Bytter automatisk til live"},
+            {"label": "Eierskap", "value": "Etter deadline", "caption": "Leser faktiske GW-picks"},
+            {"label": "Liga", "value": f"{len(df)} managere", "caption": "Påmeldt i FPL-ligaen"},
+        ])
+
+
+def render_ownership_dashboard(managers: list[dict]):
+    event_id = current_fpl_event_id()
+    if event_id is None:
+        st.info("Eierskapsradaren våkner når FPL har en aktiv eller ferdig gameweek.")
+        return
+
+    with st.spinner(f"Leser lagene i GW{event_id} ..."):
+        ownership = build_league_ownership(managers, event_id)
+
+    players_df = ownership["players"]
+    picks_df = ownership["picks"]
+    loaded = int(ownership["loaded_managers"])
+    league_size = int(ownership["league_size"])
+
+    st.markdown(
+        f'''<div style="background:linear-gradient(135deg,#052e2b,#0f172a 62%,#4c1d1d);color:white;border-radius:18px;padding:16px 18px;margin:4px 0 14px 0;border:1px solid rgba(255,255,255,.10)">
+        <div style="font-size:.72rem;color:#fde68a;font-weight:900;letter-spacing:.09em;text-transform:uppercase">GW{event_id} · LIGAEIERSKAP</div>
+        <div style="font-size:1.15rem;font-weight:900;margin-top:4px">Hva eier Lofthus akkurat nå?</div>
+        <div style="font-size:.86rem;color:#dbeafe;margin-top:4px">Picks lest fra {loaded} av {league_size} lag. Tallene gjelder troppen etter GW{event_id}-deadline.</div>
+        </div>''', unsafe_allow_html=True)
+
+    if players_df.empty:
+        st.warning("Fant ingen offentlige picks for denne runden ennå.")
+        if ownership.get("errors"):
+            st.caption(f"{len(ownership['errors'])} lag kunne ikke leses.")
+        return
+
+    normalized_names = (
+        players_df["player"].astype(str).map(normalize_text)
+        + " "
+        + players_df.get("full_name", pd.Series([""] * len(players_df))).astype(str).map(normalize_text)
+    )
+    haaland_df = players_df[normalized_names.str.contains("haaland", na=False)]
+    haaland = haaland_df.iloc[0] if not haaland_df.empty else None
+    most_owned = players_df.iloc[0]
+    most_captained = players_df.sort_values(["captain_count", "ownership_count"], ascending=[False, False]).iloc[0]
+    unique_count = int((players_df["ownership_count"] == 1).sum())
+
+    radar_metric_strip([
+        {
+            "label": "Haaland",
+            "value": f"{int(haaland['ownership_count'])} av {loaded}" if haaland is not None else "Ikke funnet",
+            "caption": f"{float(haaland['ownership_pct']):.1f}% · {int(haaland['captain_count'])} kapteiner" if haaland is not None else "",
+        },
+        {"label": "Mest eid", "value": most_owned["player"], "caption": f"{int(most_owned['ownership_count'])}/{loaded} · {float(most_owned['ownership_pct']):.1f}%"},
+        {"label": "Mest kaptein", "value": most_captained["player"], "caption": f"{int(most_captained['captain_count'])} kapteiner"},
+        {"label": "Unike picks", "value": str(unique_count), "caption": "Spillere eid av bare én LRO-manager"},
+    ])
+
+    ownership_view = nav_choice(
+        "", ["Mest eid", "Spillersøk", "Template XI", "Differensialer"],
+        "ownership_view_v107", default="Mest eid"
+    )
+
+    if ownership_view == "Mest eid":
+        top = players_df.head(35).copy()
+        top["ownership_display"] = top.apply(lambda r: f"{int(r['ownership_count'])}/{loaded} ({float(r['ownership_pct']):.1f}%)", axis=1)
+        display_table(
+            top,
+            ["ownership_rank", "player", "club", "position", "ownership_display", "captain_count", "started_count", "bench_count", "total_points"],
+            {"ownership_rank": "#", "player": "Spiller", "club": "Klubb", "position": "Pos", "ownership_display": "Eierskap", "captain_count": "Kaptein", "started_count": "Startet", "bench_count": "Benk", "total_points": "FPL-poeng"},
+        )
+
+    elif ownership_view == "Spillersøk":
+        options = players_df.sort_values(["ownership_count", "player"], ascending=[False, True])["player"].tolist()
+        selected_player = st.selectbox("Velg spiller", options=options, key="ownership_player_v107")
+        selected_row = players_df[players_df["player"] == selected_player].iloc[0]
+        selected_id = int(selected_row["element"])
+        owners = picks_df[picks_df["element"] == selected_id].copy().sort_values(["is_captain", "manager"], ascending=[False, True])
+        radar_metric_strip([
+            {"label": "Eierskap", "value": f"{int(selected_row['ownership_count'])} av {loaded}", "caption": f"{float(selected_row['ownership_pct']):.1f}%"},
+            {"label": "Kaptein", "value": str(int(selected_row["captain_count"])), "caption": "LRO-managere"},
+            {"label": "Startet", "value": str(int(selected_row["started_count"])), "caption": "I førsteelleveren"},
+            {"label": "På benk", "value": str(int(selected_row["bench_count"])), "caption": "GW-troppen"},
+        ])
+        owners["rolle"] = owners.apply(lambda r: "© Kaptein" if r["is_captain"] else ("Benk" if r["on_bench"] else "Start"), axis=1)
+        display_table(owners, ["manager", "team", "rolle"], {"manager": "Manager", "team": "Lag", "rolle": "Rolle"})
+
+    elif ownership_view == "Template XI":
+        template, formation = build_template_xi(players_df)
+        st.subheader(f"Lofthus-template · {formation or 'XI'}")
+        st.caption("En lovlig startellever bygget av de mest eide spillerne i ligaen. Dette er kollektiv smak, ikke et wildcard-råd fra en maskin med null konsekvenssans.")
+        if template.empty:
+            st.caption("Ikke nok data.")
+        else:
+            for pos_id in [1, 2, 3, 4]:
+                group = template[template["position_id"] == pos_id]
+                if group.empty:
+                    continue
+                names = " · ".join(
+                    f"{row['player']} ({int(row['ownership_count'])}/{loaded})" for _, row in group.iterrows()
+                )
+                st.markdown(f"**{POSITION_LABELS[pos_id]}:** {names}")
+
+    elif ownership_view == "Differensialer":
+        differential = players_df[(players_df["ownership_count"] >= 1) & (players_df["ownership_count"] <= 3)].copy()
+        differential = differential.sort_values(["total_points", "ownership_count", "player"], ascending=[False, True, True]).head(40)
+        if differential.empty:
+            st.caption("Ingen differensialer med 1–3 eiere akkurat nå.")
+        else:
+            differential["ownership_display"] = differential["ownership_count"].apply(lambda n: f"{int(n)} eier" if int(n) == 1 else f"{int(n)} eiere")
+            display_table(
+                differential,
+                ["player", "club", "position", "ownership_display", "total_points", "owners_text"],
+                {"player": "Spiller", "club": "Klubb", "position": "Pos", "ownership_display": "Eierskap", "total_points": "FPL-poeng", "owners_text": "Eies av"},
+            )
+
+    if loaded < league_size:
+        st.warning(f"Eierskap er lest fra {loaded} av {league_size} lag. {league_size-loaded} lag mangler offentlige picks akkurat nå, så prosentene gjelder lagene som kunne leses.")
 
 
 # -----------------------------
@@ -3753,7 +4203,7 @@ def handle_refresh_and_autoload():
     actually needs it. This keeps the public app snappier on first open.
     """
     if st.session_state.pop("_refresh_fpl_now", False):
-        for cached_func in [get_json, get_entry_history, get_league_managers]:
+        for cached_func in [get_json, get_entry_history, get_bootstrap_static, get_entry_event_picks, get_league_managers]:
             try:
                 cached_func.clear()
             except Exception:
@@ -3952,15 +4402,143 @@ NUMERIC_CONFIG = {
 }
 
 
+
+# -----------------------------
+# V106 Clubhouse-forside
+# -----------------------------
+
+def render_clubhouse_home(managers: list[dict]):
+    'Fast, lightweight front page built from the already loaded league list.'
+    managers = managers or []
+    df = pd.DataFrame(managers).copy() if managers else pd.DataFrame()
+
+    if not df.empty:
+        for column in ["rank", "last_rank", "event_total", "total"]:
+            if column not in df.columns:
+                df[column] = pd.NA
+        df["rank_num"] = pd.to_numeric(df["rank"], errors="coerce")
+        df["last_rank_num"] = pd.to_numeric(df["last_rank"], errors="coerce")
+        df["event_total_num"] = pd.to_numeric(df["event_total"], errors="coerce")
+        df["total_num"] = pd.to_numeric(df["total"], errors="coerce")
+        df["form_delta"] = df["last_rank_num"] - df["rank_num"]
+
+    has_live = bool(not df.empty and df["rank_num"].notna().any())
+    participant_count = len(df)
+
+    st.markdown(
+        """
+        <div style="margin:8px 0 18px 0;">
+          <div style="font-size:.78rem;font-weight:900;letter-spacing:.11em;text-transform:uppercase;color:#991b1b;margin-bottom:5px;">Klubbhuset</div>
+          <div style="font-size:clamp(1.9rem,3vw,3rem);font-weight:900;letter-spacing:-.045em;line-height:1.02;color:#111827;">Alt som skjer på Lofthus Road</div>
+          <div style="margin-top:8px;color:#667085;font-size:1rem;max-width:850px;">Ligaen, sesongløpet, oddsen og historien samlet på én hjemmebane.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if has_live:
+        live_df = df.sort_values(["rank_num", "player_name"], ascending=[True, True], na_position="last")
+        leader = live_df.iloc[0]
+        leader_text = clean_cell(leader.get("player_name")) or "Ukjent"
+        total_value = leader.get("total_num")
+        total_text = "" if pd.isna(total_value) else f"{int(total_value)} poeng"
+        team_text = clean_cell(leader.get("entry_name"))
+        leader_caption = " · ".join(part for part in [team_text, total_text] if part)
+        status_value = "Sesongen er live"
+        status_caption = "FPL-tabellen oppdateres fortløpende"
+    else:
+        live_df = pd.DataFrame()
+        leader_text = "Ingen leder ennå"
+        leader_caption = "Tabellen våkner etter første FPL-runde"
+        status_value = "Før avspark"
+        status_caption = "Sesongradaren kan allerede testes med demo-data"
+
+    lro_cards([
+        {"label": "Påmeldte", "value": f"{participant_count} managere", "caption": "Lofthus Road Open 2026/27"},
+        {"label": "Status", "value": status_value, "caption": status_caption},
+        {"label": "Serieledelse", "value": leader_text, "caption": leader_caption},
+        {"label": "Liga-ID", "value": str(DEFAULT_LEAGUE_ID), "caption": "FPL Classic League"},
+    ])
+
+    if has_live:
+        v60_section("Topp 3 akkurat nå", "LIVE TABELL")
+        podium = live_df.head(3).reset_index(drop=True)
+        cols = st.columns(3)
+        for idx, (_, row) in enumerate(podium.iterrows(), start=1):
+            with cols[idx - 1]:
+                medal = {1: "🥇", 2: "🥈", 3: "🥉"}[idx]
+                with st.container(border=True):
+                    st.caption(f"{medal} {idx}. PLASS")
+                    st.markdown(f"### {clean_cell(row.get('player_name'))}")
+                    st.caption(clean_cell(row.get("entry_name")))
+                    if not pd.isna(row.get("total_num")):
+                        st.markdown(f"**{int(row.get('total_num'))} poeng**")
+    else:
+        v60_section("Sesongen står på startstreken", "FØR AVSPARK")
+        lro_note(
+            "Ingen live-tabell ennå",
+            "FPL har ikke registrert første tellende runde. I mellomtiden kan du åpne Sesongradar og se hele Sesongløpet som tydelig merket demo, eller gå til Ligatabell → Tabelltips og Odds for før-sesongmarkedet.",
+            "gold",
+        )
+
+    v60_section("Klubbpuls", "DET VIKTIGSTE NÅ")
+    pulse_cards = []
+    if has_live and not df.empty:
+        movers = df.dropna(subset=["rank_num", "last_rank_num"]).copy()
+        if not movers.empty:
+            movers["delta"] = movers["last_rank_num"] - movers["rank_num"]
+            climbers = movers[movers["delta"] > 0].sort_values("delta", ascending=False)
+            fallers = movers[movers["delta"] < 0].sort_values("delta")
+            if not climbers.empty:
+                row = climbers.iloc[0]
+                pulse_cards.append({"label": "Største klatrer", "value": clean_cell(row.get("player_name")), "caption": f"Opp {int(row['delta'])} plasser"})
+            if not fallers.empty:
+                row = fallers.iloc[0]
+                pulse_cards.append({"label": "Største fall", "value": clean_cell(row.get("player_name")), "caption": f"Ned {abs(int(row['delta']))} plasser"})
+
+    if not pulse_cards:
+        pulse_cards = [
+            {"label": "Sesongløpet", "value": "GW1–GW8 demo", "caption": "Se hvordan runde-for-runde-grafen fungerer"},
+            {"label": "Tabelltips", "value": "Før-sesong", "caption": "Historikkmodellen rangerer feltet"},
+        ]
+
+    pulse_cards.extend([
+        {"label": "Odds", "value": "Vinner + topp 3", "caption": "Internt LRO-marked og dueller"},
+        {"label": "Historieboka", "value": "Hall of Fame", "caption": "Pokaler, månedskonger og managerprofiler"},
+    ])
+    lro_cards(pulse_cards[:4])
+
+    v60_section("Gå videre", "KLUBBHUSET")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if st.button("Åpne ligatabellen", key="home_open_table", use_container_width=True):
+            st.session_state["main_page_v106"] = "Ligatabell"
+            st.rerun()
+    with c2:
+        if st.button("Åpne Sesongradar", key="home_open_radar", use_container_width=True):
+            st.session_state["main_page_v106"] = "Sesongradar"
+            st.rerun()
+    with c3:
+        if st.button("Åpne Odds", key="home_open_odds", use_container_width=True):
+            st.session_state["main_page_v106"] = "Odds"
+            st.rerun()
+
 # -----------------------------
 # UI
 # -----------------------------
 
-MAIN_PAGES = ["Ligatabell", "Sesongradar", "Odds", "Hall of Fame og historikk"]
-main_page = nav_choice("", MAIN_PAGES, "main_page_v36", default="Ligatabell")
+MAIN_PAGES = ["Forside", "Ligatabell", "Sesongradar", "Odds", "Hall of Fame og historikk"]
+main_page = nav_choice("", MAIN_PAGES, "main_page_v106", default="Forside")
 
 
-if main_page == "Ligatabell":
+if main_page == "Forside":
+    if "managers" in st.session_state:
+        render_clubhouse_home(st.session_state.get("managers", []))
+    else:
+        st.header("Klubbhuset")
+        lro_note("Henter ligaen", "FPL-data lastes inn automatisk. Bruk Oppdater fra FPL nå i venstremenyen hvis den ikke våkner.", "gold")
+
+elif main_page == "Ligatabell":
     st.header("Ligatabell")
 
     if "managers" in st.session_state:
@@ -4017,92 +4595,100 @@ if main_page == "Ligatabell":
 
 elif main_page == "Sesongradar":
     st.header("Sesongradar")
-    lro_note(
-        "Live motor gjennom sesongen",
-        "Her følger du plassering runde for runde, tabellbevegelse, form og hvem som over- eller underpresterer mot før-sesong-oddsen.",
-        "",
-    )
+    st.caption("Live kontrollrom for Lofthus Road Open. Mindre demo-dashboard, mer faktisk sesong.")
 
     if "managers" not in st.session_state:
         render_preseason_radar_preview()
     else:
-        # Sesongradaren trenger historikk både til odds-sammenligning og
-        # runde-for-runde-data. Cache gjør at dette bare er tungt første gang.
         ensure_history_for_page()
+        managers = st.session_state["managers"]
         summary_df = st.session_state.get("summary_df", pd.DataFrame())
-        radar = build_season_radar_tables(st.session_state["managers"], summary_df)
+        radar = build_season_radar_tables(managers, summary_df)
+        event_id = current_fpl_event_id()
 
-        radar_has_live = bool(radar) and not all(
-            value.empty for value in radar.values() if isinstance(value, pd.DataFrame)
-        )
-
-        if not radar_has_live:
-            st.info("Live-radaren venter på første FPL-runde. Sesongløp kan likevel forhåndsvises med demo-data nå.")
-
-        cards = []
-        if not radar["climbers"].empty:
-            row = radar["climbers"].iloc[0]
-            cards.append({"label": "Største klatrer", "value": row.get("player_name", ""), "caption": row.get("form_curve", "")})
-        if not radar["fallers"].empty:
-            row = radar["fallers"].iloc[0]
-            cards.append({"label": "Største fall", "value": row.get("player_name", ""), "caption": row.get("form_curve", "")})
-        if not radar["form_three"].empty:
-            row = radar["form_three"].iloc[0]
-            cards.append({"label": "Form siste tre", "value": row.get("player_name", ""), "caption": f"{int(row.get('last_three_points') or 0)} poeng"})
-        if not radar["over"].empty:
-            row = radar["over"].iloc[0]
-            cards.append({"label": "Mest mot oddsen", "value": row.get("player_name", ""), "caption": f"Avvik: {int(row.get('performance_vs_odds') or 0)}"})
-
-        if cards:
-            lro_cards(cards[:4])
+        st.markdown(
+            f'''<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;background:linear-gradient(105deg,#071525,#063d2e 55%,#511b1b);color:white;border-radius:18px;padding:16px 18px;margin:4px 0 15px 0;box-shadow:0 10px 28px rgba(15,23,42,.12)">
+            <div><div style="font-size:.72rem;font-weight:900;letter-spacing:.09em;color:#fde68a">LOFTHUS LIVE</div><div style="font-size:1.18rem;font-weight:900;margin-top:3px">Sesongradar 2026/27</div><div style="font-size:.84rem;color:#d1d5db;margin-top:4px">Plasseringer, form, oddsavvik og eierskap i ett kontrollrom.</div></div>
+            <div style="font-weight:900;font-size:.95rem;white-space:nowrap">{'GW' + str(event_id) if event_id else 'FØR LIVE GW'}</div>
+            </div>''', unsafe_allow_html=True)
 
         radar_section = nav_choice(
             "",
-            ["Sesongløp", "Tabellbevegelse", "Form", "Mot oddsen"],
-            "radar_section_v101",
-            default="Sesongløp",
+            ["Oversikt", "Sesongløpet", "Form & bevegelse", "Mot oddsen", "Eierskap"],
+            "radar_section_v107",
+            default="Oversikt",
         )
 
-        if radar_section == "Sesongløp":
-            render_round_by_round_league_history(st.session_state["managers"])
+        if radar_section == "Oversikt":
+            render_radar_overview(managers, radar)
 
-        elif radar_section == "Tabellbevegelse":
+        elif radar_section == "Sesongløpet":
+            render_round_by_round_league_history(managers)
+
+        elif radar_section == "Form & bevegelse":
+            climbers = radar.get("climbers", pd.DataFrame())
+            fallers = radar.get("fallers", pd.DataFrame())
+            form_three = radar.get("form_three", pd.DataFrame())
+
+            cards = []
+            if not climbers.empty:
+                r = climbers.iloc[0]
+                cards.append({"label": "Største klatrer", "value": r.get("player_name", ""), "caption": r.get("form_curve", "")})
+            if not fallers.empty:
+                r = fallers.iloc[0]
+                cards.append({"label": "Største fall", "value": r.get("player_name", ""), "caption": r.get("form_curve", "")})
+            if not form_three.empty:
+                r = form_three.iloc[0]
+                cards.append({"label": "Best siste tre", "value": r.get("player_name", ""), "caption": f"{int(r.get('last_three_points') or 0)} poeng"})
+            if len(form_three) > 1:
+                r = form_three.iloc[1]
+                cards.append({"label": "Nest best form", "value": r.get("player_name", ""), "caption": f"{int(r.get('last_three_points') or 0)} poeng"})
+            radar_metric_strip(cards)
+
+            st.markdown("### Form siste tre runder")
+            if form_three.empty:
+                st.caption("Ikke nok rundedata ennå.")
+            else:
+                display_table(form_three, ["player_name", "entry_name", "last_three_points", "last_three_avg", "last_three_detail", "rank_num"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
+
             c1, c2 = st.columns(2)
             with c1:
-                st.subheader("Største klatrere")
-                if radar["climbers"].empty:
-                    st.caption("Ingen live-bevegelse ennå.")
+                st.markdown("### Opp")
+                if climbers.empty:
+                    st.caption("Ingen klatrere registrert.")
                 else:
-                    display_table(radar["climbers"], ["player_name", "entry_name", "rank_num", "form_curve", "total_num"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
+                    display_table(climbers.head(8), ["player_name", "rank_num", "form_curve", "total_num"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
             with c2:
-                st.subheader("Største fall")
-                if radar["fallers"].empty:
-                    st.caption("Ingen live-bevegelse ennå.")
+                st.markdown("### Ned")
+                if fallers.empty:
+                    st.caption("Ingen fall registrert.")
                 else:
-                    display_table(radar["fallers"], ["player_name", "entry_name", "rank_num", "form_curve", "total_num"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
-
-        elif radar_section == "Form":
-            st.subheader("Form siste tre runder")
-            if radar["form_three"].empty:
-                st.caption("Ikke nok runde-data ennå.")
-            else:
-                display_table(radar["form_three"], ["player_name", "entry_name", "last_three_points", "last_three_avg", "last_three_detail", "rank_num"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
+                    display_table(fallers.head(8), ["player_name", "rank_num", "form_curve", "total_num"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
 
         elif radar_section == "Mot oddsen":
-            c3, c4 = st.columns(2)
-            with c3:
-                st.subheader("Overpresterer")
-                if radar["over"].empty:
-                    st.caption("Trenger live-tabell og oddsdata.")
-                else:
-                    display_table(radar["over"], ["player_name", "entry_name", "rank_num", "odds_rank", "performance_vs_odds", "odds"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
-            with c4:
-                st.subheader("Underpresterer")
-                if radar["under"].empty:
-                    st.caption("Trenger live-tabell og oddsdata.")
-                else:
-                    display_table(radar["under"], ["player_name", "entry_name", "rank_num", "odds_rank", "performance_vs_odds", "odds"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
+            over = radar.get("over", pd.DataFrame())
+            under = radar.get("under", pd.DataFrame())
+            if over.empty and under.empty:
+                st.info("Trenger både live-tabell og før-sesongodds før denne delen gir mening.")
+            else:
+                top_over = over.iloc[0] if not over.empty else None
+                top_under = under.iloc[0] if not under.empty else None
+                radar_metric_strip([
+                    {"label": "Største overprestasjon", "value": top_over.get("player_name", "–") if top_over is not None else "–", "caption": f"{int(top_over.get('performance_vs_odds') or 0)} plasser bedre enn odds" if top_over is not None else ""},
+                    {"label": "Største underprestasjon", "value": top_under.get("player_name", "–") if top_under is not None else "–", "caption": f"{abs(int(top_under.get('performance_vs_odds') or 0))} plasser bak odds" if top_under is not None else ""},
+                ])
+                c3, c4 = st.columns(2)
+                with c3:
+                    st.markdown("### Overpresterer")
+                    if not over.empty:
+                        display_table(over, ["player_name", "rank_num", "odds_rank", "performance_vs_odds", "odds"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
+                with c4:
+                    st.markdown("### Underpresterer")
+                    if not under.empty:
+                        display_table(under, ["player_name", "rank_num", "odds_rank", "performance_vs_odds", "odds"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
 
+        elif radar_section == "Eierskap":
+            render_ownership_dashboard(managers)
 
 elif main_page == "Odds":
     st.header("Odds")
