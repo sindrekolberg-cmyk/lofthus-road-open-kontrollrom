@@ -22,7 +22,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-ferrari-v108-stable-package"
+APP_VERSION = "lofthus-road-open-ferrari-v111-ux-flow-hotfix"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -62,8 +62,8 @@ st.markdown(
                 linear-gradient(90deg, rgba(8, 18, 36, 0.96) 0%, rgba(8, 31, 22, 0.90) 44%, rgba(83, 19, 19, 0.90) 100%),
                 repeating-linear-gradient(90deg, rgba(255,255,255,0.055) 0 2px, transparent 2px 74px),
                 linear-gradient(135deg, #075f37 0%, #0f7a42 46%, #0b3d2a 100%);
-            border-radius: 28px;
-            padding: 36px 40px;
+            border-radius: 24px;
+            padding: 28px 32px;
             color: white;
             margin-bottom: 18px;
             box-shadow: 0 18px 46px rgba(15, 23, 42, 0.25);
@@ -73,9 +73,9 @@ st.markdown(
             content: "";
             position: absolute;
             right: -12px;
-            top: 22px;
-            width: min(46vw, 520px);
-            height: 210px;
+            top: 14px;
+            width: min(42vw, 460px);
+            height: 165px;
             border: 2px solid rgba(255,255,255,0.20);
             border-radius: 22px;
             transform: rotate(-7deg);
@@ -105,7 +105,7 @@ st.markdown(
         .lro-hero h1 {
             position: relative;
             z-index: 1;
-            font-size: clamp(2.25rem, 4.5vw, 4.4rem);
+            font-size: clamp(2.15rem, 4vw, 3.6rem);
             line-height: 0.98;
             margin: 0;
             color: white;
@@ -318,11 +318,14 @@ st.markdown(
     </style>
     <div class="lro-hero">
         <div class="lro-beta">OFFISIELL SESONG 2026/27</div>
-        <h1>Lofthus Road Open<br><span style="font-size:0.45em;letter-spacing:-0.02em;">Fantasy Football Club</span></h1><div class="lro-premium-line">Den offisielle hjemmebanen til Lofthus Road Open</div><div class="lro-club-mark">🏆 LRO 2026/27</div>
+        <h1>Lofthus Road Open</h1>
+        <div class="lro-premium-line">Fantasy Football Club · Live kontrollrom</div>
+        <div class="lro-club-mark">🏆 LRO 2026/27</div>
     </div>
     """,
     unsafe_allow_html=True,
 )
+st.caption("V111 · Roligere klubbhus")
 
 with st.sidebar:
     st.header("Lofthus Road Open Clubhouse")
@@ -334,7 +337,7 @@ with st.sidebar:
         st.rerun()
     st.markdown("---")
     st.caption("Lofthus Road Open 2026/27")
-    st.caption("Build: V108 · Live-radar + eierskap")
+    st.caption("Build: V111 · Roligere klubbhus")
 
 
 # -----------------------------
@@ -2542,7 +2545,7 @@ def render_league_table_component(table_df: pd.DataFrame, has_live_table: bool):
       .rank-cell {{font-weight: 850; white-space: nowrap;}}
       .sort-mark {{margin-left: 6px; font-size: 11px; color: #b91c1c;}}
       .lro-table tr:nth-child(even) td {{background:#f8fafc;}}
-      .rank-number {
+      .rank-number {{
         display:inline-flex;
         align-items:center;
         justify-content:center;
@@ -2553,7 +2556,7 @@ def render_league_table_component(table_df: pd.DataFrame, has_live_table: bool):
         color:#111827;
         font-weight:900;
         font-variant-numeric:tabular-nums;
-      }
+      }}
       @media (max-width: 760px) {{
         .lro-table-wrap, .lro-history-wrap, .lro-hof-wrap {{overflow-x:auto; max-width:100%;}}
         .lro-table {{min-width: 780px; font-size: 11.2px;}}
@@ -3628,7 +3631,12 @@ def render_round_by_round_league_history(managers: list[dict]):
     st.caption("1. plass ligger øverst. Standardvisningen holder grafen lesbar; hele ligaen er fortsatt ett klikk unna.")
 
     available = summary["manager_label"].tolist()
-    race_mode = nav_choice("", ["Topp 5", "Topp 10", "Hele ligaen", "Eget utvalg"], "race_mode_v107", default="Topp 5")
+    race_mode = st.selectbox(
+        "Vis i grafen",
+        ["Topp 5", "Topp 10", "Hele ligaen", "Velg selv"],
+        index=0,
+        key="race_mode_v110",
+    )
 
     if race_mode == "Topp 5":
         selected = available[:5]
@@ -3638,10 +3646,10 @@ def render_round_by_round_league_history(managers: list[dict]):
         selected = available
     else:
         selected = st.multiselect(
-            "Velg managere",
+            "Managere",
             options=available,
             default=available[: min(5, len(available))],
-            key="season_race_custom_v107",
+            key="season_race_custom_v110",
         )
 
     if not selected:
@@ -3685,14 +3693,20 @@ def render_round_by_round_league_history(managers: list[dict]):
         if many_lines:
             st.caption("Hele ligaen vises uten legend/punkter for å unngå full spagettikatastrofe. Hold over linjene for detaljer.")
 
-    st.markdown(f"### Status etter GW{latest_event}")
     compact = summary.copy()
     compact["trend"] = compact["movement"].apply(movement_text)
+    st.markdown(f"### Topp 10 etter GW{latest_event}")
     display_table(
-        compact,
-        ["current_rank", "manager_label", "entry_name", "round_points", "total_points", "trend", "best_rank", "worst_rank", "biggest_jump_text"],
-        {"current_rank": "#", "manager_label": "Manager", "entry_name": "Lag", "round_points": "GW", "total_points": "Totalt", "trend": "Fra GW1", "best_rank": "Beste", "worst_rank": "Laveste", "biggest_jump_text": "Største hopp"},
+        compact.head(10),
+        ["current_rank", "manager_label", "round_points", "total_points", "trend"],
+        {"current_rank": "#", "manager_label": "Manager", "round_points": "GW", "total_points": "Totalt", "trend": "Fra GW1"},
     )
+    with st.expander("Se full utviklingstabell"):
+        display_table(
+            compact,
+            ["current_rank", "manager_label", "entry_name", "round_points", "total_points", "trend", "best_rank", "worst_rank", "biggest_jump_text"],
+            {"current_rank": "#", "manager_label": "Manager", "entry_name": "Lag", "round_points": "GW", "total_points": "Totalt", "trend": "Fra GW1", "best_rank": "Beste", "worst_rank": "Laveste", "biggest_jump_text": "Største hopp"},
+        )
 
 
 # ============================================================
@@ -3935,11 +3949,11 @@ def radar_metric_strip(cards: list[dict]):
         blocks.append(f'<div class="radar-kpi"><div class="radar-kpi-label">{eyebrow}</div><div class="radar-kpi-value">{value}</div><div class="radar-kpi-caption">{caption}</div></div>')
     st.markdown(
         f'''<style>
-        .radar-kpis{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:8px 0 18px 0}}
-        .radar-kpi{{background:linear-gradient(145deg,#0f172a,#172033);border:1px solid rgba(255,255,255,.08);border-radius:17px;padding:15px 16px;color:white;min-height:104px;box-shadow:0 8px 20px rgba(15,23,42,.10)}}
-        .radar-kpi-label{{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:#fde68a;font-weight:850}}
-        .radar-kpi-value{{font-size:1.05rem;font-weight:900;margin-top:7px;line-height:1.12;overflow-wrap:anywhere}}
-        .radar-kpi-caption{{font-size:.82rem;color:#cbd5e1;margin-top:7px}}
+        .radar-kpis{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:8px 0 18px 0}}
+        .radar-kpi{{background:#ffffff;border:1px solid #e5e7eb;border-radius:15px;padding:13px 14px;color:#111827;min-height:94px;box-shadow:0 5px 16px rgba(15,23,42,.045)}}
+        .radar-kpi-label{{font-size:.68rem;letter-spacing:.08em;text-transform:uppercase;color:#7f1d1d;font-weight:850}}
+        .radar-kpi-value{{font-size:1rem;font-weight:900;margin-top:6px;line-height:1.12;overflow-wrap:anywhere}}
+        .radar-kpi-caption{{font-size:.78rem;color:#667085;margin-top:6px}}
         @media(max-width:900px){{.radar-kpis{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
         @media(max-width:560px){{.radar-kpis{{grid-template-columns:1fr}}}}
         </style><div class="radar-kpis">{''.join(blocks)}</div>''',
@@ -4053,9 +4067,11 @@ def render_ownership_dashboard(managers: list[dict]):
         {"label": "Unike picks", "value": str(unique_count), "caption": "Spillere eid av bare én LRO-manager"},
     ])
 
-    ownership_view = nav_choice(
-        "", ["Mest eid", "Spillersøk", "Template XI", "Differensialer"],
-        "ownership_view_v107", default="Mest eid"
+    ownership_view = st.selectbox(
+        "Vis eierskapsdata",
+        ["Mest eid", "Spillersøk", "Template XI", "Differensialer"],
+        index=0,
+        key="ownership_view_v110",
     )
 
     if ownership_view == "Mest eid":
@@ -4407,8 +4423,43 @@ NUMERIC_CONFIG = {
 # V106 Clubhouse-forside
 # -----------------------------
 
+def render_home_top5(live_df: pd.DataFrame):
+    if live_df is None or live_df.empty:
+        st.caption("Tabellen våkner når første tellende runde er registrert.")
+        return
+
+    rows = []
+    for _, row in live_df.head(5).iterrows():
+        rank = int(row.get("rank_num")) if not pd.isna(row.get("rank_num")) else "–"
+        manager = html.escape(clean_cell(row.get("player_name")) or "Ukjent")
+        team = html.escape(clean_cell(row.get("entry_name")))
+        total = "–" if pd.isna(row.get("total_num")) else str(int(row.get("total_num")))
+        medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(rank, str(rank))
+        rows.append(
+            f'<div class="home-table-row"><div class="home-rank">{medal}</div>'
+            f'<div class="home-person"><strong>{manager}</strong><span>{team}</span></div>'
+            f'<div class="home-points">{total}<span>poeng</span></div></div>'
+        )
+
+    st.markdown(
+        """
+        <style>
+        .home-table{background:#fff;border:1px solid #e5e7eb;border-radius:18px;overflow:hidden;box-shadow:0 8px 24px rgba(15,23,42,.05)}
+        .home-table-row{display:grid;grid-template-columns:48px minmax(0,1fr) 88px;gap:10px;align-items:center;padding:12px 14px;border-bottom:1px solid #eef2f7}
+        .home-table-row:last-child{border-bottom:0}
+        .home-rank{font-weight:900;color:#0f172a;font-size:1rem}
+        .home-person{min-width:0}.home-person strong{display:block;color:#111827;font-size:.96rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.home-person span{display:block;color:#667085;font-size:.78rem;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .home-points{text-align:right;font-size:1.05rem;font-weight:900;color:#111827}.home-points span{display:block;font-size:.68rem;font-weight:700;color:#98a2b3;text-transform:uppercase;letter-spacing:.06em}
+        @media(max-width:600px){.home-table-row{grid-template-columns:38px minmax(0,1fr) 68px;padding:10px 11px}.home-person strong{font-size:.9rem}.home-points{font-size:.95rem}}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown('<div class="home-table">' + ''.join(rows) + '</div>', unsafe_allow_html=True)
+
+
 def render_clubhouse_home(managers: list[dict]):
-    'Fast, lightweight front page built from the already loaded league list.'
+    # V110: editorial front page with one clear hierarchy and no duplicate navigation.
     managers = managers or []
     df = pd.DataFrame(managers).copy() if managers else pd.DataFrame()
 
@@ -4424,104 +4475,108 @@ def render_clubhouse_home(managers: list[dict]):
 
     has_live = bool(not df.empty and df["rank_num"].notna().any())
     participant_count = len(df)
-
-    st.markdown(
-        """
-        <div style="margin:8px 0 18px 0;">
-          <div style="font-size:.78rem;font-weight:900;letter-spacing:.11em;text-transform:uppercase;color:#991b1b;margin-bottom:5px;">Klubbhuset</div>
-          <div style="font-size:clamp(1.9rem,3vw,3rem);font-weight:900;letter-spacing:-.045em;line-height:1.02;color:#111827;">Alt som skjer på Lofthus Road</div>
-          <div style="margin-top:8px;color:#667085;font-size:1rem;max-width:850px;">Ligaen, sesongløpet, oddsen og historien samlet på én hjemmebane.</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    event_id = current_fpl_event_id()
 
     if has_live:
-        live_df = df.sort_values(["rank_num", "player_name"], ascending=[True, True], na_position="last")
+        live_df = df.sort_values(["rank_num", "total_num", "player_name"], ascending=[True, False, True], na_position="last").copy()
         leader = live_df.iloc[0]
-        leader_text = clean_cell(leader.get("player_name")) or "Ukjent"
-        total_value = leader.get("total_num")
-        total_text = "" if pd.isna(total_value) else f"{int(total_value)} poeng"
-        team_text = clean_cell(leader.get("entry_name"))
-        leader_caption = " · ".join(part for part in [team_text, total_text] if part)
-        status_value = "Sesongen er live"
-        status_caption = "FPL-tabellen oppdateres fortløpende"
-    else:
-        live_df = pd.DataFrame()
-        leader_text = "Ingen leder ennå"
-        leader_caption = "Tabellen våkner etter første FPL-runde"
-        status_value = "Før avspark"
-        status_caption = "Sesongradaren kan allerede testes med demo-data"
-
-    lro_cards([
-        {"label": "Påmeldte", "value": f"{participant_count} managere", "caption": "Lofthus Road Open 2026/27"},
-        {"label": "Status", "value": status_value, "caption": status_caption},
-        {"label": "Serieledelse", "value": leader_text, "caption": leader_caption},
-        {"label": "Liga-ID", "value": str(DEFAULT_LEAGUE_ID), "caption": "FPL Classic League"},
-    ])
-
-    if has_live:
-        v60_section("Topp 3 akkurat nå", "LIVE TABELL")
-        podium = live_df.head(3).reset_index(drop=True)
-        cols = st.columns(3)
-        for idx, (_, row) in enumerate(podium.iterrows(), start=1):
-            with cols[idx - 1]:
-                medal = {1: "🥇", 2: "🥈", 3: "🥉"}[idx]
-                with st.container(border=True):
-                    st.caption(f"{medal} {idx}. PLASS")
-                    st.markdown(f"### {clean_cell(row.get('player_name'))}")
-                    st.caption(clean_cell(row.get("entry_name")))
-                    if not pd.isna(row.get("total_num")):
-                        st.markdown(f"**{int(row.get('total_num'))} poeng**")
-    else:
-        v60_section("Sesongen står på startstreken", "FØR AVSPARK")
-        lro_note(
-            "Ingen live-tabell ennå",
-            "FPL har ikke registrert første tellende runde. I mellomtiden kan du åpne Sesongradar og se hele Sesongløpet som tydelig merket demo, eller gå til Ligatabell → Tabelltips og Odds for før-sesongmarkedet.",
-            "gold",
-        )
-
-    v60_section("Klubbpuls", "DET VIKTIGSTE NÅ")
-    pulse_cards = []
-    if has_live and not df.empty:
+        round_king = df.sort_values(["event_total_num", "rank_num"], ascending=[False, True], na_position="last").iloc[0]
         movers = df.dropna(subset=["rank_num", "last_rank_num"]).copy()
         if not movers.empty:
             movers["delta"] = movers["last_rank_num"] - movers["rank_num"]
-            climbers = movers[movers["delta"] > 0].sort_values("delta", ascending=False)
-            fallers = movers[movers["delta"] < 0].sort_values("delta")
-            if not climbers.empty:
-                row = climbers.iloc[0]
-                pulse_cards.append({"label": "Største klatrer", "value": clean_cell(row.get("player_name")), "caption": f"Opp {int(row['delta'])} plasser"})
-            if not fallers.empty:
-                row = fallers.iloc[0]
-                pulse_cards.append({"label": "Største fall", "value": clean_cell(row.get("player_name")), "caption": f"Ned {abs(int(row['delta']))} plasser"})
+            climbers = movers[movers["delta"] > 0].sort_values(["delta", "rank_num"], ascending=[False, True])
+        else:
+            climbers = pd.DataFrame()
+        leader_name = clean_cell(leader.get("player_name")) or "Ukjent"
+        leader_team = clean_cell(leader.get("entry_name"))
+        leader_points = 0 if pd.isna(leader.get("total_num")) else int(leader.get("total_num"))
+        round_name = clean_cell(round_king.get("player_name")) or "Ukjent"
+        round_points = 0 if pd.isna(round_king.get("event_total_num")) else int(round_king.get("event_total_num"))
+        climber_name = clean_cell(climbers.iloc[0].get("player_name")) if not climbers.empty else "Ingen stor bevegelse"
+        climber_delta = int(climbers.iloc[0].get("delta")) if not climbers.empty else 0
+        gw_label = f"GW{event_id}" if event_id else "LIVE"
+    else:
+        live_df = pd.DataFrame()
+        leader_name = "Sesongen venter"
+        leader_team = "Første tellende tabell kommer automatisk"
+        leader_points = 0
+        round_name = "–"
+        round_points = 0
+        climber_name = "–"
+        climber_delta = 0
+        gw_label = "FØR LIVE"
 
-    if not pulse_cards:
-        pulse_cards = [
-            {"label": "Sesongløpet", "value": "GW1–GW8 demo", "caption": "Se hvordan runde-for-runde-grafen fungerer"},
-            {"label": "Tabelltips", "value": "Før-sesong", "caption": "Historikkmodellen rangerer feltet"},
-        ]
+    if has_live:
+        leader_line = f"Serieledelse · {html.escape(leader_team)} · {leader_points} poeng"
+        round_line = f"{round_points} poeng"
+    else:
+        leader_line = html.escape(leader_team)
+        round_line = "Venter på live-runde"
 
-    pulse_cards.extend([
-        {"label": "Odds", "value": "Vinner + topp 3", "caption": "Internt LRO-marked og dueller"},
-        {"label": "Historieboka", "value": "Hall of Fame", "caption": "Pokaler, månedskonger og managerprofiler"},
-    ])
-    lro_cards(pulse_cards[:4])
+    st.markdown(
+        f'''
+        <style>
+        .home-scoreboard{{background:linear-gradient(115deg,#071525 0%,#063d2e 56%,#511b1b 100%);border:1px solid rgba(255,255,255,.1);border-radius:22px;color:white;padding:22px 24px;margin:6px 0 20px 0;box-shadow:0 14px 34px rgba(15,23,42,.14)}}
+        .home-score-kicker{{font-size:.72rem;color:#fde68a;font-weight:900;letter-spacing:.1em;text-transform:uppercase}}
+        .home-score-grid{{display:grid;grid-template-columns:minmax(0,1.5fr) repeat(2,minmax(150px,.65fr));gap:18px;align-items:end;margin-top:10px}}
+        .home-score-leader{{font-size:clamp(1.55rem,3vw,2.5rem);font-weight:950;line-height:1.02;letter-spacing:-.045em}}
+        .home-score-sub{{font-size:.88rem;color:#cbd5e1;margin-top:7px}}
+        .home-score-stat{{border-left:1px solid rgba(255,255,255,.18);padding-left:18px}}
+        .home-score-stat span{{display:block;color:#cbd5e1;font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;font-weight:800}}
+        .home-score-stat strong{{display:block;font-size:1.2rem;margin-top:5px}}
+        @media(max-width:800px){{.home-score-grid{{grid-template-columns:1fr;gap:12px}}.home-score-stat{{border-left:0;border-top:1px solid rgba(255,255,255,.14);padding:12px 0 0 0}}}}
+        </style>
+        <div class="home-scoreboard">
+          <div class="home-score-kicker">{gw_label} · LOFTHUS ROAD OPEN</div>
+          <div class="home-score-grid">
+            <div><div class="home-score-leader">{html.escape(leader_name)}</div><div class="home-score-sub">{leader_line}</div></div>
+            <div class="home-score-stat"><span>Påmeldte</span><strong>{participant_count}</strong></div>
+            <div class="home-score-stat"><span>Rundens beste</span><strong>{html.escape(round_name) if has_live else '–'}</strong><div class="home-score-sub">{round_line}</div></div>
+          </div>
+        </div>
+        ''',
+        unsafe_allow_html=True,
+    )
 
-    v60_section("Gå videre", "KLUBBHUSET")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        if st.button("Åpne ligatabellen", key="home_open_table", use_container_width=True):
-            st.session_state["main_page_v106"] = "Ligatabell"
-            st.rerun()
-    with c2:
-        if st.button("Åpne Sesongradar", key="home_open_radar", use_container_width=True):
-            st.session_state["main_page_v106"] = "Sesongradar"
-            st.rerun()
-    with c3:
-        if st.button("Åpne Odds", key="home_open_odds", use_container_width=True):
-            st.session_state["main_page_v106"] = "Odds"
-            st.rerun()
+    left, right = st.columns([1.42, 1], gap="large")
+    with left:
+        st.markdown("### Topp 5")
+        st.caption("Ligaen akkurat nå. Full tabell finner du under Ligatabell.")
+        render_home_top5(live_df)
+
+    with right:
+        st.markdown("### Klubbpuls")
+        if has_live:
+            with st.container(border=True):
+                st.caption("STØRSTE KLATRER")
+                st.markdown(f"**{climber_name}**")
+                st.caption(f"Opp {climber_delta} plasser denne runden" if climber_delta else "Ingen tydelig klatrer ennå")
+            with st.container(border=True):
+                st.caption("SESONGLØPET")
+                st.markdown(f"**{participant_count} managere · {gw_label}**")
+                st.caption("Runde-for-runde-graf, form og oddsavvik ligger samlet i Sesongradaren.")
+        else:
+            with st.container(border=True):
+                st.caption("SESONGLØPET")
+                st.markdown("**Demoen er klar**")
+                st.caption("Bytter automatisk til ekte data når FPL har tellende runder.")
+            with st.container(border=True):
+                st.caption("FØR SESONG")
+                st.markdown("**Odds og tabelltips er klare**")
+                st.caption("Historikken ligger urørt og tilgjengelig i hovedmenyen.")
+
+    st.markdown("### Dette følger vi")
+    cols = st.columns(3)
+    stories = [
+        ("Sesongløpet", "Hvem klatrer, hvem faller og hvordan toppen utvikler seg fra GW til GW."),
+        ("Ligaeierskap", "Template, differensialer, kapteiner og hvem som faktisk sitter med Haaland."),
+        ("Historieboka", "Pokaler, månedsvinnere og managerprofiler fra ligaens tidligere sesonger."),
+    ]
+    for col, (title, body) in zip(cols, stories):
+        with col:
+            with st.container(border=True):
+                st.markdown(f"**{title}**")
+                st.caption(body)
 
 # -----------------------------
 # UI
@@ -4594,10 +4649,8 @@ elif main_page == "Ligatabell":
         lro_note("Ikke hentet ennå", "FPL-data hentes automatisk. Bruk Oppdater fra FPL nå i venstremenyen hvis noe mangler.", "gold")
 
 elif main_page == "Sesongradar":
-    st.header("Sesongradar")
-    st.caption("Live kontrollrom for Lofthus Road Open. Mindre demo-dashboard, mer faktisk sesong.")
-
     if "managers" not in st.session_state:
+        st.header("Sesongradar")
         render_preseason_radar_preview()
     else:
         ensure_history_for_page()
@@ -4607,88 +4660,105 @@ elif main_page == "Sesongradar":
         event_id = current_fpl_event_id()
 
         st.markdown(
-            f'''<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;background:linear-gradient(105deg,#071525,#063d2e 55%,#511b1b);color:white;border-radius:18px;padding:16px 18px;margin:4px 0 15px 0;box-shadow:0 10px 28px rgba(15,23,42,.12)">
-            <div><div style="font-size:.72rem;font-weight:900;letter-spacing:.09em;color:#fde68a">LOFTHUS LIVE</div><div style="font-size:1.18rem;font-weight:900;margin-top:3px">Sesongradar 2026/27</div><div style="font-size:.84rem;color:#d1d5db;margin-top:4px">Plasseringer, form, oddsavvik og eierskap i ett kontrollrom.</div></div>
-            <div style="font-weight:900;font-size:.95rem;white-space:nowrap">{'GW' + str(event_id) if event_id else 'FØR LIVE GW'}</div>
-            </div>''', unsafe_allow_html=True)
-
-        radar_section = nav_choice(
-            "",
-            ["Oversikt", "Sesongløpet", "Form & bevegelse", "Mot oddsen", "Eierskap"],
-            "radar_section_v107",
-            default="Oversikt",
+            f'''<div style="background:linear-gradient(110deg,#071525,#063d2e 58%,#511b1b);color:white;border-radius:20px;padding:18px 20px;margin:4px 0 18px 0;box-shadow:0 12px 30px rgba(15,23,42,.13)">
+            <div style="font-size:.72rem;font-weight:900;letter-spacing:.1em;color:#fde68a">{'GW' + str(event_id) if event_id else 'FØR LIVE GW'} · LOFTHUS LIVE</div>
+            <div style="font-size:clamp(1.45rem,2.5vw,2.15rem);font-weight:950;letter-spacing:-.035em;margin-top:4px">Sesongen akkurat nå</div>
+            <div style="font-size:.88rem;color:#d1d5db;margin-top:5px;max-width:840px">Sesongløp, form og tabellbevegelse i én sammenhengende oversikt. Eierskap ligger nederst og lastes ved behov.</div>
+            </div>''',
+            unsafe_allow_html=True,
         )
 
-        if radar_section == "Oversikt":
-            render_radar_overview(managers, radar)
+        render_round_by_round_league_history(managers)
 
-        elif radar_section == "Sesongløpet":
-            render_round_by_round_league_history(managers)
+        st.markdown("## Form og bevegelse")
+        climbers = radar.get("climbers", pd.DataFrame())
+        fallers = radar.get("fallers", pd.DataFrame())
+        form_three = radar.get("form_three", pd.DataFrame())
 
-        elif radar_section == "Form & bevegelse":
-            climbers = radar.get("climbers", pd.DataFrame())
-            fallers = radar.get("fallers", pd.DataFrame())
-            form_three = radar.get("form_three", pd.DataFrame())
+        cards = []
+        if not climbers.empty:
+            r = climbers.iloc[0]
+            cards.append({"label": "Største klatrer", "value": r.get("player_name", ""), "caption": r.get("form_curve", "")})
+        if not fallers.empty:
+            r = fallers.iloc[0]
+            cards.append({"label": "Største fall", "value": r.get("player_name", ""), "caption": r.get("form_curve", "")})
+        if not form_three.empty:
+            r = form_three.iloc[0]
+            cards.append({"label": "Best form", "value": r.get("player_name", ""), "caption": f"{int(r.get('last_three_points') or 0)} poeng siste tre"})
+        radar_metric_strip(cards)
 
-            cards = []
-            if not climbers.empty:
-                r = climbers.iloc[0]
-                cards.append({"label": "Største klatrer", "value": r.get("player_name", ""), "caption": r.get("form_curve", "")})
-            if not fallers.empty:
-                r = fallers.iloc[0]
-                cards.append({"label": "Største fall", "value": r.get("player_name", ""), "caption": r.get("form_curve", "")})
-            if not form_three.empty:
-                r = form_three.iloc[0]
-                cards.append({"label": "Best siste tre", "value": r.get("player_name", ""), "caption": f"{int(r.get('last_three_points') or 0)} poeng"})
-            if len(form_three) > 1:
-                r = form_three.iloc[1]
-                cards.append({"label": "Nest best form", "value": r.get("player_name", ""), "caption": f"{int(r.get('last_three_points') or 0)} poeng"})
-            radar_metric_strip(cards)
-
-            st.markdown("### Form siste tre runder")
+        form_col, move_col = st.columns([1.18, 1], gap="large")
+        with form_col:
+            st.markdown("### Hetest akkurat nå")
             if form_three.empty:
                 st.caption("Ikke nok rundedata ennå.")
             else:
-                display_table(form_three, ["player_name", "entry_name", "last_three_points", "last_three_avg", "last_three_detail", "rank_num"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
+                display_table(
+                    form_three.head(6),
+                    ["player_name", "last_three_points", "last_three_avg", "rank_num"],
+                    RADAR_LABELS,
+                    column_config=NUMERIC_CONFIG,
+                )
+        with move_col:
+            st.markdown("### Tabellen flytter på seg")
+            if climbers.empty and fallers.empty:
+                st.caption("Ingen tydelig tabellbevegelse registrert.")
+            else:
+                if not climbers.empty:
+                    r = climbers.iloc[0]
+                    with st.container(border=True):
+                        st.caption("OPP")
+                        st.markdown(f"**{r.get('player_name', '')}**")
+                        st.caption(r.get("form_curve", ""))
+                if not fallers.empty:
+                    r = fallers.iloc[0]
+                    with st.container(border=True):
+                        st.caption("NED")
+                        st.markdown(f"**{r.get('player_name', '')}**")
+                        st.caption(r.get("form_curve", ""))
 
+        with st.expander("Se detaljert tabellbevegelse"):
             c1, c2 = st.columns(2)
             with c1:
-                st.markdown("### Opp")
+                st.markdown("**Største klatrere**")
                 if climbers.empty:
                     st.caption("Ingen klatrere registrert.")
                 else:
-                    display_table(climbers.head(8), ["player_name", "rank_num", "form_curve", "total_num"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
+                    display_table(climbers.head(10), ["player_name", "rank_num", "form_curve", "total_num"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
             with c2:
-                st.markdown("### Ned")
+                st.markdown("**Største fall**")
                 if fallers.empty:
                     st.caption("Ingen fall registrert.")
                 else:
-                    display_table(fallers.head(8), ["player_name", "rank_num", "form_curve", "total_num"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
+                    display_table(fallers.head(10), ["player_name", "rank_num", "form_curve", "total_num"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
 
-        elif radar_section == "Mot oddsen":
-            over = radar.get("over", pd.DataFrame())
-            under = radar.get("under", pd.DataFrame())
+        over = radar.get("over", pd.DataFrame())
+        under = radar.get("under", pd.DataFrame())
+        with st.expander("Mot før-sesongoddsen"):
             if over.empty and under.empty:
-                st.info("Trenger både live-tabell og før-sesongodds før denne delen gir mening.")
+                st.caption("Trenger både live-tabell og før-sesongodds før denne delen gir mening.")
             else:
-                top_over = over.iloc[0] if not over.empty else None
-                top_under = under.iloc[0] if not under.empty else None
-                radar_metric_strip([
-                    {"label": "Største overprestasjon", "value": top_over.get("player_name", "–") if top_over is not None else "–", "caption": f"{int(top_over.get('performance_vs_odds') or 0)} plasser bedre enn odds" if top_over is not None else ""},
-                    {"label": "Største underprestasjon", "value": top_under.get("player_name", "–") if top_under is not None else "–", "caption": f"{abs(int(top_under.get('performance_vs_odds') or 0))} plasser bak odds" if top_under is not None else ""},
-                ])
                 c3, c4 = st.columns(2)
                 with c3:
-                    st.markdown("### Overpresterer")
+                    st.markdown("**Overpresterer**")
                     if not over.empty:
-                        display_table(over, ["player_name", "rank_num", "odds_rank", "performance_vs_odds", "odds"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
+                        display_table(over.head(10), ["player_name", "rank_num", "odds_rank", "performance_vs_odds"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
                 with c4:
-                    st.markdown("### Underpresterer")
+                    st.markdown("**Underpresterer**")
                     if not under.empty:
-                        display_table(under, ["player_name", "rank_num", "odds_rank", "performance_vs_odds", "odds"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
+                        display_table(under.head(10), ["player_name", "rank_num", "odds_rank", "performance_vs_odds"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
 
-        elif radar_section == "Eierskap":
+        st.markdown("## Ligaeierskap")
+        st.caption("Template, differensialer, kapteiner og hvem som sitter med Haaland. Lastes ved behov, ikke hver gang du åpner radaren.")
+        if st.session_state.get("ownership_open_v110"):
+            if st.button("Skjul eierskap", key="ownership_hide_v110"):
+                st.session_state["ownership_open_v110"] = False
+                st.rerun()
             render_ownership_dashboard(managers)
+        else:
+            if st.button("Last inn ligaeierskap", key="ownership_load_v110", type="primary"):
+                st.session_state["ownership_open_v110"] = True
+                st.rerun()
 
 elif main_page == "Odds":
     st.header("Odds")
