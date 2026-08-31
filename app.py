@@ -22,7 +22,7 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-ferrari-v111-ux-flow-hotfix"
+APP_VERSION = "lofthus-road-open-ferrari-v112-live-player-intelligence"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
@@ -325,7 +325,7 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-st.caption("V111 · Roligere klubbhus")
+st.caption("V112 · Spillere & kapteiner")
 
 with st.sidebar:
     st.header("Lofthus Road Open Clubhouse")
@@ -337,7 +337,7 @@ with st.sidebar:
         st.rerun()
     st.markdown("---")
     st.caption("Lofthus Road Open 2026/27")
-    st.caption("Build: V111 · Roligere klubbhus")
+    st.caption("Build: V112 · Spillere & kapteiner")
 
 
 # -----------------------------
@@ -3710,15 +3710,21 @@ def render_round_by_round_league_history(managers: list[dict]):
 
 
 # ============================================================
-# V108 - LIVE RADAR + LIGAEIERSKAP
+# V112 - SPILLERE, KAPTEINER OG LIVE-SWINGS
 # ============================================================
 
 POSITION_LABELS = {1: "Keeper", 2: "Forsvar", 3: "Midtbane", 4: "Angrep"}
 POSITION_SHORT = {1: "K", 2: "F", 3: "M", 4: "A"}
 
 
+@st.cache_data(ttl=180)
+def get_event_live(event_id: int) -> dict:
+    """Live poeng for alle spillere i én FPL-runde."""
+    return get_json(f"/event/{int(event_id)}/live/")
+
+
 def current_fpl_event_id() -> int | None:
-    """Return the event whose picks should be used right now."""
+    """Runden som er relevant for picks akkurat nå."""
     try:
         data = get_bootstrap_static()
     except Exception:
@@ -3742,38 +3748,63 @@ def current_fpl_event_id() -> int | None:
     return max(finished) if finished else None
 
 
+def _live_points_map(event_id: int) -> dict[int, int]:
+    try:
+        payload = get_event_live(int(event_id))
+    except Exception:
+        return {}
+    out = {}
+    for row in payload.get("elements", []) or []:
+        try:
+            out[int(row.get("id"))] = int((row.get("stats") or {}).get("total_points") or 0)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def build_league_ownership(managers: list[dict], event_id: int | None = None) -> dict:
-    """Aggregate the whole LRO squad pool for one FPL gameweek."""
+    """Samle alle LRO-lag for én GW, inkludert kapteiner, chips og livebidrag."""
     empty_players = pd.DataFrame(columns=[
-        "element", "player", "club", "position", "position_id", "ownership_count",
-        "ownership_pct", "started_count", "bench_count", "captain_count",
-        "vice_count", "total_points", "owners_text", "captains_text",
+        "element", "player", "full_name", "club", "position", "position_id",
+        "ownership_count", "ownership_pct", "started_count", "bench_count",
+        "captain_count", "captain_pct", "triple_captain_count", "vice_count",
+        "effective_ownership_count", "effective_ownership_pct", "event_points",
+        "season_points", "owners_text", "captains_text",
     ])
     empty_picks = pd.DataFrame(columns=[
-        "entry", "manager", "team", "element", "player", "club", "position",
-        "position_id", "squad_position", "multiplier", "is_captain", "is_vice_captain",
-        "on_bench",
+        "entry", "manager", "team", "rank", "element", "player", "full_name",
+        "club", "position", "position_id", "squad_position", "multiplier",
+        "is_captain", "is_vice_captain", "on_bench", "event_points",
+        "season_points", "gw_contribution",
+    ])
+    empty_events = pd.DataFrame(columns=[
+        "entry", "manager", "team", "rank", "active_chip", "gw_points",
+        "total_points", "event_transfers", "event_transfers_cost", "points_on_bench",
     ])
 
     if not managers:
         return {"event": event_id, "players": empty_players, "picks": empty_picks,
-                "loaded_managers": 0, "league_size": 0, "errors": []}
+                "manager_events": empty_events, "loaded_managers": 0,
+                "league_size": 0, "errors": []}
 
     try:
         bootstrap = get_bootstrap_static()
     except Exception as error:
         return {"event": event_id, "players": empty_players, "picks": empty_picks,
-                "loaded_managers": 0, "league_size": len(managers), "errors": [str(error)]}
+                "manager_events": empty_events, "loaded_managers": 0,
+                "league_size": len(managers), "errors": [str(error)]}
 
     if event_id is None:
         event_id = current_fpl_event_id()
     if event_id is None:
         return {"event": None, "players": empty_players, "picks": empty_picks,
-                "loaded_managers": 0, "league_size": len(managers),
-                "errors": ["Fant ingen aktiv eller ferdig FPL-runde."]}
+                "manager_events": empty_events, "loaded_managers": 0,
+                "league_size": len(managers), "errors": ["Fant ingen aktiv eller ferdig FPL-runde."]}
 
-    teams = {int(row.get("id")): str(row.get("short_name") or row.get("name") or "")
-             for row in (bootstrap.get("teams", []) or []) if row.get("id") is not None}
+    teams = {
+        int(row.get("id")): str(row.get("short_name") or row.get("name") or "")
+        for row in (bootstrap.get("teams", []) or []) if row.get("id") is not None
+    }
     elements = {}
     for row in bootstrap.get("elements", []) or []:
         try:
@@ -3787,10 +3818,12 @@ def build_league_ownership(managers: list[dict], event_id: int | None = None) ->
             "club": teams.get(int(row.get("team") or 0), ""),
             "position_id": position_id,
             "position": POSITION_LABELS.get(position_id, "Ukjent"),
-            "total_points": int(row.get("total_points") or 0),
+            "season_points": int(row.get("total_points") or 0),
         }
 
+    live_points = _live_points_map(int(event_id))
     pick_rows = []
+    manager_event_rows = []
     errors = []
     loaded_entries = set()
 
@@ -3821,6 +3854,20 @@ def build_league_ownership(managers: list[dict], event_id: int | None = None) ->
         loaded_entries.add(entry)
         manager_name = str(manager.get("player_name") or "Ukjent manager")
         team_name = str(manager.get("entry_name") or "Ukjent lag")
+        rank_value = pd.to_numeric(manager.get("rank"), errors="coerce")
+        entry_history = payload.get("entry_history") or {}
+        manager_event_rows.append({
+            "entry": entry,
+            "manager": manager_name,
+            "team": team_name,
+            "rank": rank_value,
+            "active_chip": str(payload.get("active_chip") or ""),
+            "gw_points": int(entry_history.get("points") or manager.get("event_total") or 0),
+            "total_points": int(entry_history.get("total_points") or manager.get("total") or 0),
+            "event_transfers": int(entry_history.get("event_transfers") or 0),
+            "event_transfers_cost": int(entry_history.get("event_transfers_cost") or 0),
+            "points_on_bench": int(entry_history.get("points_on_bench") or 0),
+        })
 
         for pick in picks:
             try:
@@ -3831,12 +3878,14 @@ def build_league_ownership(managers: list[dict], event_id: int | None = None) ->
                 continue
             meta = elements.get(element, {
                 "player": f"Spiller {element}", "full_name": "", "club": "",
-                "position_id": 0, "position": "Ukjent", "total_points": 0,
+                "position_id": 0, "position": "Ukjent", "season_points": 0,
             })
+            event_points = int(live_points.get(element, 0))
             pick_rows.append({
                 "entry": entry,
                 "manager": manager_name,
                 "team": team_name,
+                "rank": rank_value,
                 "element": element,
                 "player": meta["player"],
                 "full_name": meta.get("full_name", ""),
@@ -3848,14 +3897,18 @@ def build_league_ownership(managers: list[dict], event_id: int | None = None) ->
                 "is_captain": bool(pick.get("is_captain")),
                 "is_vice_captain": bool(pick.get("is_vice_captain")),
                 "on_bench": squad_position > 11,
-                "total_points": meta["total_points"],
+                "event_points": event_points,
+                "season_points": meta["season_points"],
+                "gw_contribution": event_points * multiplier,
             })
 
     picks_df = pd.DataFrame(pick_rows)
+    manager_events_df = pd.DataFrame(manager_event_rows)
     loaded_count = len(loaded_entries)
     if picks_df.empty:
         return {"event": int(event_id), "players": empty_players, "picks": empty_picks,
-                "loaded_managers": loaded_count, "league_size": len(managers), "errors": errors}
+                "manager_events": manager_events_df, "loaded_managers": loaded_count,
+                "league_size": len(managers), "errors": errors}
 
     player_rows = []
     for element, player_df in picks_df.groupby("element", sort=False):
@@ -3863,6 +3916,7 @@ def build_league_ownership(managers: list[dict], event_id: int | None = None) ->
         owners = player_df.sort_values(["manager", "team"])
         captains = owners[owners["is_captain"]]
         owner_count = int(owners["entry"].nunique())
+        eo_count = int(owners["multiplier"].clip(lower=0).sum())
         player_rows.append({
             "element": int(element),
             "player": first["player"],
@@ -3875,14 +3929,19 @@ def build_league_ownership(managers: list[dict], event_id: int | None = None) ->
             "started_count": int((~owners["on_bench"]).sum()),
             "bench_count": int(owners["on_bench"].sum()),
             "captain_count": int(owners["is_captain"].sum()),
+            "captain_pct": round(int(owners["is_captain"].sum()) / loaded_count * 100, 1) if loaded_count else 0.0,
+            "triple_captain_count": int(((owners["is_captain"]) & (owners["multiplier"] >= 3)).sum()),
             "vice_count": int(owners["is_vice_captain"].sum()),
-            "total_points": int(first.get("total_points", 0) or 0),
+            "effective_ownership_count": eo_count,
+            "effective_ownership_pct": round(eo_count / loaded_count * 100, 1) if loaded_count else 0.0,
+            "event_points": int(first.get("event_points", 0) or 0),
+            "season_points": int(first.get("season_points", 0) or 0),
             "owners_text": " · ".join(owners["manager"].astype(str).tolist()),
             "captains_text": " · ".join(captains["manager"].astype(str).tolist()),
         })
 
     players_df = pd.DataFrame(player_rows).sort_values(
-        ["ownership_count", "captain_count", "total_points", "player"],
+        ["ownership_count", "captain_count", "season_points", "player"],
         ascending=[False, False, False, True],
     ).reset_index(drop=True)
     players_df.insert(0, "ownership_rank", range(1, len(players_df) + 1))
@@ -3891,6 +3950,7 @@ def build_league_ownership(managers: list[dict], event_id: int | None = None) ->
         "event": int(event_id),
         "players": players_df,
         "picks": picks_df,
+        "manager_events": manager_events_df,
         "loaded_managers": loaded_count,
         "league_size": len(managers),
         "errors": errors,
@@ -3902,7 +3962,7 @@ def build_template_xi(players_df: pd.DataFrame) -> tuple[pd.DataFrame, str]:
         return pd.DataFrame(), ""
 
     candidates = players_df.copy().sort_values(
-        ["ownership_count", "captain_count", "total_points"], ascending=[False, False, False]
+        ["ownership_count", "captain_count", "season_points"], ascending=[False, False, False]
     )
     selected = []
     selected_ids = set()
@@ -3936,6 +3996,101 @@ def build_template_xi(players_df: pd.DataFrame) -> tuple[pd.DataFrame, str]:
     template = template.sort_values(["position_id", "ownership_count"], ascending=[True, False]).reset_index(drop=True)
     formation = f"{counts[2]}-{counts[3]}-{counts[4]}"
     return template, formation
+
+
+def build_template_squad(players_df: pd.DataFrame) -> set[int]:
+    """15-manns template for å måle hvor likt hvert lag er kollektivet."""
+    if players_df is None or players_df.empty:
+        return set()
+    quotas = {1: 2, 2: 5, 3: 5, 4: 3}
+    selected = set()
+    for pos_id, count in quotas.items():
+        pool = players_df[players_df["position_id"] == pos_id].sort_values(
+            ["ownership_count", "captain_count", "season_points"], ascending=[False, False, False]
+        ).head(count)
+        selected.update(pool["element"].astype(int).tolist())
+    return selected
+
+
+def build_manager_style_table(ownership: dict) -> pd.DataFrame:
+    picks_df = ownership.get("picks", pd.DataFrame())
+    players_df = ownership.get("players", pd.DataFrame())
+    events_df = ownership.get("manager_events", pd.DataFrame())
+    if picks_df.empty or players_df.empty:
+        return pd.DataFrame()
+
+    lookup = players_df.set_index("element")
+    template_ids = build_template_squad(players_df)
+    event_lookup = events_df.set_index("entry") if not events_df.empty else pd.DataFrame()
+    rows = []
+    for entry, group in picks_df.groupby("entry"):
+        ids = set(group["element"].astype(int).tolist())
+        own_pcts = [float(lookup.loc[e, "ownership_pct"]) for e in ids if e in lookup.index]
+        diff_count = sum(int(lookup.loc[e, "ownership_count"]) <= 3 for e in ids if e in lookup.index)
+        overlap = len(ids & template_ids)
+        first = group.iloc[0]
+        event_row = event_lookup.loc[entry] if not event_lookup.empty and entry in event_lookup.index else None
+        rows.append({
+            "entry": int(entry),
+            "manager": str(first["manager"]),
+            "team": str(first["team"]),
+            "rank": first.get("rank"),
+            "template_overlap": overlap,
+            "template_pct": round(overlap / 15 * 100, 1),
+            "avg_ownership_pct": round(sum(own_pcts) / len(own_pcts), 1) if own_pcts else 0.0,
+            "differential_count": int(diff_count),
+            "gw_points": int(event_row.get("gw_points", 0)) if event_row is not None else 0,
+            "bench_points": int(event_row.get("points_on_bench", 0)) if event_row is not None else int(group[group["on_bench"]]["event_points"].sum()),
+            "active_chip": str(event_row.get("active_chip", "")) if event_row is not None else "",
+        })
+    return pd.DataFrame(rows).sort_values(["rank", "manager"], na_position="last").reset_index(drop=True)
+
+
+def build_ownership_changes(current: dict, previous: dict) -> dict:
+    cur_players = current.get("players", pd.DataFrame())
+    prev_players = previous.get("players", pd.DataFrame())
+    cur_picks = current.get("picks", pd.DataFrame())
+    prev_picks = previous.get("picks", pd.DataFrame())
+    empty = pd.DataFrame()
+    if cur_players.empty or prev_players.empty or cur_picks.empty or prev_picks.empty:
+        return {"players": empty, "moves": empty}
+
+    prev_base = prev_players[["element", "ownership_count", "captain_count"]].rename(columns={
+        "ownership_count": "previous_ownership", "captain_count": "previous_captains"
+    })
+    changes = cur_players.merge(prev_base, on="element", how="outer")
+    for col in ["ownership_count", "captain_count", "previous_ownership", "previous_captains"]:
+        changes[col] = pd.to_numeric(changes.get(col), errors="coerce").fillna(0).astype(int)
+    changes["ownership_delta"] = changes["ownership_count"] - changes["previous_ownership"]
+    changes["captain_delta"] = changes["captain_count"] - changes["previous_captains"]
+
+    meta = {}
+    for source in [cur_players, prev_players]:
+        for _, row in source.iterrows():
+            meta[int(row["element"])] = {
+                "player": row.get("player", ""), "club": row.get("club", ""), "position": row.get("position", "")
+            }
+    if "player" not in changes.columns:
+        changes["player"] = changes["element"].map(lambda e: meta.get(int(e), {}).get("player", str(e)))
+    else:
+        changes["player"] = changes.apply(
+            lambda r: meta.get(int(r["element"]), {}).get("player", "") if pd.isna(r.get("player")) or str(r.get("player") or "").strip() == "" else r.get("player"),
+            axis=1,
+        )
+    move_rows = []
+    all_entries = sorted(set(cur_picks["entry"].astype(int)) & set(prev_picks["entry"].astype(int)))
+    for entry in all_entries:
+        cg = cur_picks[cur_picks["entry"] == entry]
+        pg = prev_picks[prev_picks["entry"] == entry]
+        cur_ids = set(cg["element"].astype(int))
+        prev_ids = set(pg["element"].astype(int))
+        manager = str(cg.iloc[0]["manager"]) if not cg.empty else str(pg.iloc[0]["manager"])
+        for element in cur_ids - prev_ids:
+            move_rows.append({"element": element, "player": meta.get(element, {}).get("player", str(element)), "manager": manager, "move": "Inn"})
+        for element in prev_ids - cur_ids:
+            move_rows.append({"element": element, "player": meta.get(element, {}).get("player", str(element)), "manager": manager, "move": "Ut"})
+    moves = pd.DataFrame(move_rows)
+    return {"players": changes, "moves": moves}
 
 
 def radar_metric_strip(cards: list[dict]):
@@ -3998,142 +4153,414 @@ def render_radar_overview(managers: list[dict], radar: dict[str, pd.DataFrame]):
             {"label": "Formkonge", "value": form.iloc[0].get("player_name", "–") if not form.empty else "–", "caption": f"{int(form.iloc[0].get('last_three_points') or 0)} p siste tre" if not form.empty else "Venter på flere runder"},
         ]
         radar_metric_strip(cards)
-
-        st.markdown("### Tabellen akkurat nå")
-        preview = current.head(10).copy()
-        preview["plass"] = preview["rank_num"].apply(lambda v: "" if pd.isna(v) else int(v))
-        preview["bevegelse"] = preview["form_delta"].apply(movement_text)
-        display_table(
-            preview,
-            ["plass", "player_name", "entry_name", "event_total_num", "total_num", "bevegelse"],
-            {"plass": "#", "player_name": "Manager", "entry_name": "Lag", "event_total_num": "GW", "total_num": "Totalt", "bevegelse": "Bevegelse"},
-        )
     else:
         st.info("Live-radaren venter på første tellende FPL-tabell. Sesongløpet bruker demo til ekte plasseringer finnes.")
-        radar_metric_strip([
-            {"label": "Status", "value": "Før live-tabell", "caption": "FPL har ikke rangert ligaen ennå"},
-            {"label": "Sesongløpet", "value": "Demo klar", "caption": "Bytter automatisk til live"},
-            {"label": "Eierskap", "value": "Etter deadline", "caption": "Leser faktiske GW-picks"},
-            {"label": "Liga", "value": f"{len(df)} managere", "caption": "Påmeldt i FPL-ligaen"},
-        ])
+
+
+def _role_label(row: pd.Series) -> str:
+    if bool(row.get("is_captain")):
+        return "TC" if int(row.get("multiplier") or 0) >= 3 else "C"
+    if bool(row.get("is_vice_captain")):
+        return "VC"
+    if bool(row.get("on_bench")):
+        return "Benk"
+    return "Start"
+
+
+def render_player_profile(selected_row: pd.Series, ownership: dict):
+    players_df = ownership["players"]
+    picks_df = ownership["picks"]
+    loaded = int(ownership["loaded_managers"])
+    selected_id = int(selected_row["element"])
+    owners = picks_df[picks_df["element"] == selected_id].copy().sort_values(["multiplier", "manager"], ascending=[False, True])
+    owners["rolle"] = owners.apply(_role_label, axis=1)
+
+    radar_metric_strip([
+        {"label": "Eierskap", "value": f"{int(selected_row['ownership_count'])} av {loaded}", "caption": f"{float(selected_row['ownership_pct']):.1f}% av Lofthus"},
+        {"label": "Eff. eierskap", "value": f"{float(selected_row['effective_ownership_pct']):.1f}%", "caption": "Kapteinsmultiplier inkludert"},
+        {"label": "Kaptein", "value": str(int(selected_row["captain_count"])), "caption": f"{float(selected_row['captain_pct']):.1f}% av ligaen"},
+        {"label": "GW-poeng", "value": str(int(selected_row.get("event_points", 0))), "caption": f"{int(selected_row['bench_count'])} har spilleren på benk"},
+    ])
+
+    captains = owners[owners["is_captain"]]
+    starters = owners[(~owners["on_bench"]) & (~owners["is_captain"])]
+    benched = owners[owners["on_bench"]]
+    c1, c2, c3 = st.columns(3, gap="medium")
+    with c1:
+        st.caption("HAR CAPPET")
+        st.write(", ".join(captains["manager"].tolist()) if not captains.empty else "Ingen")
+    with c2:
+        st.caption("STARTER UTEN BIND")
+        st.write(", ".join(starters["manager"].tolist()) if not starters.empty else "Ingen")
+    with c3:
+        st.caption("PÅ BENK")
+        st.write(", ".join(benched["manager"].tolist()) if not benched.empty else "Ingen")
+
+    avg_multiplier = float(picks_df[picks_df["element"] == selected_id]["multiplier"].sum()) / loaded if loaded else 0.0
+    exposure = []
+    owners_by_entry = owners.set_index("entry") if not owners.empty else pd.DataFrame()
+    for _, manager_row in ownership["manager_events"].iterrows():
+        entry = int(manager_row["entry"])
+        multiplier = int(owners_by_entry.loc[entry, "multiplier"]) if not owners_by_entry.empty and entry in owners_by_entry.index else 0
+        if isinstance(multiplier, pd.Series):
+            multiplier = int(multiplier.iloc[0])
+        exposure.append({
+            "manager": manager_row["manager"],
+            "multiplier": multiplier,
+            "relative_swing": round(multiplier - avg_multiplier, 2),
+        })
+    exposure_df = pd.DataFrame(exposure)
+    if not exposure_df.empty:
+        winners = exposure_df.sort_values(["relative_swing", "manager"], ascending=[False, True]).head(8)
+        losers = exposure_df.sort_values(["relative_swing", "manager"], ascending=[True, True]).head(8)
+        with st.expander(f"Hvis {selected_row['player']} får neste poeng – hvem tjener og taper relativt?"):
+            a, b = st.columns(2)
+            with a:
+                st.markdown("**Tjener mest**")
+                display_table(winners, ["manager", "multiplier", "relative_swing"], {"manager": "Manager", "multiplier": "Eksponering", "relative_swing": "Mot feltet"})
+            with b:
+                st.markdown("**Taper mest relativt**")
+                display_table(losers, ["manager", "multiplier", "relative_swing"], {"manager": "Manager", "multiplier": "Eksponering", "relative_swing": "Mot feltet"})
+
+
+def render_manager_profile(selected_entry: int, ownership: dict, managers: list[dict]):
+    picks_df = ownership["picks"]
+    players_df = ownership["players"]
+    events_df = ownership["manager_events"]
+    style_df = build_manager_style_table(ownership)
+    group = picks_df[picks_df["entry"] == int(selected_entry)].copy()
+    if group.empty:
+        st.caption("Fant ikke picks for manageren i denne runden.")
+        return
+
+    row = style_df[style_df["entry"] == int(selected_entry)]
+    style = row.iloc[0] if not row.empty else None
+    event_row = events_df[events_df["entry"] == int(selected_entry)]
+    event = event_row.iloc[0] if not event_row.empty else None
+    manager_name = str(group.iloc[0]["manager"])
+    team_name = str(group.iloc[0]["team"])
+    rank = style.get("rank") if style is not None else None
+    rank_text = str(int(rank)) if rank is not None and not pd.isna(rank) else "–"
+
+    radar_metric_strip([
+        {"label": "Plass", "value": rank_text, "caption": team_name},
+        {"label": "GW-poeng", "value": str(int(style.get("gw_points", 0))) if style is not None else "–", "caption": f"Benk: {int(style.get('bench_points', 0)) if style is not None else 0} p"},
+        {"label": "Template", "value": f"{float(style.get('template_pct', 0)):.0f}%" if style is not None else "–", "caption": f"{int(style.get('template_overlap', 0)) if style is not None else 0}/15 fra LRO-template"},
+        {"label": "Differensialer", "value": str(int(style.get("differential_count", 0))) if style is not None else "–", "caption": str(event.get("active_chip") or "Ingen chip") if event is not None else "Ingen chip"},
+    ])
+
+    lookup = players_df.set_index("element")
+    group["ownership_pct"] = group["element"].map(lambda e: float(lookup.loc[e, "ownership_pct"]) if e in lookup.index else 0.0)
+    group["eo_pct"] = group["element"].map(lambda e: float(lookup.loc[e, "effective_ownership_pct"]) if e in lookup.index else 0.0)
+    group["rolle"] = group.apply(_role_label, axis=1)
+    group = group.sort_values(["squad_position", "position_id"])
+    with st.expander(f"Se troppen til {manager_name}"):
+        display_table(
+            group,
+            ["rolle", "player", "club", "event_points", "gw_contribution", "ownership_pct", "eo_pct"],
+            {"rolle": "Rolle", "player": "Spiller", "club": "Klubb", "event_points": "GW", "gw_contribution": "Bidrag", "ownership_pct": "Eid %", "eo_pct": "EO %"},
+        )
+
+    selected_ids = set(group["element"].astype(int))
+    missing = players_df[~players_df["element"].isin(selected_ids)].head(10).copy()
+    if not missing.empty:
+        st.caption("POPULÆRE SPILLERE MANAGEREN GÅR UTEN")
+        display_table(missing.head(6), ["player", "ownership_count", "ownership_pct", "captain_count"], {"player": "Spiller", "ownership_count": "Eiere", "ownership_pct": "%", "captain_count": "Kapteiner"})
+
+    manager_df = pd.DataFrame(managers or []).copy()
+    manager_df["rank_num"] = pd.to_numeric(manager_df.get("rank"), errors="coerce")
+    selected_rank = pd.to_numeric(group.iloc[0].get("rank"), errors="coerce")
+    if pd.notna(selected_rank):
+        rivals = manager_df[(manager_df["entry"].astype(str) != str(selected_entry)) & manager_df["rank_num"].notna()].copy()
+        rivals["distance"] = (rivals["rank_num"] - float(selected_rank)).abs()
+        rivals = rivals.sort_values(["distance", "rank_num"]).head(4)
+        rival_entries = set(pd.to_numeric(rivals["entry"], errors="coerce").dropna().astype(int))
+        rival_picks = picks_df[picks_df["entry"].isin(rival_entries) & ~picks_df["element"].isin(selected_ids)].copy()
+        if not rival_picks.empty:
+            threat_rows = []
+            for element, threat in rival_picks.groupby("element"):
+                first = threat.iloc[0]
+                threat_rows.append({
+                    "player": first["player"],
+                    "rivals": int(threat["entry"].nunique()),
+                    "captains": int(threat["is_captain"].sum()),
+                    "event_points": int(first.get("event_points", 0)),
+                    "managers": ", ".join(threat.sort_values(["is_captain", "manager"], ascending=[False, True])["manager"].tolist()),
+                })
+            threats = pd.DataFrame(threat_rows).sort_values(["captains", "rivals", "event_points"], ascending=[False, False, False]).head(8)
+            st.caption("HVEM MÅ JEG FRYKTE? · NÆRMESTE RIVALER")
+            display_table(threats, ["player", "rivals", "captains", "event_points", "managers"], {"player": "Spiller du mangler", "rivals": "Rivaler", "captains": "C", "event_points": "GW", "managers": "Hvem har ham"})
+
+    try:
+        history = get_entry_history(int(selected_entry))
+        recent = (history.get("current", []) or [])[-3:]
+        if len(recent) >= 3:
+            transfers = sum(int(r.get("event_transfers") or 0) for r in recent)
+            if transfers == 0:
+                st.caption("Aktivitetssignal: Ingen transfers de siste tre registrerte rundene.")
+            else:
+                st.caption(f"Aktivitetssignal: {transfers} transfer(s) de siste tre rundene.")
+    except Exception:
+        pass
+
+
+def render_head_to_head(ownership: dict):
+    picks_df = ownership["picks"]
+    events_df = ownership["manager_events"]
+    if picks_df.empty:
+        return
+    managers_options = picks_df[["entry", "manager"]].drop_duplicates().sort_values("manager")
+    options = [(int(r.entry), str(r.manager)) for r in managers_options.itertuples()]
+    if len(options) < 2:
+        return
+    labels = {entry: name for entry, name in options}
+    c1, c2 = st.columns(2)
+    with c1:
+        left = st.selectbox("Manager A", [e for e, _ in options], format_func=lambda e: labels[e], index=0, key="h2h_left_v112")
+    with c2:
+        right_default = 1 if len(options) > 1 else 0
+        right = st.selectbox("Manager B", [e for e, _ in options], format_func=lambda e: labels[e], index=right_default, key="h2h_right_v112")
+    if left == right:
+        st.caption("Velg to ulike managere.")
+        return
+
+    lg = picks_df[picks_df["entry"] == left]
+    rg = picks_df[picks_df["entry"] == right]
+    left_ids = set(lg["element"].astype(int))
+    right_ids = set(rg["element"].astype(int))
+    shared = len(left_ids & right_ids)
+    left_event = events_df[events_df["entry"] == left]
+    right_event = events_df[events_df["entry"] == right]
+    lp = int(left_event.iloc[0]["gw_points"]) if not left_event.empty else 0
+    rp = int(right_event.iloc[0]["gw_points"]) if not right_event.empty else 0
+    radar_metric_strip([
+        {"label": "Like spillere", "value": str(shared), "caption": f"{15-shared} forskjeller i troppene"},
+        {"label": labels[left], "value": str(lp), "caption": "GW-poeng"},
+        {"label": labels[right], "value": str(rp), "caption": "GW-poeng"},
+        {"label": "Swing", "value": f"{abs(lp-rp)} p", "caption": "Forskjell denne runden"},
+    ])
+
+    union = (left_ids | right_ids) - (left_ids & right_ids)
+    swing_rows = []
+    for element in union:
+        lr = lg[lg["element"] == element]
+        rr = rg[rg["element"] == element]
+        source = lr if not lr.empty else rr
+        if source.empty:
+            continue
+        first = source.iloc[0]
+        lmult = int(lr.iloc[0]["multiplier"]) if not lr.empty else 0
+        rmult = int(rr.iloc[0]["multiplier"]) if not rr.empty else 0
+        points = int(first.get("event_points", 0))
+        swing_rows.append({
+            "player": first["player"],
+            labels[left]: lmult,
+            labels[right]: rmult,
+            "gw_points": points,
+            "swing": points * (lmult - rmult),
+        })
+    swing_df = pd.DataFrame(swing_rows)
+    if not swing_df.empty:
+        swing_df["abs_swing"] = swing_df["swing"].abs()
+        swing_df = swing_df.sort_values(["abs_swing", "player"], ascending=[False, True]).drop(columns=["abs_swing"])
+        display_table(swing_df.head(12), ["player", labels[left], labels[right], "gw_points", "swing"], {"player": "Forskjellsspiller", labels[left]: labels[left], labels[right]: labels[right], "gw_points": "GW", "swing": "Poengsving"})
+
+
+def render_ownership_trends(managers: list[dict], ownership: dict):
+    event_id = int(ownership.get("event") or 0)
+    if event_id <= 1:
+        st.caption("Trenger minst to runder før vi kan vise kjøp, salg og kapteinsendringer.")
+        return
+    with st.spinner(f"Sammenligner GW{event_id} med GW{event_id-1} …"):
+        previous = build_league_ownership(managers, event_id - 1)
+    changes = build_ownership_changes(ownership, previous)
+    player_changes = changes["players"]
+    moves = changes["moves"]
+    if player_changes.empty:
+        st.caption("Fant ikke nok data fra forrige runde.")
+        return
+
+    incoming = player_changes.sort_values(["ownership_delta", "captain_delta"], ascending=[False, False]).head(8)
+    outgoing = player_changes.sort_values(["ownership_delta", "captain_delta"], ascending=[True, True]).head(8)
+    cap_changes = player_changes.reindex(player_changes["captain_delta"].abs().sort_values(ascending=False).index).head(8)
+    a, b = st.columns(2)
+    with a:
+        st.markdown("**Mest kjøpt i Lofthus**")
+        display_table(incoming, ["player", "ownership_count", "ownership_delta"], {"player": "Spiller", "ownership_count": "Nå", "ownership_delta": "Endring"})
+    with b:
+        st.markdown("**Mest solgt i Lofthus**")
+        display_table(outgoing, ["player", "ownership_count", "ownership_delta"], {"player": "Spiller", "ownership_count": "Nå", "ownership_delta": "Endring"})
+    st.markdown("**Kapteinsmarkedet**")
+    display_table(cap_changes, ["player", "captain_count", "captain_delta"], {"player": "Spiller", "captain_count": "C nå", "captain_delta": "Endring"})
+
+    if not moves.empty:
+        with st.expander("Se hvem som kjøpte og solgte"):
+            grouped = moves.groupby(["player", "move"])["manager"].apply(lambda s: ", ".join(sorted(set(s)))).reset_index()
+            display_table(grouped, ["move", "player", "manager"], {"move": "Retning", "player": "Spiller", "manager": "Managere"})
+
+
+def render_gw_stories(ownership: dict, managers: list[dict]):
+    players_df = ownership["players"]
+    events_df = ownership["manager_events"]
+    if players_df.empty or events_df.empty:
+        return
+    round_winner = events_df.sort_values(["gw_points", "rank"], ascending=[False, True], na_position="last").iloc[0]
+    bench_pain = events_df.sort_values(["points_on_bench", "gw_points"], ascending=[False, False]).iloc[0]
+    diff = players_df[(players_df["ownership_count"] >= 1) & (players_df["ownership_count"] <= 3)].sort_values(["event_points", "ownership_count"], ascending=[False, True])
+    diff_row = diff.iloc[0] if not diff.empty else None
+    chip_users = events_df[events_df["active_chip"].astype(str).str.strip() != ""]
+    style_df = build_manager_style_table(ownership)
+    unique_manager = None
+    if not style_df.empty:
+        unique_manager = style_df.sort_values(["template_pct", "differential_count"], ascending=[True, False]).iloc[0]
+
+    radar_metric_strip([
+        {"label": "GW-vinner", "value": round_winner["manager"], "caption": f"{int(round_winner['gw_points'])} poeng"},
+        {"label": "Benkefadesen", "value": bench_pain["manager"], "caption": f"{int(bench_pain['points_on_bench'])} poeng på benk"},
+        {"label": "Differensialtreff", "value": diff_row["player"] if diff_row is not None else "–", "caption": f"{int(diff_row['event_points'])} p · {int(diff_row['ownership_count'])} eiere" if diff_row is not None else "Ingen tydelig ennå"},
+        {"label": "Mest egenrådig", "value": unique_manager["manager"] if unique_manager is not None else "–", "caption": f"{float(unique_manager['template_pct']):.0f}% template" if unique_manager is not None else "Ikke nok data"},
+    ])
+
+    winner_entry = int(round_winner["entry"])
+    winner_picks = ownership["picks"][ownership["picks"]["entry"] == winner_entry].copy()
+    if not winner_picks.empty:
+        lookup = players_df.set_index("element")
+        winner_picks["ownership_pct"] = winner_picks["element"].map(lambda e: float(lookup.loc[e, "ownership_pct"]) if e in lookup.index else 0.0)
+        winner_picks["rolle"] = winner_picks.apply(_role_label, axis=1)
+        key_choices = winner_picks[(winner_picks["gw_contribution"] > 0)].sort_values(
+            ["gw_contribution", "ownership_pct"], ascending=[False, True]
+        ).head(6)
+        with st.expander(f"Hvorfor vant {round_winner['manager']} GW-en?"):
+            display_table(key_choices, ["rolle", "player", "event_points", "gw_contribution", "ownership_pct"], {"rolle": "Rolle", "player": "Nøkkelspiller", "event_points": "GW", "gw_contribution": "Bidrag", "ownership_pct": "Eid %"})
+
+    captain_score = players_df[players_df["captain_count"] > 0].copy().sort_values(["event_points", "captain_count"], ascending=[False, False])
+    if not captain_score.empty:
+        with st.expander("Kapteinsfasiten denne GW-en"):
+            display_table(captain_score.head(15), ["player", "captain_count", "event_points", "effective_ownership_pct", "captains_text"], {"player": "Kaptein", "captain_count": "Antall C", "event_points": "GW", "effective_ownership_pct": "EO %", "captains_text": "Hvem"})
+
+    if not chip_users.empty:
+        with st.expander("Chips i spill"):
+            display_table(chip_users.sort_values(["active_chip", "manager"]), ["manager", "team", "active_chip", "gw_points"], {"manager": "Manager", "team": "Lag", "active_chip": "Chip", "gw_points": "GW"})
+
+    quiet_rows = []
+    for manager in managers:
+        try:
+            entry = int(manager.get("entry"))
+            history = get_entry_history(entry)
+            recent = (history.get("current", []) or [])[-3:]
+            if len(recent) >= 3 and sum(int(r.get("event_transfers") or 0) for r in recent) == 0:
+                quiet_rows.append({"manager": manager.get("player_name", ""), "team": manager.get("entry_name", "")})
+        except Exception:
+            continue
+    if quiet_rows:
+        with st.expander("Aktivitetssignal · lag uten transfers siste tre GW"):
+            st.caption("Dette er ikke automatisk et dødt lag, bare et signal om at det ikke er registrert transfers i de tre siste rundene.")
+            display_table(pd.DataFrame(quiet_rows), ["manager", "team"], {"manager": "Manager", "team": "Lag"})
 
 
 def render_ownership_dashboard(managers: list[dict]):
     event_id = current_fpl_event_id()
     if event_id is None:
-        st.info("Eierskapsradaren våkner når FPL har en aktiv eller ferdig gameweek.")
+        st.info("Spiller- og kapteinsradaren våkner når FPL har en aktiv eller ferdig gameweek.")
         return
 
-    with st.spinner(f"Leser lagene i GW{event_id} ..."):
+    with st.spinner(f"Leser {len(managers)} Lofthus-lag i GW{event_id} …"):
         ownership = build_league_ownership(managers, event_id)
 
     players_df = ownership["players"]
     picks_df = ownership["picks"]
+    events_df = ownership["manager_events"]
     loaded = int(ownership["loaded_managers"])
     league_size = int(ownership["league_size"])
 
     st.markdown(
         f'''<div style="background:linear-gradient(135deg,#052e2b,#0f172a 62%,#4c1d1d);color:white;border-radius:18px;padding:16px 18px;margin:4px 0 14px 0;border:1px solid rgba(255,255,255,.10)">
-        <div style="font-size:.72rem;color:#fde68a;font-weight:900;letter-spacing:.09em;text-transform:uppercase">GW{event_id} · LIGAEIERSKAP</div>
-        <div style="font-size:1.15rem;font-weight:900;margin-top:4px">Hva eier Lofthus akkurat nå?</div>
-        <div style="font-size:.86rem;color:#dbeafe;margin-top:4px">Picks lest fra {loaded} av {league_size} lag. Tallene gjelder troppen etter GW{event_id}-deadline.</div>
+        <div style="font-size:.72rem;color:#fde68a;font-weight:900;letter-spacing:.09em;text-transform:uppercase">GW{event_id} · SPILLERE & KAPTEINER</div>
+        <div style="font-size:1.22rem;font-weight:900;margin-top:4px">Hvem eier hva – og hvem har satt bindet på hvem?</div>
+        <div style="font-size:.86rem;color:#dbeafe;margin-top:4px">Picks lest fra {loaded} av {league_size} lag. Søk Tzolis, Haaland eller en hvilken som helst spiller og få navnene med én gang.</div>
         </div>''', unsafe_allow_html=True)
 
     if players_df.empty:
         st.warning("Fant ingen offentlige picks for denne runden ennå.")
-        if ownership.get("errors"):
-            st.caption(f"{len(ownership['errors'])} lag kunne ikke leses.")
         return
 
-    normalized_names = (
-        players_df["player"].astype(str).map(normalize_text)
-        + " "
-        + players_df.get("full_name", pd.Series([""] * len(players_df))).astype(str).map(normalize_text)
-    )
-    haaland_df = players_df[normalized_names.str.contains("haaland", na=False)]
-    haaland = haaland_df.iloc[0] if not haaland_df.empty else None
     most_owned = players_df.iloc[0]
     most_captained = players_df.sort_values(["captain_count", "ownership_count"], ascending=[False, False]).iloc[0]
-    unique_count = int((players_df["ownership_count"] == 1).sum())
-
+    eo_king = players_df.sort_values(["effective_ownership_pct", "ownership_count"], ascending=[False, False]).iloc[0]
+    chip_count = int((events_df["active_chip"].astype(str).str.strip() != "").sum()) if not events_df.empty else 0
     radar_metric_strip([
-        {
-            "label": "Haaland",
-            "value": f"{int(haaland['ownership_count'])} av {loaded}" if haaland is not None else "Ikke funnet",
-            "caption": f"{float(haaland['ownership_pct']):.1f}% · {int(haaland['captain_count'])} kapteiner" if haaland is not None else "",
-        },
         {"label": "Mest eid", "value": most_owned["player"], "caption": f"{int(most_owned['ownership_count'])}/{loaded} · {float(most_owned['ownership_pct']):.1f}%"},
-        {"label": "Mest kaptein", "value": most_captained["player"], "caption": f"{int(most_captained['captain_count'])} kapteiner"},
-        {"label": "Unike picks", "value": str(unique_count), "caption": "Spillere eid av bare én LRO-manager"},
+        {"label": "Mest cappet", "value": most_captained["player"], "caption": f"{int(most_captained['captain_count'])} kapteiner"},
+        {"label": "Høyest EO", "value": eo_king["player"], "caption": f"{float(eo_king['effective_ownership_pct']):.1f}% effektivt eierskap"},
+        {"label": "Chips", "value": str(chip_count), "caption": "aktive denne GW"},
     ])
 
-    ownership_view = st.selectbox(
-        "Vis eierskapsdata",
-        ["Mest eid", "Spillersøk", "Template XI", "Differensialer"],
-        index=0,
-        key="ownership_view_v110",
-    )
+    cap_col, own_col = st.columns([1, 1.15], gap="large")
+    with cap_col:
+        st.markdown("### Kapteinsradar")
+        caps = players_df[players_df["captain_count"] > 0].sort_values(["captain_count", "effective_ownership_pct"], ascending=[False, False]).head(10).copy()
+        display_table(caps, ["player", "captain_count", "captain_pct", "effective_ownership_pct", "event_points"], {"player": "Spiller", "captain_count": "C", "captain_pct": "C %", "effective_ownership_pct": "EO %", "event_points": "GW"})
+        rare_caps = caps[caps["captain_count"] <= 2]
+        if not rare_caps.empty:
+            st.caption("Kapteinsdifferensialer: " + " · ".join(f"{r.player} ({int(r.captain_count)})" for r in rare_caps.itertuples()))
+    with own_col:
+        st.markdown("### Mest populære spillere")
+        popular = players_df.head(10).copy()
+        display_table(popular, ["player", "ownership_count", "ownership_pct", "started_count", "bench_count", "event_points"], {"player": "Spiller", "ownership_count": "Eiere", "ownership_pct": "%", "started_count": "Start", "bench_count": "Benk", "event_points": "GW"})
 
-    if ownership_view == "Mest eid":
-        top = players_df.head(35).copy()
-        top["ownership_display"] = top.apply(lambda r: f"{int(r['ownership_count'])}/{loaded} ({float(r['ownership_pct']):.1f}%)", axis=1)
-        display_table(
-            top,
-            ["ownership_rank", "player", "club", "position", "ownership_display", "captain_count", "started_count", "bench_count", "total_points"],
-            {"ownership_rank": "#", "player": "Spiller", "club": "Klubb", "position": "Pos", "ownership_display": "Eierskap", "captain_count": "Kaptein", "started_count": "Startet", "bench_count": "Benk", "total_points": "FPL-poeng"},
-        )
+    st.markdown("### Finn en spiller")
+    search_options = players_df.sort_values(["ownership_count", "player"], ascending=[False, True])["element"].astype(int).tolist()
+    player_labels = {int(r.element): f"{r.player} · {r.club} · {int(r.ownership_count)}/{loaded}" for r in players_df.itertuples()}
+    default_player = search_options[0]
+    selected_id = st.selectbox("Spiller", search_options, format_func=lambda e: player_labels.get(int(e), str(e)), index=0, key="player_search_v112", label_visibility="collapsed")
+    selected_row = players_df[players_df["element"] == int(selected_id)].iloc[0]
+    render_player_profile(selected_row, ownership)
 
-    elif ownership_view == "Spillersøk":
-        options = players_df.sort_values(["ownership_count", "player"], ascending=[False, True])["player"].tolist()
-        selected_player = st.selectbox("Velg spiller", options=options, key="ownership_player_v107")
-        selected_row = players_df[players_df["player"] == selected_player].iloc[0]
-        selected_id = int(selected_row["element"])
-        owners = picks_df[picks_df["element"] == selected_id].copy().sort_values(["is_captain", "manager"], ascending=[False, True])
-        radar_metric_strip([
-            {"label": "Eierskap", "value": f"{int(selected_row['ownership_count'])} av {loaded}", "caption": f"{float(selected_row['ownership_pct']):.1f}%"},
-            {"label": "Kaptein", "value": str(int(selected_row["captain_count"])), "caption": "LRO-managere"},
-            {"label": "Startet", "value": str(int(selected_row["started_count"])), "caption": "I førsteelleveren"},
-            {"label": "På benk", "value": str(int(selected_row["bench_count"])), "caption": "GW-troppen"},
-        ])
-        owners["rolle"] = owners.apply(lambda r: "© Kaptein" if r["is_captain"] else ("Benk" if r["on_bench"] else "Start"), axis=1)
-        display_table(owners, ["manager", "team", "rolle"], {"manager": "Manager", "team": "Lag", "rolle": "Rolle"})
+    st.markdown("### Managerblikk")
+    manager_options = picks_df[["entry", "manager"]].drop_duplicates().sort_values("manager")
+    manager_ids = manager_options["entry"].astype(int).tolist()
+    manager_labels = dict(zip(manager_options["entry"].astype(int), manager_options["manager"].astype(str)))
+    if manager_ids:
+        selected_manager = st.selectbox("Manager", manager_ids, format_func=lambda e: manager_labels.get(int(e), str(e)), key="manager_profile_v112", label_visibility="collapsed")
+        render_manager_profile(int(selected_manager), ownership, managers)
 
-    elif ownership_view == "Template XI":
+    with st.expander("Mer liveanalyse · template, differensialer, endringer og dueller"):
+        st.markdown("### Lofthus-template")
         template, formation = build_template_xi(players_df)
-        st.subheader(f"Lofthus-template · {formation or 'XI'}")
-        st.caption("En lovlig startellever bygget av de mest eide spillerne i ligaen. Dette er kollektiv smak, ikke et wildcard-råd fra en maskin med null konsekvenssans.")
-        if template.empty:
-            st.caption("Ikke nok data.")
-        else:
+        if not template.empty:
+            st.caption(f"Mest populære lovlige XI · {formation}")
             for pos_id in [1, 2, 3, 4]:
                 group = template[template["position_id"] == pos_id]
                 if group.empty:
                     continue
-                names = " · ".join(
-                    f"{row['player']} ({int(row['ownership_count'])}/{loaded})" for _, row in group.iterrows()
-                )
+                names = " · ".join(f"{r.player} ({int(r.ownership_count)}/{loaded})" for r in group.itertuples())
                 st.markdown(f"**{POSITION_LABELS[pos_id]}:** {names}")
 
-    elif ownership_view == "Differensialer":
+        st.markdown("### Differensialradar")
         differential = players_df[(players_df["ownership_count"] >= 1) & (players_df["ownership_count"] <= 3)].copy()
-        differential = differential.sort_values(["total_points", "ownership_count", "player"], ascending=[False, True, True]).head(40)
+        differential = differential.sort_values(["event_points", "season_points", "ownership_count"], ascending=[False, False, True]).head(20)
         if differential.empty:
-            st.caption("Ingen differensialer med 1–3 eiere akkurat nå.")
+            st.caption("Ingen spillere med 1–3 eiere akkurat nå.")
         else:
-            differential["ownership_display"] = differential["ownership_count"].apply(lambda n: f"{int(n)} eier" if int(n) == 1 else f"{int(n)} eiere")
-            display_table(
-                differential,
-                ["player", "club", "position", "ownership_display", "total_points", "owners_text"],
-                {"player": "Spiller", "club": "Klubb", "position": "Pos", "ownership_display": "Eierskap", "total_points": "FPL-poeng", "owners_text": "Eies av"},
-            )
+            display_table(differential, ["player", "ownership_count", "event_points", "season_points", "owners_text"], {"player": "Spiller", "ownership_count": "Eiere", "event_points": "GW", "season_points": "Sesong", "owners_text": "Hvem"})
+
+        st.markdown("### Endringer fra forrige GW")
+        render_ownership_trends(managers, ownership)
+
+        st.markdown("### Manager mot manager")
+        render_head_to_head(ownership)
+
+        st.markdown("### Rundens historier")
+        render_gw_stories(ownership, managers)
 
     if loaded < league_size:
-        st.warning(f"Eierskap er lest fra {loaded} av {league_size} lag. {league_size-loaded} lag mangler offentlige picks akkurat nå, så prosentene gjelder lagene som kunne leses.")
+        st.warning(f"Picks er lest fra {loaded} av {league_size} lag. {league_size-loaded} lag kunne ikke leses akkurat nå, så prosentene gjelder lagene som faktisk svarte fra FPL.")
 
 
 # -----------------------------
 # Norgeskart
 # -----------------------------
+
 
 def build_place_data(active_manager_names: list[str] | None = None) -> pd.DataFrame:
     df = read_csv_file("places.csv", ["manager", "place", "lat", "lon"])
@@ -4569,7 +4996,7 @@ def render_clubhouse_home(managers: list[dict]):
     cols = st.columns(3)
     stories = [
         ("Sesongløpet", "Hvem klatrer, hvem faller og hvordan toppen utvikler seg fra GW til GW."),
-        ("Ligaeierskap", "Template, differensialer, kapteiner og hvem som faktisk sitter med Haaland."),
+        ("Spillere & kapteiner", "Hvem eier hvem, kapteinsvalg, differensialer og hvilke spillere som avgjør duellene."),
         ("Historieboka", "Pokaler, månedsvinnere og managerprofiler fra ligaens tidligere sesonger."),
     ]
     for col, (title, body) in zip(cols, stories):
@@ -4663,12 +5090,16 @@ elif main_page == "Sesongradar":
             f'''<div style="background:linear-gradient(110deg,#071525,#063d2e 58%,#511b1b);color:white;border-radius:20px;padding:18px 20px;margin:4px 0 18px 0;box-shadow:0 12px 30px rgba(15,23,42,.13)">
             <div style="font-size:.72rem;font-weight:900;letter-spacing:.1em;color:#fde68a">{'GW' + str(event_id) if event_id else 'FØR LIVE GW'} · LOFTHUS LIVE</div>
             <div style="font-size:clamp(1.45rem,2.5vw,2.15rem);font-weight:950;letter-spacing:-.035em;margin-top:4px">Sesongen akkurat nå</div>
-            <div style="font-size:.88rem;color:#d1d5db;margin-top:5px;max-width:840px">Sesongløp, form og tabellbevegelse i én sammenhengende oversikt. Eierskap ligger nederst og lastes ved behov.</div>
+            <div style="font-size:.88rem;color:#d1d5db;margin-top:5px;max-width:840px">Sesongløp, spillere, kapteiner og tabellbevegelse i én sammenhengende live-oversikt.</div>
             </div>''',
             unsafe_allow_html=True,
         )
 
         render_round_by_round_league_history(managers)
+
+        st.markdown("## Spillere & kapteiner")
+        st.caption("Live eierskap, kapteinsvalg, effektive eierskapstall, spilleroppslag og manageranalyse.")
+        render_ownership_dashboard(managers)
 
         st.markdown("## Form og bevegelse")
         climbers = radar.get("climbers", pd.DataFrame())
@@ -4748,17 +5179,6 @@ elif main_page == "Sesongradar":
                     if not under.empty:
                         display_table(under.head(10), ["player_name", "rank_num", "odds_rank", "performance_vs_odds"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
 
-        st.markdown("## Ligaeierskap")
-        st.caption("Template, differensialer, kapteiner og hvem som sitter med Haaland. Lastes ved behov, ikke hver gang du åpner radaren.")
-        if st.session_state.get("ownership_open_v110"):
-            if st.button("Skjul eierskap", key="ownership_hide_v110"):
-                st.session_state["ownership_open_v110"] = False
-                st.rerun()
-            render_ownership_dashboard(managers)
-        else:
-            if st.button("Last inn ligaeierskap", key="ownership_load_v110", type="primary"):
-                st.session_state["ownership_open_v110"] = True
-                st.rerun()
 
 elif main_page == "Odds":
     st.header("Odds")
