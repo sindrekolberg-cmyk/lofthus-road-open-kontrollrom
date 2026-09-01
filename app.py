@@ -34,7 +34,7 @@ from lro_history import HistoryStore, normalize_text
 from lro_odds import compare_group_odds, decimal_odds_from_pct, simulate_group
 import lro_ui as ui
 
-APP_VERSION = "lofthus-road-open-v401-quality-pass"
+APP_VERSION = "lofthus-road-open-v402-table-hotfix"
 DATA_DIR = Path(__file__).resolve().parent / "data"
 
 st.set_page_config(page_title="Lofthus Road Open", page_icon="⚽", layout="wide", initial_sidebar_state="collapsed")
@@ -463,7 +463,7 @@ def current_chip_map(managers: list[dict], bootstrap: dict) -> dict[int, str]:
     if not event_id:
         return {}
     entries = tuple(sorted(nint(m.get("entry")) for m in managers if nint(m.get("entry"))))
-    cache_key = f"v401_chip_map_{event_id}_{','.join(map(str, entries))}"
+    cache_key = f"v402_chip_map_{event_id}_{','.join(map(str, entries))}"
     if cache_key in st.session_state:
         return st.session_state[cache_key]
     payloads, _ = client.picks_many(entries, int(event_id), max_workers=10)
@@ -487,14 +487,13 @@ def current_chip_map(managers: list[dict], bootstrap: dict) -> dict[int, str]:
 
 
 def render_league_table(managers: list[dict], bootstrap: dict) -> None:
-    sort_mode = st.selectbox(
-        "Sorter",
-        ["Tabellen", "Mest opp", "Mest ned", "Beste GW"],
-        index=0,
-        key="v401_league_sort",
-    )
+    """Render the league as a native sortable sports table.
 
-    # Chip information belongs inside the team cell, not in yet another column.
+    Important UX rule: no separate sorting control. Streamlit's dataframe header
+    handles sorting directly, so clicking +/- toggles biggest rise / biggest fall.
+    The # column always contains the manager's real league rank.
+    """
+    # Chip information belongs with the team name, not in another column.
     chip_by_entry: dict[int, str] = {}
     try:
         with st.spinner("Henter chipbruk …"):
@@ -502,45 +501,50 @@ def render_league_table(managers: list[dict], bootstrap: dict) -> None:
     except Exception:
         chip_by_entry = {}
 
-    rows = []
-    for m in managers:
-        rank = nint(m.get("rank"), 10**9)
-        last = nint(m.get("last_rank"), rank)
-        move = last - rank if rank < 10**9 else 0
-        rows.append({"manager_obj": m, "rank": rank, "move_num": move, "gw_num": nint(m.get("event_total")), "total_num": nint(m.get("total"))})
-
-    if sort_mode == "Mest opp":
-        rows.sort(key=lambda x: (-x["move_num"], x["rank"], -x["gw_num"]))
-    elif sort_mode == "Mest ned":
-        rows.sort(key=lambda x: (x["move_num"], x["rank"], -x["gw_num"]))
-    elif sort_mode == "Beste GW":
-        rows.sort(key=lambda x: (-x["gw_num"], x["rank"]))
-    else:
-        rows.sort(key=lambda x: (x["rank"], -x["total_num"]))
-
     event_id = current_event_id(bootstrap) or 0
     if event_id and not current_event_finished(bootstrap):
         st.caption(f"GW{event_id} pågår · poeng og tabellendringer er live.")
 
     data = []
-    for item in rows:
-        m = item["manager_obj"]
-        rank = item["rank"]
-        move = item["move_num"]
+    for m in managers:
+        rank = nint(m.get("rank"), 10**9)
+        last = nint(m.get("last_rank"), rank)
+        move = last - rank if rank < 10**9 else 0
         entry = nint(m.get("entry"))
+        team_name = str(m.get("entry_name") or "").strip()
+        chip = str(chip_by_entry.get(entry, "") or "").strip()
+        if chip:
+            team_name = f"{team_name} · {chip}" if team_name else chip
+
         data.append({
-            "rank": rank if rank < 10**9 else "–",
-            "manager": manager_name(m),
-            "team": {"main": str(m.get("entry_name") or ""), "sub": chip_by_entry.get(entry, "")},
-            "gw": item["gw_num"],
-            "points": item["total_num"],
-            "move": f"↑{move}" if move > 0 else f"↓{abs(move)}" if move < 0 else "–",
+            "#": rank if rank < 10**9 else None,
+            "Manager": manager_name(m),
+            "Lag": team_name,
+            "GW": nint(m.get("event_total")),
+            "Poeng": nint(m.get("total")),
+            "+/-": int(move),
         })
-    ui.html_table(
-        [("rank", "#"), ("manager", "Manager"), ("team", "Lag"), ("gw", "GW"), ("points", "Poeng"), ("move", "+/−")],
-        data,
-        right={"rank", "gw", "points", "move"},
-        hide_mobile={"team", "gw", "move"},
+
+    # Keep the default order as the real league table. The user can then click any
+    # header, especially +/-, to sort client-side without another UI control.
+    data.sort(key=lambda r: ((r["#"] if r["#"] is not None else 10**9), -r["Poeng"]))
+    df = pd.DataFrame(data, columns=["#", "Manager", "Lag", "GW", "Poeng", "+/-"])
+
+    # Native st.dataframe is deliberately used here: header-click sorting is fast,
+    # local and requires no rerun/API calls. +/- stays numeric, so sorting is correct.
+    st.dataframe(
+        df,
+        hide_index=True,
+        use_container_width=True,
+        height=min(2500, max(420, 38 + 35 * len(df))),
+        column_config={
+            "#": st.column_config.NumberColumn("#", format="%d", width="small"),
+            "Manager": st.column_config.TextColumn("Manager", width="medium"),
+            "Lag": st.column_config.TextColumn("Lag", width="large"),
+            "GW": st.column_config.NumberColumn("GW", format="%d", width="small"),
+            "Poeng": st.column_config.NumberColumn("Poeng", format="%d", width="small"),
+            "+/-": st.column_config.NumberColumn("+/-", format="%+d", width="small"),
+        },
     )
 
 
