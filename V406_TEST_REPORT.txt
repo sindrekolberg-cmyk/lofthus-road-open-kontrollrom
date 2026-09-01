@@ -1,0 +1,13 @@
+Lofthus Road Open V406 - test report
+=====================================
+
+PASS: Python compilation for app.py and all lro_*.py modules.
+PASS: Rivalradar navigation uses Rivaler / Spilleroversikt and no longer exposes Odds.
+PASS: Ligaen contains Odds før sesongstart.
+PASS: Month presentation has previous-completed-month fallback when current month has zero points.
+PASS: Siste runde uses the word poeng.
+PASS: Captain summary separates normal C from TC so a lone TC is shown as 1 TC, not 1 C · 1 TC.
+PASS: Full captain overview is available in a floating Streamlit popover.
+PASS: Rival candidates carry actual selected-rival owner names into the UI and transfer reasons.
+PASS: Snakkiser produces: "Oskar Kristensen Brun brukte Triple Captain på Tzolis – og fikk 0 poeng." for the observed zero-point TC case.
+PASS: Existing Hall of Fame / Månedskonger / mesterrekord logic retained from V405.

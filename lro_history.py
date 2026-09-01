@@ -323,16 +323,19 @@ class HistoryStore:
         # equal and ensures the most successful league champions rank highest.
         sort_cols = [
             "league_gold",
-            "cup_gold",
-            "monthly_gold",
             "league_silver",
             "league_bronze",
+            "cup_gold",
             "cup_silver",
+            "monthly_gold",
             "monthly_silver",
             "monthly_bronze",
+            "podiums",
             "display_name",
         ]
-        ascending = [False, False, False, False, False, False, False, False, True]
+        # Lexicographic honour hierarchy. The first criterion is absolute:
+        # more LRO season championships always wins the comparison.
+        ascending = [False, False, False, False, False, False, False, False, False, True]
         df = pd.DataFrame(rows).sort_values(sort_cols, ascending=ascending).reset_index(drop=True)
         df.insert(0, "rank", range(1, len(df) + 1))
         return df

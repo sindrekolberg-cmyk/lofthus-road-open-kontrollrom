@@ -34,7 +34,7 @@ from lro_history import HistoryStore, normalize_text
 from lro_odds import build_preseason_odds, compare_group_odds, decimal_odds_from_pct, simulate_group
 import lro_ui as ui
 
-APP_VERSION = "lofthus-road-open-v403-rival-season-records"
+APP_VERSION = "lofthus-road-open-v404-hall-of-fame-fix"
 DATA_DIR = Path(__file__).resolve().parent / "data"
 
 st.set_page_config(page_title="Lofthus Road Open", page_icon="⚽", layout="wide", initial_sidebar_state="collapsed")
@@ -175,6 +175,56 @@ def current_month_table(managers: list[dict], bootstrap: dict) -> tuple[dict | N
     return phase, df
 
 
+def display_month_table(managers: list[dict], bootstrap: dict) -> tuple[dict | None, pd.DataFrame, bool]:
+    """Month table for presentation.
+
+    If a new calendar month has started but FPL has not awarded any points in
+    that monthly phase yet, keep showing the previous completed month. This
+    avoids an alphabetical 0-point table on the front page while preserving the
+    real current-month zeroes for calculations such as Rivalradar.
+    """
+    phase, df = current_month_table(managers, bootstrap)
+    if phase is None:
+        return None, pd.DataFrame(), False
+
+    points_sum = int(pd.to_numeric(df.get("points", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()) if not df.empty else 0
+    if points_sum > 0:
+        return phase, df, True
+
+    max_finished = max(finished_event_ids(bootstrap) or [0])
+    phases = month_phases(bootstrap)
+    previous = [
+        p for p in phases
+        if nint(p.get("id")) != nint(phase.get("id"))
+        and nint(p.get("stop_event")) > 0
+        and nint(p.get("stop_event")) <= max_finished
+        and nint(p.get("stop_event")) < nint(phase.get("start_event"), 10**9)
+    ]
+    if not previous:
+        return phase, df, False
+
+    previous_phase = sorted(previous, key=lambda p: nint(p.get("stop_event")), reverse=True)[0]
+    try:
+        standings = client.league_phase_standings(DEFAULT_LEAGUE_ID, previous_phase["id"])
+    except Exception:
+        standings = []
+    rows = [
+        {
+            "rank": nint(r.get("rank")),
+            "entry": nint(r.get("entry")),
+            "manager": history_store.canonical(str(r.get("player_name") or "Ukjent manager")),
+            "team": str(r.get("entry_name") or ""),
+            "points": nint(r.get("total")),
+        }
+        for r in standings
+    ]
+    previous_df = pd.DataFrame(rows)
+    if previous_df.empty:
+        return phase, df, False
+    previous_df = previous_df.sort_values(["rank", "manager"]).reset_index(drop=True)
+    return previous_phase, previous_df, False
+
+
 def current_month_points_map(managers: list[dict], bootstrap: dict) -> dict[int, float]:
     _, df = current_month_table(managers, bootstrap)
     if df.empty:
@@ -263,12 +313,12 @@ def render_live(managers: list[dict], bootstrap: dict, compact: bool = False) ->
 
 
 def render_month(managers: list[dict], bootstrap: dict, top: int = 5) -> None:
-    phase, df = current_month_table(managers, bootstrap)
+    phase, df, is_current_live = display_month_table(managers, bootstrap)
     if phase is None:
         st.caption("Månedstabellen er ikke tilgjengelig akkurat nå.")
         return
-    ui.section(f"{phase['name']} · live")
-    zero = df.empty or int(pd.to_numeric(df.get("points", 0), errors="coerce").fillna(0).sum()) == 0
+    title = f"{phase['name']} · live" if is_current_live else phase["name"]
+    ui.section(title)
     ui.rows([
         {
             "rank": nint(r.get("rank")),
@@ -279,8 +329,6 @@ def render_month(managers: list[dict], bootstrap: dict, top: int = 5) -> None:
         }
         for i, r in enumerate(df.head(top).to_dict("records"))
     ])
-    if zero:
-        st.caption(f"Ingen {phase['name'].casefold()}poeng ennå.")
 
 
 def render_home(managers: list[dict], bootstrap: dict) -> None:
@@ -293,14 +341,15 @@ def render_home(managers: list[dict], bootstrap: dict) -> None:
         month_leader = month_df.iloc[0].to_dict() if not month_df.empty else {}
         ui.stat_strip([
             (leader.get("manager", "–"), "Ligaleder"),
-            (f"{winner.get('manager', '–')} · {winner.get('gw', 0)} p", "Siste runde"),
+            (f"{winner.get('manager', '–')} · {winner.get('gw', 0)} poeng", "Siste runde"),
             (month_leader.get("manager", "–"), f"{phase['name']}" if phase else "Måneden"),
         ])
 
     ui.section("Snakkiser")
-    ownership = None
-    if live:
-        ownership = selected_ownership(managers)
+    # Snakkiser should also catch notable chip outcomes after live play has ended.
+    # The derived ownership object is cached, so this does not keep refetching all
+    # 63 teams on every rerender.
+    ownership = selected_ownership(managers)
     story_items = stories(managers, ownership, history_store)
     if not story_items:
         story_items = ["Ligaen er i gang. Flere snakkiser kommer når rundene begynner å sette seg."]
@@ -333,6 +382,26 @@ def render_captains(ownership: dict) -> None:
         st.caption("Kapteinsdata er ikke tilgjengelig akkurat nå.")
         return
     caps = players[players["captain_count"] > 0].sort_values(["captain_count", "player"], ascending=[False, True])
+
+    # Full detail floats over the page instead of stretching the whole view down.
+    with st.popover("Se full kapteinsoversikt"):
+        st.markdown("**Alle kapteinsvalg denne runden**")
+        detail_cols = st.columns(2)
+        for i, r in enumerate(caps.to_dict("records")):
+            names = list(r.get("captains") or [])
+            triples = set(r.get("triple_captains") or [])
+            labelled = [f"{name} (TC)" if name in triples else name for name in names]
+            regular_count = max(0, nint(r.get("captain_count")) - nint(r.get("triple_captain_count")))
+            tc_count = nint(r.get("triple_captain_count"))
+            count_bits = []
+            if regular_count:
+                count_bits.append(f"{regular_count} C")
+            if tc_count:
+                count_bits.append(f"{tc_count} TC")
+            with detail_cols[i % 2]:
+                st.markdown(f"**{r.get('player')}** · {' · '.join(count_bits)}")
+                st.caption(" · ".join(labelled))
+
     cap_items = []
     for i, r in enumerate(caps.head(10).to_dict("records")):
         names = list(r.get("captains") or [])
@@ -341,11 +410,18 @@ def render_captains(ownership: dict) -> None:
         shown = ", ".join(labelled[:4])
         if len(labelled) > 4:
             shown += f" +{len(labelled) - 4}"
+        regular_count = max(0, nint(r.get("captain_count")) - nint(r.get("triple_captain_count")))
+        tc_count = nint(r.get("triple_captain_count"))
+        count_bits = []
+        if regular_count:
+            count_bits.append(f"{regular_count} C")
+        if tc_count:
+            count_bits.append(f"{tc_count} TC")
         cap_items.append({
             "rank": i + 1,
             "who": r.get("player"),
             "meta": shown,
-            "num": f"{nint(r.get('captain_count'))} C" + (f" · {nint(r.get('triple_captain_count'))} TC" if nint(r.get("triple_captain_count")) else ""),
+            "num": " · ".join(count_bits),
         })
     ui.rows(cap_items)
 
@@ -428,7 +504,7 @@ def render_player_search(ownership: dict, key: str) -> None:
 
 def render_season(managers: list[dict], bootstrap: dict, embedded: bool = False) -> None:
     if not embedded:
-        ui.page_title("Sesong", "Live, kapteiner og spillerne som faktisk flytter ligaen.")
+        ui.page_title("Spilleroversikt", "Kapteiner, eierskap og spillerne som faktisk flytter ligaen.")
     render_live(managers, bootstrap)
     with st.spinner("Henter Lofthus-lag …"):
         ownership = selected_ownership(managers)
@@ -768,15 +844,18 @@ def render_compare(managers: list[dict], bootstrap: dict) -> None:
 
 def render_league(managers: list[dict], bootstrap: dict, auto_rows: list[dict]) -> None:
     ui.page_title("Ligaen")
-    view = ui.nav(["Tabell", "Manager", "Sammenlign"], "v400_league_view", "Tabell")
+    view = ui.nav(["Tabell", "Manager", "Sammenlign", "Odds før sesongstart"], "v405_league_view", "Tabell")
     if view == "Tabell":
         render_league_table(managers, bootstrap)
     elif view == "Manager":
         opts = manager_options(managers); ids = [x[0] for x in opts]; labels = dict(opts)
         entry = st.selectbox("Finn manager", ids, format_func=lambda x: labels.get(int(x), str(x)), key="v400_manager_select")
         render_manager_profile(int(entry), managers, bootstrap, auto_rows)
-    else:
+    elif view == "Sammenlign":
         render_compare(managers, bootstrap)
+    else:
+        ui.section("Odds før sesongstart")
+        render_preseason_odds(managers)
 
 
 def render_candidate_list(df: pd.DataFrame, title: str, rival_n: int, mode: str, limit: int = 3) -> None:
@@ -793,10 +872,12 @@ def render_candidate_list(df: pd.DataFrame, title: str, rival_n: int, mode: str,
             num = f"{max(0, rival_n - rival_count)}/{rival_n} rivaler mangler"
         else:
             num = "Ingen rivaler har" if rival_count == 0 else f"{rival_count}/{rival_n} rivaler har"
+        owners = list(r.get("rival_owners") or [])
+        owner_text = f" · Eies av: {', '.join(owners)}" if owners else ""
         items.append({
             "rank": i + 1,
             "who": r.get("web_name"),
-            "meta": f"{r.get('club')} · {r.get('position')} · {fmt_price(r.get('current_price'))} · {r.get('outlook_label')}",
+            "meta": f"{r.get('club')} · {r.get('position')} · {fmt_price(r.get('current_price'))} · {r.get('outlook_label')}{owner_text}",
             "num": num,
         })
     ui.rows(items)
@@ -1024,23 +1105,44 @@ def render_odds_hub(managers: list[dict], bootstrap: dict) -> None:
 
 def render_rivalradar(managers: list[dict], bootstrap: dict) -> None:
     ui.page_title("Rivalradar")
-    view = ui.nav(["Rivaler", "Sesong", "Odds"], "v403_rival_view", "Rivaler")
+    view = ui.nav(["Rivaler", "Spilleroversikt"], "v406_rival_view", "Rivaler")
     if view == "Rivaler":
         render_rival_matchup(managers, bootstrap)
-    elif view == "Sesong":
-        render_season(managers, bootstrap, embedded=True)
     else:
-        render_odds_hub(managers, bootstrap)
+        render_season(managers, bootstrap, embedded=True)
 
 def render_history(auto_rows: list[dict], managers: list[dict] | None = None) -> None:
     managers = managers or []
-    ui.page_title("Historikk")
-    view = ui.nav(["Hall of Fame", "Månedsvinnere", "Sesonger", "Rekorder"], "v400_history_view", "Hall of Fame")
-    if view == "Hall of Fame":
+    ui.page_title("Hall of Fame")
+    view = ui.nav(["Rangering", "Månedskonger", "Sesonger", "Rekorder"], "v404_hof_view", "Rangering")
+    if view == "Rangering":
         hof = history_store.hall_of_fame(auto_rows)
         if hof.empty:
             st.caption("Ingen historikk funnet.")
             return
+
+        # V404: enforce the Hall of Fame hierarchy again at render time as a
+        # defensive guard. A season championship is the top honour in LRO.
+        # Two league titles MUST rank above one league title regardless of cups,
+        # monthly wins or total podiums. This also protects the UI if an older
+        # lro_history.py is accidentally left in a deployment.
+        sort_spec = [
+            ("league_gold", False),
+            ("league_silver", False),
+            ("league_bronze", False),
+            ("cup_gold", False),
+            ("cup_silver", False),
+            ("monthly_gold", False),
+            ("monthly_silver", False),
+            ("monthly_bronze", False),
+            ("podiums", False),
+            ("display_name", True),
+        ]
+        sort_cols = [c for c, _ in sort_spec if c in hof.columns]
+        ascending = [a for c, a in sort_spec if c in hof.columns]
+        hof = hof.sort_values(sort_cols, ascending=ascending, kind="stable").reset_index(drop=True)
+        hof["rank"] = range(1, len(hof) + 1)
+
         hall_rows = []
         for i, r in enumerate(hof.head(40).to_dict("records")):
             merits = []
@@ -1049,19 +1151,19 @@ def render_history(auto_rows: list[dict], managers: list[dict] | None = None) ->
             if nint(r.get("cup_gold")):
                 merits.append(f"{nint(r.get('cup_gold'))} cupgull")
             if nint(r.get("monthly_gold")):
-                merits.append(f"{nint(r.get('monthly_gold'))} månedsseier" + ("e" if nint(r.get("monthly_gold")) != 1 else ""))
+                merits.append(f"{nint(r.get('monthly_gold'))} månedskonge" + ("r" if nint(r.get("monthly_gold")) != 1 else ""))
             if not merits:
                 merits.append(f"{nint(r.get('podiums'))} pallplasser")
             hall_rows.append({
-                "rank": nint(r.get("rank")),
+                "rank": i + 1,
                 "rank_class": "gold" if i == 0 else "silver" if i == 1 else "bronze" if i == 2 else "",
                 "who": r.get("display_name"),
                 "meta": " · ".join(merits),
                 "num": f"{nint(r.get('podiums'))} pallplasser",
             })
         ui.rows(hall_rows)
-        st.caption("Sesongtitler rangerer høyest. Deretter teller cupgull, månedsseire og øvrige pallplasser.")
-    elif view == "Månedsvinnere":
+        st.caption("Sesongtitler rangerer høyest. To sesongtitler slår alltid én, uansett cup- og månedsmeritter.")
+    elif view == "Månedskonger":
         medals = history_store.monthly_medals(auto_rows)
         ui.rows([
             {"rank": nint(r.get("rank")), "who": r.get("manager"), "meta": f"{nint(r.get('podiums'))} pallplasser", "num": f"{nint(r.get('gold'))} gull · {nint(r.get('silver'))} sølv · {nint(r.get('bronze'))} bronse"}
@@ -1089,7 +1191,7 @@ def render_history(auto_rows: list[dict], managers: list[dict] | None = None) ->
         ui.rows([
             {"rank": "L", "who": league["display_name"], "meta": "Flest ligatitler", "num": nint(league["league_gold"])},
             {"rank": "C", "who": cup["display_name"], "meta": "Flest cupgull", "num": nint(cup["cup_gold"])},
-            {"rank": "M", "who": month["display_name"], "meta": "Flest månedsseire", "num": nint(month["monthly_gold"])},
+            {"rank": "M", "who": month["display_name"], "meta": "Flest månedskonge-titler", "num": nint(month["monthly_gold"])},
             {"rank": "P", "who": podium["display_name"], "meta": "Flest pallplasser", "num": nint(podium["podiums"])},
         ])
 
@@ -1150,13 +1252,13 @@ def load_app_data() -> tuple[dict, list[dict], list[str]]:
 
 bootstrap, managers, load_errors = load_app_data()
 ui.header(short_season_label(bootstrap) if bootstrap else "26/27")
-main_page = ui.nav(["Forside", "Ligaen", "Rivalradar", "Historikk"], "v400_main_page", "Forside")
+main_page = ui.nav(["Forside", "Ligaen", "Rivalradar", "Hall of Fame"], "v400_main_page", "Forside")
 
 if not bootstrap or not managers:
     st.warning("FPL-data er midlertidig utilgjengelig.")
     if load_errors:
         st.caption("Historikken kan fortsatt fungere når datafilene ligger i repoet.")
-    if main_page == "Historikk":
+    if main_page == "Hall of Fame":
         render_history([], [])
 else:
     auto_rows = auto_monthly_rows(bootstrap)
@@ -1166,7 +1268,7 @@ else:
         render_league(managers, bootstrap, auto_rows)
     elif main_page == "Rivalradar":
         render_rivalradar(managers, bootstrap)
-    elif main_page == "Historikk":
+    elif main_page == "Hall of Fame":
         render_history(auto_rows, managers)
 
 # Hidden developer health data: no sidebar, no normal UI noise.

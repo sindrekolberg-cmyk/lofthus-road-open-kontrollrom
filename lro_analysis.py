@@ -453,6 +453,19 @@ def rival_analysis(
     player_df, event_ids = build_player_outlooks(client, period)
     player_df["rival_count"] = player_df["element_id"].map(lambda x: int(rival_counts.get(int(x), 0)))
     player_df["rival_pct"] = player_df["rival_count"].map(lambda x: 100 * x / rival_n)
+    rival_name_map = {
+        nint(m.get("entry")): history.canonical(str(m.get("player_name") or "Ukjent manager"))
+        for m in managers
+        if nint(m.get("entry")) in {int(x) for x in rival_entries}
+    }
+    def _rival_owners(element_id: int) -> list[str]:
+        element_id = int(element_id)
+        return [
+            rival_name_map.get(int(entry), str(entry))
+            for entry in rival_entries
+            if element_id in rival_sets.get(int(entry), set())
+        ]
+    player_df["rival_owners"] = player_df["element_id"].map(_rival_owners)
     player_df["i_own"] = player_df["element_id"].isin(me)
     player_df = _relevance_filter(player_df, event)
 
@@ -568,12 +581,13 @@ def transfer_suggestions(
             if nfloat(cand.get("outlook_score")) < max(28.0, out_value - 5.0):
                 transfer_score -= 18.0
             reasons = []
+            rival_owners = list(cand.get("rival_owners") or [])
             if rcount == 0:
                 reasons.append(f"Ingen av {rival_n} rivaler eier ham")
             elif rcount == rival_n:
-                reasons.append("Alle rivalene dine eier ham")
+                reasons.append("Alle rivalene dine eier ham" + (f": {', '.join(rival_owners)}" if rival_owners else ""))
             else:
-                reasons.append(f"{rcount} av {rival_n} rivaler eier ham")
+                reasons.append(f"{rcount} av {rival_n} rivaler eier ham" + (f": {', '.join(rival_owners)}" if rival_owners else ""))
             reasons.append(str(cand.get("outlook_label") or "Program vurdert"))
             reasons.append(f"Forventet område {nint(cand.get('outlook_expected_low'))}–{nint(cand.get('outlook_expected_high'))} p i perioden")
             if price < sell_price:
@@ -642,9 +656,16 @@ def stories(managers: list[dict], ownership: dict | None, history: HistoryStore)
     out: list[str] = []
     if ownership and not ownership.get("picks", pd.DataFrame()).empty:
         picks = ownership["picks"]
-        tc = picks[picks["is_triple_captain"]]
+        tc = picks[picks["is_triple_captain"]].copy()
+        if not tc.empty:
+            # A failed Triple Captain is exactly the sort of thing Snakkiser exists for.
+            tc = tc.sort_values(["event_points", "manager"], ascending=[True, True])
         for row in tc.head(2).to_dict("records"):
-            out.append(f"{row['manager']} brukte Triple Captain på {row['player']}.")
+            points = nint(row.get("event_points"))
+            if points == 0:
+                out.append(f"{row['manager']} brukte Triple Captain på {row['player']} – og fikk 0 poeng.")
+            else:
+                out.append(f"{row['manager']} brukte Triple Captain på {row['player']} – {points} poeng.")
     if move.get("best_climber") and move["best_climber"]["move"] >= 8:
         r = move["best_climber"]
         out.append(f"{r['manager']} klatret {r['move']} plasser.")
