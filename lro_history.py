@@ -304,7 +304,23 @@ class HistoryStore:
             })
         if not rows:
             return pd.DataFrame()
-        df = pd.DataFrame(rows).sort_values(["gold", "silver", "bronze", "display_name"], ascending=[False, False, False, True]).reset_index(drop=True)
+        # Hall of Fame hierarchy: season championships are the premier honour.
+        # Cup wins and monthly wins separate managers after league titles, followed
+        # by the remaining podium record. This avoids treating every "gold" as
+        # equal and ensures the most successful league champions rank highest.
+        sort_cols = [
+            "league_gold",
+            "cup_gold",
+            "monthly_gold",
+            "league_silver",
+            "league_bronze",
+            "cup_silver",
+            "monthly_silver",
+            "monthly_bronze",
+            "display_name",
+        ]
+        ascending = [False, False, False, False, False, False, False, False, True]
+        df = pd.DataFrame(rows).sort_values(sort_cols, ascending=ascending).reset_index(drop=True)
         df.insert(0, "rank", range(1, len(df) + 1))
         return df
 

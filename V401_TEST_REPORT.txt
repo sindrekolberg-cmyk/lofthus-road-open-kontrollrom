@@ -1,0 +1,46 @@
+LOFTHUS ROAD OPEN V401 - TEST REPORT
+====================================
+
+PASS: Python compile
+- app.py
+- lro_fpl.py
+- lro_analysis.py
+- lro_history.py
+- lro_odds.py
+- lro_ui.py
+- tests_v401.py
+
+PASS: Core regression tests
+- player current price from now_cost / 10
+- selling price remains separate
+- purchase price remains separate
+- captain count
+- Triple Captain count
+- transfer affordability using selling price + bank
+- aliases / canonical manager names
+- month phase
+- historical weighting
+
+PASS: Hall of Fame hierarchy
+- two season championships outrank one season championship plus multiple cup/monthly wins
+- Olympic ordering still applies within comparable league-title records
+
+PASS: Rivalradar regression
+- only selected manager + selected rivals are fetched for base rival analysis
+- candidate categories populate correctly
+
+PASS: 63-manager ownership regression
+- 63/63 managers loaded in mock
+- captain count remains manager-count based
+- TC counts separately without inflating captain ranking
+
+STATIC CHECKS
+- separate TC alert removed from app renderers
+- Hall of Fame no longer uses aggregate-gold sort as primary hierarchy
+- app version = lofthus-road-open-v401-quality-pass
+
+NOT RUN IN THIS BUILD ENVIRONMENT
+- real FPL API calls (internet unavailable)
+- real Streamlit browser rendering (Streamlit package unavailable)
+
+First deployment should therefore still be treated as the live visual/API smoke test.

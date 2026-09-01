@@ -90,6 +90,8 @@ label, .stSelectbox label, .stMultiSelect label {font-weight:750 !important; col
 .v400-table .right {text-align:right; white-space:nowrap;}
 .v400-table .strong {font-weight:850;}
 .v400-table .muted {color:var(--muted);}
+.v400-cell-main {font-weight:700;}
+.v400-cell-meta {display:block;color:var(--muted);font-size:.75rem;font-weight:650;margin-top:.12rem;line-height:1.25;}
 
 /* live */
 .v400-live {background:var(--ink); color:#fff; border-radius:14px; padding:1rem 1.15rem; margin:1rem 0 1.2rem;}
@@ -225,6 +227,16 @@ def rows(items: list[dict]) -> None:
         st.markdown("<div class='v400-list'>" + "".join(bits) + "</div>", unsafe_allow_html=True)
 
 
+def inline_note(label: str, text: str) -> None:
+    if not str(text or "").strip():
+        return
+    st.markdown(
+        f"<div style='margin:.35rem 0 .9rem;color:var(--muted);font-size:.82rem'>"
+        f"<strong style='color:var(--text)'>{esc(label)}</strong> · {esc(text)}</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def html_table(headers: list[tuple[str, str]], data: list[dict], right: set[str] | None = None, hide_mobile: set[str] | None = None) -> None:
     right = right or set()
     hide_mobile = hide_mobile or set()
@@ -248,7 +260,15 @@ def html_table(headers: list[tuple[str, str]], data: list[dict], right: set[str]
             value = row.get(key, "")
             if key in {"manager", "player", "name"}:
                 classes.append("strong")
-            cells.append(f"<td class='{' '.join(classes)}'>{esc(value)}</td>")
+            if isinstance(value, dict) and ("main" in value or "sub" in value):
+                main = esc(value.get("main", ""))
+                sub = esc(value.get("sub", ""))
+                rendered = f"<span class='v400-cell-main'>{main}</span>"
+                if sub:
+                    rendered += f"<span class='v400-cell-meta'>{sub}</span>"
+            else:
+                rendered = esc(value)
+            cells.append(f"<td class='{' '.join(classes)}'>{rendered}</td>")
         trs.append("<tr>" + "".join(cells) + "</tr>")
     st.markdown(
         "<div class='v400-table-wrap'><table class='v400-table'><thead><tr>"

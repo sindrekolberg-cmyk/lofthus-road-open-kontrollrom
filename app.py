@@ -10,6 +10,7 @@ import streamlit as st
 from lro_analysis import (
     build_ownership,
     canonical_managers,
+    chip_label,
     manager_form_from_histories,
     manager_squad,
     nfloat,
@@ -33,7 +34,7 @@ from lro_history import HistoryStore, normalize_text
 from lro_odds import compare_group_odds, decimal_odds_from_pct, simulate_group
 import lro_ui as ui
 
-APP_VERSION = "lofthus-road-open-v400-rebuild"
+APP_VERSION = "lofthus-road-open-v401-quality-pass"
 DATA_DIR = Path(__file__).resolve().parent / "data"
 
 st.set_page_config(page_title="Lofthus Road Open", page_icon="⚽", layout="wide", initial_sidebar_state="collapsed")
@@ -198,6 +199,16 @@ def active_fixtures(bootstrap: dict) -> tuple[list[dict], dict[int, str]]:
     return active, teams
 
 
+def current_event_finished(bootstrap: dict) -> bool:
+    event_id = current_event_id(bootstrap)
+    if not event_id:
+        return True
+    for event in bootstrap.get("events", []) or []:
+        if nint(event.get("id")) == int(event_id):
+            return bool(event.get("finished")) or bool(event.get("data_checked"))
+    return False
+
+
 def fixture_score(f: dict, teams: dict[int, str]) -> str:
     home = teams.get(nint(f.get("team_h")), "?")
     away = teams.get(nint(f.get("team_a")), "?")
@@ -229,21 +240,24 @@ def render_live(managers: list[dict], bootstrap: dict, compact: bool = False) ->
         + pd.to_numeric(live["event_points"], errors="coerce").fillna(0) * 2
     )
     live = live.sort_values("importance", ascending=False).head(5 if compact else 10)
-    ui.rows([
-        {
-            "rank": "TC" if nint(r.get("triple_captain_count")) else "C" if nint(r.get("captain_count")) else "",
-            "who": r.get("player"),
-            "meta": f"{nint(r.get('ownership_count'))}/{nint(ownership.get('loaded_managers'))} eiere"
-            + (f" · {nint(r.get('captain_count'))} C" if nint(r.get("captain_count")) else "")
-            + (f" · {nint(r.get('triple_captain_count'))} TC" if nint(r.get("triple_captain_count")) else ""),
-            "num": f"{nint(r.get('event_points'))} p",
-        }
-        for r in live.to_dict("records")
-    ])
+    live_rows = []
     for r in live.to_dict("records"):
-        if nint(r.get("triple_captain_count")):
-            names = ", ".join(r.get("triple_captains") or [])
-            ui.alert("Triple Captain", f"{names}: {r.get('player')}")
+        tc_names = list(r.get("triple_captains") or [])
+        meta = f"{nint(r.get('ownership_count'))}/{nint(ownership.get('loaded_managers'))} eiere"
+        if nint(r.get("captain_count")):
+            meta += f" · {nint(r.get('captain_count'))} C"
+        if tc_names:
+            shown_tc = ", ".join(tc_names[:2])
+            if len(tc_names) > 2:
+                shown_tc += f" +{len(tc_names) - 2}"
+            meta += f" · TC: {shown_tc}"
+        live_rows.append({
+            "rank": "TC" if tc_names else "C" if nint(r.get("captain_count")) else "",
+            "who": r.get("player"),
+            "meta": meta,
+            "num": f"{nint(r.get('event_points'))} p",
+        })
+    ui.rows(live_rows)
     data_quality_note(ownership)
     return True
 
@@ -316,9 +330,11 @@ def render_captains(ownership: dict) -> None:
     cap_items = []
     for i, r in enumerate(caps.head(10).to_dict("records")):
         names = list(r.get("captains") or [])
-        shown = ", ".join(names[:4])
-        if len(names) > 4:
-            shown += f" +{len(names) - 4}"
+        triples = set(r.get("triple_captains") or [])
+        labelled = [f"{name} (TC)" if name in triples else name for name in names]
+        shown = ", ".join(labelled[:4])
+        if len(labelled) > 4:
+            shown += f" +{len(labelled) - 4}"
         cap_items.append({
             "rank": i + 1,
             "who": r.get("player"),
@@ -326,9 +342,6 @@ def render_captains(ownership: dict) -> None:
             "num": f"{nint(r.get('captain_count'))} C" + (f" · {nint(r.get('triple_captain_count'))} TC" if nint(r.get("triple_captain_count")) else ""),
         })
     ui.rows(cap_items)
-    triples = caps[caps["triple_captain_count"] > 0]
-    for r in triples.to_dict("records"):
-        ui.alert("Triple Captain", f"{', '.join(r.get('triple_captains') or [])}: {r.get('player')}")
 
 
 def render_popular(ownership: dict) -> None:
@@ -445,18 +458,82 @@ def render_season(managers: list[dict], bootstrap: dict) -> None:
         st.caption("Velg manager under Ligaen for detaljert form. Full 63-linjers graf er bevisst ikke standardvisningen.")
 
 
-def render_league_table(managers: list[dict]) -> None:
-    data = []
-    for m in sorted(managers, key=lambda x: (nint(x.get("rank"), 10**9), -nint(x.get("total")))):
-        rank = nint(m.get("rank"))
+def current_chip_map(managers: list[dict], bootstrap: dict) -> dict[int, str]:
+    event_id = current_event_id(bootstrap)
+    if not event_id:
+        return {}
+    entries = tuple(sorted(nint(m.get("entry")) for m in managers if nint(m.get("entry"))))
+    cache_key = f"v401_chip_map_{event_id}_{','.join(map(str, entries))}"
+    if cache_key in st.session_state:
+        return st.session_state[cache_key]
+    payloads, _ = client.picks_many(entries, int(event_id), max_workers=10)
+    catalog = player_catalog(bootstrap)
+    out: dict[int, str] = {}
+    for entry, payload in payloads.items():
+        chip = chip_label(payload.get("active_chip"))
+        if not chip:
+            continue
+        label = chip
+        if chip == "Triple Captain":
+            picks = payload.get("picks", []) or []
+            cap = next((p for p in picks if p.get("is_captain")), None)
+            if cap:
+                player = catalog.get(nint(cap.get("element")), {}).get("web_name")
+                if player:
+                    label = f"Triple Captain · {player}"
+        out[int(entry)] = label
+    st.session_state[cache_key] = out
+    return out
+
+
+def render_league_table(managers: list[dict], bootstrap: dict) -> None:
+    sort_mode = st.selectbox(
+        "Sorter",
+        ["Tabellen", "Mest opp", "Mest ned", "Beste GW"],
+        index=0,
+        key="v401_league_sort",
+    )
+
+    # Chip information belongs inside the team cell, not in yet another column.
+    chip_by_entry: dict[int, str] = {}
+    try:
+        with st.spinner("Henter chipbruk …"):
+            chip_by_entry = current_chip_map(managers, bootstrap)
+    except Exception:
+        chip_by_entry = {}
+
+    rows = []
+    for m in managers:
+        rank = nint(m.get("rank"), 10**9)
         last = nint(m.get("last_rank"), rank)
-        move = last - rank
+        move = last - rank if rank < 10**9 else 0
+        rows.append({"manager_obj": m, "rank": rank, "move_num": move, "gw_num": nint(m.get("event_total")), "total_num": nint(m.get("total"))})
+
+    if sort_mode == "Mest opp":
+        rows.sort(key=lambda x: (-x["move_num"], x["rank"], -x["gw_num"]))
+    elif sort_mode == "Mest ned":
+        rows.sort(key=lambda x: (x["move_num"], x["rank"], -x["gw_num"]))
+    elif sort_mode == "Beste GW":
+        rows.sort(key=lambda x: (-x["gw_num"], x["rank"]))
+    else:
+        rows.sort(key=lambda x: (x["rank"], -x["total_num"]))
+
+    event_id = current_event_id(bootstrap) or 0
+    if event_id and not current_event_finished(bootstrap):
+        st.caption(f"GW{event_id} pågår · poeng og tabellendringer er live.")
+
+    data = []
+    for item in rows:
+        m = item["manager_obj"]
+        rank = item["rank"]
+        move = item["move_num"]
+        entry = nint(m.get("entry"))
         data.append({
-            "rank": rank,
+            "rank": rank if rank < 10**9 else "–",
             "manager": manager_name(m),
-            "team": str(m.get("entry_name") or ""),
-            "gw": nint(m.get("event_total")),
-            "points": nint(m.get("total")),
+            "team": {"main": str(m.get("entry_name") or ""), "sub": chip_by_entry.get(entry, "")},
+            "gw": item["gw_num"],
+            "points": item["total_num"],
             "move": f"↑{move}" if move > 0 else f"↓{abs(move)}" if move < 0 else "–",
         })
     ui.html_table(
@@ -467,18 +544,19 @@ def render_league_table(managers: list[dict]) -> None:
     )
 
 
-def render_form(managers: list[dict], entry: int) -> None:
+def render_form(managers: list[dict], entry: int) -> dict:
     with st.spinner("Henter form …"):
         histories, errors = histories_for([nint(m.get("entry")) for m in managers])
+    entry_history = histories.get(int(entry), {}) or {}
     form = manager_form_from_histories(managers, histories, int(entry), 5)
     if form.empty:
-        own = histories.get(int(entry), {}).get("current", []) or []
+        own = entry_history.get("current", []) or []
         if own:
             own = own[-5:]
             ui.rows([{"rank": f"GW{nint(r.get('event'))}", "who": f"{nint(r.get('points'))} poeng", "meta": f"FPL-rank {nint(r.get('overall_rank')):,}".replace(",", " "), "num": ""} for r in own])
         else:
             st.caption("Formdata er ikke tilgjengelig.")
-        return
+        return entry_history
     ui.rows([
         {
             "rank": f"GW{nint(r.get('event'))}",
@@ -488,6 +566,19 @@ def render_form(managers: list[dict], entry: int) -> None:
         }
         for r in form.to_dict("records")
     ])
+    return entry_history
+
+
+def render_chip_history(entry_history: dict) -> None:
+    chips = entry_history.get("chips", []) or []
+    items = []
+    for row in chips:
+        label = chip_label(row.get("name"))
+        event = nint(row.get("event"))
+        if label:
+            items.append(f"{label} GW{event}" if event else label)
+    if items:
+        ui.inline_note("Chips brukt", " · ".join(items))
 
 
 def render_merits(name: str, auto_rows: list[dict]) -> None:
@@ -547,21 +638,25 @@ def render_manager_profile(entry: int, managers: list[dict], bootstrap: dict, au
         (f"{month_rank}." if month_rank else "–", phase["name"] if phase else "Måneden"),
     ])
     ui.section("Form")
-    render_form(managers, entry)
+    entry_history = render_form(managers, entry)
     ui.section("Meritter")
     render_merits(name, auto_rows)
+    render_chip_history(entry_history)
     ownership, squad = render_squad(entry, managers, bootstrap)
     if not squad.empty:
         event_row = ownership.get("manager_events", pd.DataFrame())
         if not event_row.empty:
             e = event_row.iloc[0]
             chip = str(e.get("active_chip") or "")
-            ui.stat_strip([
+            event_id = current_event_id(bootstrap) or 0
+            squad_stats = [
                 (fmt_price(e.get("team_value")), "Lagverdi"),
                 (fmt_price(e.get("bank")), "I banken"),
-                (chip or "Ingen", "Chip denne GW"),
                 (nint(e.get("points_on_bench")), "Benkepoeng"),
-            ])
+            ]
+            if chip:
+                squad_stats.insert(2, (chip, f"Chip GW{event_id}" if event_id else "Chip"))
+            ui.stat_strip(squad_stats)
     ui.section("Analyse")
     c1, c2 = st.columns(2)
     with c1:
@@ -608,10 +703,13 @@ def render_compare(managers: list[dict], bootstrap: dict) -> None:
         ])
     elif basis == "Denne GW" and not events.empty:
         block = events.sort_values(["gw_points", "manager"], ascending=[False, True])
-        ui.rows([
-            {"rank": i + 1, "who": r.get("manager"), "meta": r.get("team",""), "num": f"{nint(r.get('gw_points'))} p"}
-            for i, r in enumerate(block.to_dict("records"))
-        ])
+        compare_rows = []
+        for i, r in enumerate(block.to_dict("records")):
+            meta = str(r.get("team") or "")
+            if str(r.get("active_chip") or ""):
+                meta += f" · {r.get('active_chip')}"
+            compare_rows.append({"rank": i + 1, "who": r.get("manager"), "meta": meta, "num": f"{nint(r.get('gw_points'))} p"})
+        ui.rows(compare_rows)
     else:
         ui.rows([
             {"rank": nint(m.get("rank")), "who": manager_name(m), "meta": str(m.get("entry_name") or ""), "num": f"{nint(m.get('total'))} p"}
@@ -661,7 +759,7 @@ def render_league(managers: list[dict], bootstrap: dict, auto_rows: list[dict]) 
     ui.page_title("Ligaen")
     view = ui.nav(["Tabell", "Manager", "Sammenlign"], "v400_league_view", "Tabell")
     if view == "Tabell":
-        render_league_table(managers)
+        render_league_table(managers, bootstrap)
     elif view == "Manager":
         opts = manager_options(managers); ids = [x[0] for x in opts]; labels = dict(opts)
         entry = st.selectbox("Finn manager", ids, format_func=lambda x: labels.get(int(x), str(x)), key="v400_manager_select")
@@ -670,20 +768,27 @@ def render_league(managers: list[dict], bootstrap: dict, auto_rows: list[dict]) 
         render_compare(managers, bootstrap)
 
 
-def render_candidate_list(df: pd.DataFrame, title: str, rival_n: int, limit: int = 6) -> None:
+def render_candidate_list(df: pd.DataFrame, title: str, rival_n: int, mode: str, limit: int = 3) -> None:
     ui.section(title)
     if df is None or df.empty:
-        st.caption("Ingen sterke treff akkurat nå.")
+        st.caption("Ingen tydelige treff akkurat nå.")
         return
-    ui.rows([
-        {
+    items = []
+    for i, r in enumerate(df.head(limit).to_dict("records")):
+        rival_count = nint(r.get("rival_count"))
+        if mode == "cover":
+            num = f"{rival_count}/{rival_n} rivaler har"
+        elif mode == "keep":
+            num = f"{max(0, rival_n - rival_count)}/{rival_n} rivaler mangler"
+        else:
+            num = "Ingen rivaler har" if rival_count == 0 else f"{rival_count}/{rival_n} rivaler har"
+        items.append({
             "rank": i + 1,
             "who": r.get("web_name"),
-            "meta": f"{r.get('club')} · {r.get('position')} · {fmt_price(r.get('current_price'))} · {r.get('outlook_label')} · FPL {nfloat(r.get('selected_by_pct')):.0f}%",
-            "num": f"{nint(r.get('rival_count'))}/{rival_n} rivaler",
-        }
-        for i, r in enumerate(df.head(limit).to_dict("records"))
-    ])
+            "meta": f"{r.get('club')} · {r.get('position')} · {fmt_price(r.get('current_price'))} · {r.get('outlook_label')}",
+            "num": num,
+        })
+    ui.rows(items)
 
 
 def render_rivalradar(managers: list[dict], bootstrap: dict) -> None:
@@ -726,20 +831,20 @@ def render_rivalradar(managers: list[dict], bootstrap: dict) -> None:
     rival_n = nint(result.get("rival_n"), len(rivals))
     strategy_context = str(result.get("strategy_context") or "neutral")
     ui.callout(
-        "Spill situasjonen",
+        "Din situasjon",
         str(result.get("strategy_text") or ""),
         "green" if strategy_context == "defend" else "red" if strategy_context == "chase" else "",
     )
-    render_candidate_list(result.get("they_have_i_lack"), "De har · du mangler", rival_n)
-    render_candidate_list(result.get("i_have_they_lack"), "Du har · de mangler", rival_n)
-    render_candidate_list(result.get("nobody_has"), "Muligheter ingen av dere har", rival_n)
+    render_candidate_list(result.get("they_have_i_lack"), "Dekk deg", rival_n, "cover")
+    render_candidate_list(result.get("i_have_they_lack"), "Behold", rival_n, "keep")
+    render_candidate_list(result.get("nobody_has"), "Hent", rival_n, "attack")
 
     ui.section("Trekk å vurdere")
     suggestions = result.get("suggestions", pd.DataFrame())
     if suggestions is None or suggestions.empty:
         st.caption("Fant ingen tydelige én-for-én-trekk som passer budsjett og posisjon.")
     else:
-        for i, r in enumerate(suggestions.head(5).to_dict("records")):
+        for i, r in enumerate(suggestions.head(3).to_dict("records")):
             if i == 0:
                 label = "Beste treff"
             elif risk == "Trygt":
@@ -748,7 +853,7 @@ def render_rivalradar(managers: list[dict], bootstrap: dict) -> None:
                 label = "Offensivt"
             else:
                 label = "Alternativ"
-            meta = f"{r['out_player']} → {r['in_player']} · {fmt_price(r['in_price'])} · {r['outlook_label']} · budsjett etter {fmt_price(r['budget_after'])}"
+            meta = f"{r['out_player']} → {r['in_player']} · {fmt_price(r['in_price'])} · budsjett etter {fmt_price(r['budget_after'])}"
             ui.recommendation(r["in_player"], label, meta, r.get("reasons") or [])
         if not bool(suggestions.iloc[0].get("selling_price_exact")):
             st.caption("Minst ett forslag bruker estimert salgspris fordi FPL ikke leverte managerens eksakte salgspris i picks-dataene.")
@@ -762,11 +867,12 @@ def render_rivalradar(managers: list[dict], bootstrap: dict) -> None:
             for i, r in enumerate(caps.to_dict("records"))
         ])
 
-    with st.expander("Hva om?"):
+    with st.expander("Mer analyse"):
+        ui.section("Hva om?")
         if suggestions is None or suggestions.empty:
             st.caption("Ingen transfer å simulere.")
         else:
-            choices = list(range(min(5, len(suggestions))))
+            choices = list(range(min(3, len(suggestions))))
             idx = st.selectbox("Trekk", choices, format_func=lambda i: f"{suggestions.iloc[i]['out_player']} → {suggestions.iloc[i]['in_player']}", key="v400_whatif")
             r = suggestions.iloc[int(idx)].to_dict()
             ui.stat_strip([
@@ -774,20 +880,20 @@ def render_rivalradar(managers: list[dict], bootstrap: dict) -> None:
                 (f"{nint(r.get('rival_count'))}/{rival_n}", "Rivaler med spilleren"),
                 (f"{nint(r.get('expected_low'))}–{nint(r.get('expected_high'))}", "Forventet område"),
             ])
-            st.caption("Scenarioet viser strukturen i trekket. Det er et anslag, ikke en spådom.")
+            st.caption("Anslag, ikke fasit.")
 
-    show_odds = st.toggle("Vis odds for rivalgruppen", key="v400_rival_odds")
-    if show_odds:
-        selected = [int(me)] + [int(x) for x in rivals]
-        selected_managers = [m for m in managers if nint(m.get("entry")) in selected]
-        with st.spinner("Beregner gruppen …"):
-            histories, _ = histories_for(selected)
-            month_scores = current_month_points_map(managers, bootstrap) if goal == "Vinn måneden" else None
-            events_n = max(1, len(result.get("event_ids") or [1]))
-            odds = compare_group_odds(selected_managers, histories, current_event_id(bootstrap) or 1, history_store, period_events=events_n, month_scores=month_scores)
-        ui.section("Modellens anslag")
-        ui.rows([{"rank": i + 1, "who": r.get("manager"), "meta": f"Odds {decimal_odds_from_pct(r.get('win_pct'))}", "num": fmt_pct(r.get("win_pct"))} for i, r in enumerate(odds.to_dict("records"))])
-        st.caption("Anslaget kombinerer inneværende sesong med historikk. Historikken tones ned gjennom sesongen.")
+        show_odds = st.toggle("Vis modellens anslag", key="v400_rival_odds")
+        if show_odds:
+            selected = [int(me)] + [int(x) for x in rivals]
+            selected_managers = [m for m in managers if nint(m.get("entry")) in selected]
+            with st.spinner("Beregner gruppen …"):
+                histories, _ = histories_for(selected)
+                month_scores = current_month_points_map(managers, bootstrap) if goal == "Vinn måneden" else None
+                events_n = max(1, len(result.get("event_ids") or [1]))
+                odds = compare_group_odds(selected_managers, histories, current_event_id(bootstrap) or 1, history_store, period_events=events_n, month_scores=month_scores)
+            ui.section("Modellens anslag")
+            ui.rows([{"rank": i + 1, "who": r.get("manager"), "meta": f"Odds {decimal_odds_from_pct(r.get('win_pct'))}", "num": fmt_pct(r.get("win_pct"))} for i, r in enumerate(odds.to_dict("records"))])
+            st.caption("Historikk teller mindre jo lenger sesongen går.")
 
 
 def render_history(auto_rows: list[dict]) -> None:
@@ -798,17 +904,26 @@ def render_history(auto_rows: list[dict]) -> None:
         if hof.empty:
             st.caption("Ingen historikk funnet.")
             return
-        ui.rows([
-            {
+        hall_rows = []
+        for i, r in enumerate(hof.head(40).to_dict("records")):
+            merits = []
+            if nint(r.get("league_gold")):
+                merits.append(f"{nint(r.get('league_gold'))} sesongtittel" + ("er" if nint(r.get("league_gold")) != 1 else ""))
+            if nint(r.get("cup_gold")):
+                merits.append(f"{nint(r.get('cup_gold'))} cupgull")
+            if nint(r.get("monthly_gold")):
+                merits.append(f"{nint(r.get('monthly_gold'))} månedsseier" + ("e" if nint(r.get("monthly_gold")) != 1 else ""))
+            if not merits:
+                merits.append(f"{nint(r.get('podiums'))} pallplasser")
+            hall_rows.append({
                 "rank": nint(r.get("rank")),
                 "rank_class": "gold" if i == 0 else "silver" if i == 1 else "bronze" if i == 2 else "",
                 "who": r.get("display_name"),
-                "meta": f"{nint(r.get('podiums'))} pallplasser",
-                "num": f"{nint(r.get('gold'))} gull · {nint(r.get('silver'))} sølv · {nint(r.get('bronze'))} bronse",
-            }
-            for i, r in enumerate(hof.head(40).to_dict("records"))
-        ])
-        st.caption("Hall of Fame rangeres etter gull, deretter sølv og bronse. Gull summerer ligagull, cupgull og månedsseire.")
+                "meta": " · ".join(merits),
+                "num": f"{nint(r.get('podiums'))} pallplasser",
+            })
+        ui.rows(hall_rows)
+        st.caption("Sesongtitler rangerer høyest. Deretter teller cupgull, månedsseire og øvrige pallplasser.")
     elif view == "Månedsvinnere":
         medals = history_store.monthly_medals(auto_rows)
         ui.rows([
@@ -833,7 +948,7 @@ def render_history(auto_rows: list[dict]) -> None:
         league = hof.sort_values(["league_gold", "league_silver", "display_name"], ascending=[False, False, True]).iloc[0]
         cup = hof.sort_values(["cup_gold", "cup_silver", "display_name"], ascending=[False, False, True]).iloc[0]
         month = hof.sort_values(["monthly_gold", "monthly_silver", "display_name"], ascending=[False, False, True]).iloc[0]
-        podium = hof.sort_values(["podiums", "gold", "display_name"], ascending=[False, False, True]).iloc[0]
+        podium = hof.sort_values(["podiums", "league_gold", "cup_gold", "monthly_gold", "display_name"], ascending=[False, False, False, False, True]).iloc[0]
         ui.rows([
             {"rank": "L", "who": league["display_name"], "meta": "Flest ligatitler", "num": nint(league["league_gold"])},
             {"rank": "C", "who": cup["display_name"], "meta": "Flest cupgull", "num": nint(cup["cup_gold"])},
