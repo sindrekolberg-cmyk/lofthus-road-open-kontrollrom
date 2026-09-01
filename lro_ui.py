@@ -200,6 +200,25 @@ label, .stSelectbox label, .stMultiSelect label {font-weight:800 !important; col
 .v500-hof-name{font-size:1.04rem;font-weight:950;letter-spacing:-.025em}.v500-hof-row.top1 .v500-hof-name{font-size:1.15rem;color:#fff}
 .v500-hof-meta{font-size:.78rem;color:var(--muted);font-weight:650;margin-top:.18rem;line-height:1.4}.v500-hof-row.top1 .v500-hof-meta{color:#bdc7d6}
 
+/* V604 manager squad: actual FPL-style formation, not an eleven-row receipt */
+.v604-squad-wrap{margin:.35rem 0 1.15rem}
+.v604-pitch{position:relative;overflow:hidden;border-radius:18px;min-height:520px;padding:1.15rem 1rem;background:linear-gradient(180deg,#173d31 0%,#12372c 52%,#0f3128 100%);border:1px solid rgba(255,255,255,.18);box-shadow:0 18px 42px rgba(8,17,31,.12);display:flex;flex-direction:column;justify-content:space-between;gap:.7rem}
+.v604-pitch:before{content:"";position:absolute;inset:1rem;border:2px solid rgba(244,241,233,.28);border-radius:4px;pointer-events:none}
+.v604-pitch:after{content:"";position:absolute;left:50%;top:1rem;bottom:1rem;width:2px;background:rgba(244,241,233,.22);transform:translateX(-50%);pointer-events:none}
+.v604-center-circle{position:absolute;left:50%;top:50%;width:112px;height:112px;border:2px solid rgba(244,241,233,.22);border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}
+.v604-formation{position:absolute;right:1.45rem;top:1.2rem;color:rgba(255,255,255,.72);font-size:.7rem;font-weight:950;letter-spacing:.12em;text-transform:uppercase;z-index:2}
+.v604-line{position:relative;z-index:3;display:flex;justify-content:space-evenly;align-items:center;gap:.55rem;min-height:92px}
+.v604-player{position:relative;width:min(150px,19%);min-width:96px;text-align:center;background:rgba(255,253,248,.94);border:1px solid rgba(255,255,255,.42);border-radius:11px;padding:.55rem .38rem .5rem;box-shadow:0 8px 18px rgba(4,14,11,.19)}
+.v604-player-name{font-size:.84rem;font-weight:950;letter-spacing:-.025em;color:var(--ink);line-height:1.08;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.v604-player-meta{font-size:.66rem;font-weight:750;color:#687386;margin-top:.25rem;white-space:nowrap}
+.v604-badge{position:absolute;top:-8px;right:-7px;min-width:24px;height:24px;padding:0 5px;border-radius:12px;display:flex;align-items:center;justify-content:center;background:var(--ink);color:#fff;font-size:.62rem;font-weight:950;border:2px solid #f4f1e9}
+.v604-badge.tc{background:#b63a34}.v604-badge.vc{background:#657084}
+.v604-bench-label{font-size:.72rem;font-weight:950;letter-spacing:.11em;text-transform:uppercase;color:var(--muted);margin:.75rem 0 .38rem}
+.v604-bench{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.v604-bench-player{padding:.65rem .72rem;min-width:0}.v604-bench-player + .v604-bench-player{border-left:1px solid var(--line)}
+.v604-bench-name{font-size:.83rem;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.v604-bench-meta{font-size:.68rem;color:var(--muted);font-weight:700;margin-top:.18rem}
+@media(max-width:760px){.v604-pitch{min-height:440px;padding:.9rem .35rem}.v604-line{gap:.2rem;min-height:76px}.v604-player{min-width:0;width:auto;flex:0 1 22%;padding:.43rem .22rem}.v604-player-name{font-size:.68rem}.v604-player-meta{font-size:.58rem}.v604-bench{grid-template-columns:repeat(2,minmax(0,1fr))}.v604-bench-player:nth-child(3){border-left:0;border-top:1px solid var(--line)}.v604-bench-player:nth-child(4){border-top:1px solid var(--line)}}
+
 /* expander */
 [data-testid="stExpander"] {border:1px solid var(--line) !important; border-radius:11px !important; background:rgba(255,255,255,.3) !important;}
 
@@ -343,6 +362,77 @@ def rows(items: list[dict]) -> None:
         )
     if bits:
         st.markdown("<div class='v500-list'>" + "".join(bits) + "</div>", unsafe_allow_html=True)
+
+
+def squad_formation(starters: pd.DataFrame, bench: pd.DataFrame, price_formatter) -> None:
+    """Render the XI as the formation the manager actually fields in FPL."""
+    if starters is None or starters.empty:
+        st.caption("Startelleveren kunne ikke lastes.")
+        return
+
+    data = starters.copy()
+    if "position_id" not in data.columns:
+        data["position_id"] = 0
+    if "squad_position" in data.columns:
+        data = data.sort_values("squad_position")
+
+    groups = {pid: data[data["position_id"] == pid].to_dict("records") for pid in (1, 2, 3, 4)}
+    # Fallback for older payloads that may only contain the Norwegian position label.
+    if sum(len(v) for v in groups.values()) != len(data):
+        label_map = {"Keeper": 1, "Forsvar": 2, "Midtbane": 3, "Angrep": 4}
+        groups = {pid: [] for pid in (1, 2, 3, 4)}
+        for row in data.to_dict("records"):
+            groups[label_map.get(str(row.get("position") or ""), 0) or 3].append(row)
+
+    formation = f"{len(groups[2])}-{len(groups[3])}-{len(groups[4])}"
+
+    def player_card(row: dict) -> str:
+        badge = ""
+        if row.get("is_captain"):
+            label = "TC" if row.get("is_triple_captain") else "C"
+            cls = " tc" if label == "TC" else ""
+            badge = f"<span class='v604-badge{cls}'>{esc(label)}</span>"
+        elif row.get("is_vice_captain"):
+            badge = "<span class='v604-badge vc'>VC</span>"
+        price = price_formatter(row.get("current_price"))
+        points = int(row.get("event_points") or 0)
+        return (
+            "<div class='v604-player'>" + badge +
+            f"<div class='v604-player-name'>{esc(row.get('player') or '')}</div>"
+            f"<div class='v604-player-meta'>{esc(price)} · {points} poeng</div></div>"
+        )
+
+    # Traditional football orientation: forwards at the top, goalkeeper at the bottom.
+    lines = []
+    for pid in (4, 3, 2, 1):
+        cards = "".join(player_card(r) for r in groups.get(pid, []))
+        if cards:
+            lines.append(f"<div class='v604-line'>{cards}</div>")
+
+    pitch = (
+        "<div class='v604-squad-wrap'><div class='v604-pitch'>"
+        "<div class='v604-center-circle'></div>"
+        f"<div class='v604-formation'>Formasjon {esc(formation)}</div>"
+        + "".join(lines) + "</div>"
+    )
+
+    bench_html = ""
+    if bench is not None and not bench.empty:
+        b = bench.sort_values("squad_position") if "squad_position" in bench.columns else bench
+        items = []
+        for row in b.to_dict("records"):
+            label = ""
+            if row.get("is_vice_captain"):
+                label = " · VC"
+            elif row.get("is_captain"):
+                label = " · TC" if row.get("is_triple_captain") else " · C"
+            items.append(
+                f"<div class='v604-bench-player'><div class='v604-bench-name'>{esc(row.get('player') or '')}</div>"
+                f"<div class='v604-bench-meta'>{esc(price_formatter(row.get('current_price')))} · {int(row.get('event_points') or 0)} poeng{esc(label)}</div></div>"
+            )
+        bench_html = "<div class='v604-bench-label'>Benk</div><div class='v604-bench'>" + "".join(items) + "</div>"
+
+    st.markdown(pitch + bench_html + "</div>", unsafe_allow_html=True)
 
 
 def inline_note(label: str, text: str) -> None:

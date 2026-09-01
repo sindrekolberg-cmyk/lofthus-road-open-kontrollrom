@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor, Future
 from typing import Any
 
 import pandas as pd
@@ -59,7 +61,7 @@ from lro_archive import SnapshotStore
 from lro_odds import build_preseason_odds, compare_group_odds, decimal_odds_from_pct, simulate_group
 import lro_ui as ui
 
-APP_VERSION = "lofthus-road-open-v601-deploy-compat-hotfix"
+APP_VERSION = "lofthus-road-open-v604-formation-fast-home"
 DATA_DIR = Path(__file__).resolve().parent / "data"
 PRESEASON_ODDS_FILE = DATA_DIR / "preseason_odds_2026_27.csv"
 
@@ -81,6 +83,57 @@ def get_history_store(version: str) -> HistoryStore:
 client = get_client()
 history_store = get_history_store(APP_VERSION)
 snapshot_store = SnapshotStore(DATA_DIR / "snapshots")
+
+
+@st.cache_resource
+def get_home_background_pool() -> ThreadPoolExecutor:
+    # One coordinator job is enough. build_ownership itself fans out the FPL calls.
+    return ThreadPoolExecutor(max_workers=1, thread_name_prefix="lro-home")
+
+
+@st.cache_resource
+def get_home_background_jobs() -> dict:
+    return {"lock": threading.RLock(), "jobs": {}}
+
+
+def _build_home_ownership_background(managers: list[dict], event_id: int) -> dict:
+    # Use a separate client in the worker so the visible app never waits on the
+    # 63-manager ownership sweep. Shorter timeouts also stop a few bad FPL calls
+    # from holding the entire background job hostage.
+    bg_client = FPLClient(timeout=9)
+    bg_history = HistoryStore(DATA_DIR)
+    return build_ownership(
+        bg_client,
+        managers,
+        bg_history,
+        event_id=int(event_id),
+        only_entries=None,
+        max_workers=10,
+    )
+
+
+def home_ownership_async(managers: list[dict], bootstrap: dict) -> dict | None:
+    event_id = current_event_id(bootstrap)
+    if not event_id:
+        return None
+    entries = tuple(sorted(nint(m.get("entry")) for m in managers if nint(m.get("entry"))))
+    key = (int(event_id), entries)
+    state = get_home_background_jobs()
+    with state["lock"]:
+        future = state["jobs"].get(key)
+        if future is None:
+            future = get_home_background_pool().submit(_build_home_ownership_background, [dict(m) for m in managers], int(event_id))
+            state["jobs"][key] = future
+    if not future.done():
+        return None
+    try:
+        return future.result()
+    except Exception:
+        # Drop a failed job so a later rerun can try again, while the page itself
+        # remains fully usable.
+        with state["lock"]:
+            state["jobs"].pop(key, None)
+        return None
 
 
 def fmt_price(value: Any) -> str:
@@ -588,9 +641,14 @@ def render_home(managers: list[dict], bootstrap: dict) -> None:
     with right:
         render_month(managers, bootstrap, top=5, front=True)
 
-    ownership = selected_ownership(managers)
+    # Start the expensive 63-manager ownership sweep in the background. The
+    # newspaper front page must render immediately instead of showing a blank
+    # Streamlit spinner while FPL answers dozens of picks requests.
+    ownership = home_ownership_async(managers, bootstrap)
 
-    # EDITORIAL DESK: the four best league stories plus the three most-owned players.
+    # EDITORIAL DESK: movement stories are available instantly. Ownership/TC
+    # stories and the popular-player list appear as soon as the background sweep
+    # is ready on a subsequent rerun.
     news, popular = st.columns([1.7, 0.8], gap="large")
     with news:
         ui.front_section("Snakkiser", "Det viktigste fra forrige runde og akkurat nå")
@@ -600,13 +658,17 @@ def render_home(managers: list[dict], bootstrap: dict) -> None:
         ui.editorial_stories(story_items[:4])
     with popular:
         ui.front_section("Mest populære", "Topp 3 i Lofthus")
-        render_popular(ownership, top=3)
+        if ownership is None:
+            st.caption("Henter eierskap i bakgrunnen …")
+        else:
+            render_popular(ownership, top=3)
 
     # Live is useful when there is actually a match, but must never push the front-page leads down.
     render_live(managers, bootstrap, compact=True)
 
-    # Personal layer is important, but secondary to the league front page.
-    render_my_lofthus(managers, bootstrap, ownership)
+    # Personal layer works instantly with league/month data. Player-specific
+    # insights are added when the background ownership result is available.
+    render_my_lofthus(managers, bootstrap, ownership or {})
 
 
 def render_captains(ownership: dict) -> None:
@@ -882,19 +944,9 @@ def render_squad(entry: int, managers: list[dict], bootstrap: dict) -> tuple[dic
         st.caption("Troppen kunne ikke lastes.")
         return ownership, squad
     ui.section("Troppen")
-    starters = squad[~squad["on_bench"]]
-    bench = squad[squad["on_bench"]]
-    def meta(r: dict) -> str:
-        bits = [str(r.get("position") or "Ukjent"), fmt_price(r.get("current_price"))]
-        if r.get("is_captain"):
-            bits.append("TC" if r.get("is_triple_captain") else "C")
-        elif r.get("is_vice_captain"):
-            bits.append("VC")
-        return " · ".join(bits)
-    ui.rows([{"rank": "", "who": r.get("player"), "meta": meta(r), "num": f"{nint(r.get('event_points'))} poeng"} for r in starters.to_dict("records")])
-    if not bench.empty:
-        st.caption("Benk")
-        ui.rows([{"rank": "", "who": r.get("player"), "meta": meta(r) + " · Benk", "num": f"{nint(r.get('event_points'))} poeng"} for r in bench.to_dict("records")])
+    starters = squad[~squad["on_bench"]].copy()
+    bench = squad[squad["on_bench"]].copy()
+    ui.squad_formation(starters, bench, fmt_price)
     return ownership, squad
 
 
