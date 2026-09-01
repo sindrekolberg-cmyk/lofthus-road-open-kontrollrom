@@ -44,15 +44,15 @@ except ImportError:
             except Exception:
                 return 0
 
+        league_gold = num("league_gold")
+        other_gold = num("cup_gold") + num("monthly_gold")
+        total_silver = num("league_silver") + num("cup_silver") + num("monthly_silver")
+        total_bronze = num("league_bronze") + num("monthly_bronze")
         return (
-            -num("league_gold"),
-            -num("league_silver"),
-            -num("league_bronze"),
-            -num("cup_gold"),
-            -num("monthly_gold"),
-            -num("cup_silver"),
-            -num("monthly_silver"),
-            -num("monthly_bronze"),
+            -league_gold,
+            -other_gold,
+            -total_silver,
+            -total_bronze,
             normalize_text(row.get("display_name") or ""),
         )
 from lro_archive import SnapshotStore
@@ -1332,10 +1332,10 @@ def render_history(auto_rows: list[dict], managers: list[dict] | None = None) ->
         # Two league titles MUST rank above one league title regardless of cups,
         # monthly wins or total podiums. This also protects the UI if an older
         # lro_history.py is accidentally left in a deployment.
-        # Numeric tuple sort, deliberately independent of pandas dtypes. This is
-        # the final guardrail against old CSV/string values changing the hierarchy:
-        # two season titles always beat one. After season titles, cup and monthly
-        # wins separate equal champions before the remaining podium medals.
+        # Numeric tuple sort, deliberately independent of pandas dtypes.
+        # LRO rule: season titles are the supreme honour. Once managers have the
+        # same number of league titles, use an Olympic-style hierarchy for the
+        # remaining honours: other golds first, then silver, then bronze.
         hof_records = sorted(hof.to_dict("records"), key=hall_of_fame_sort_key)
 
         hall_rows = []
@@ -1369,7 +1369,7 @@ def render_history(auto_rows: list[dict], managers: list[dict] | None = None) ->
                 "num": "",
             })
         ui.hall_of_fame(hall_rows)
-        st.caption("Sesongtitler rangerer høyest. Ved likt antall titler teller sammenlagtplasseringer før cup- og månedsmeritter.")
+        st.caption("Sesongtitler står over alt annet. Ved likt antall sesongtitler rangeres øvrige gull først, deretter sølv og bronse.")
     elif view == "Månedskonger":
         medals = history_store.monthly_medals(auto_rows)
         ui.rows([

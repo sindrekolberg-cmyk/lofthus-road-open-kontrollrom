@@ -1,0 +1,19 @@
+LRO V602 TEST REPORT
+====================
+
+PASS: Python compile – app.py
+PASS: Python compile – lro_fpl.py
+PASS: Python compile – lro_history.py
+PASS: Python compile – lro_odds.py
+PASS: Python compile – lro_analysis.py
+PASS: Python compile – lro_ui.py
+PASS: Python compile – lro_archive.py
+PASS: 2 league titles always beat 1 league title + arbitrary secondary honours
+PASS: with equal league titles, 4 monthly golds beat 1 monthly gold + league silver
+PASS: cup gold + monthly gold are counted before silver/bronze
+PASS: Hall of Fame fallback sort in app.py uses same rule
+PASS: desktop hero reduced from 315px minimum to 205px minimum
+PASS: giant 5.4rem hero cap removed
+PASS: hero secondary blocks displayed side by side
+
+NOTE: Live Streamlit Community Cloud / FPL API smoke test must run after deployment.

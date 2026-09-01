@@ -67,21 +67,26 @@ def clean_cell(value: Any) -> str:
 
 
 def hall_of_fame_sort_key(row: dict) -> tuple:
-    """Deterministic LRO honours hierarchy. Lower tuple sorts first."""
+    """LRO Hall of Fame: league titles first, then Olympic medal logic."""
     def num(key: str) -> int:
         try:
             return int(float(row.get(key) or 0))
         except Exception:
             return 0
+
+    # A league championship is the supreme honour. Once managers have the same
+    # number of league titles, actual wins must beat second/third places. That
+    # means cup + monthly golds are considered before all silvers and bronzes.
+    league_gold = num("league_gold")
+    other_gold = num("cup_gold") + num("monthly_gold")
+    total_silver = num("league_silver") + num("cup_silver") + num("monthly_silver")
+    total_bronze = num("league_bronze") + num("monthly_bronze")
+
     return (
-        -num("league_gold"),
-        -num("league_silver"),
-        -num("league_bronze"),
-        -num("cup_gold"),
-        -num("monthly_gold"),
-        -num("cup_silver"),
-        -num("monthly_silver"),
-        -num("monthly_bronze"),
+        -league_gold,
+        -other_gold,
+        -total_silver,
+        -total_bronze,
         normalize_text(row.get("display_name") or ""),
     )
 
