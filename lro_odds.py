@@ -222,6 +222,33 @@ def _mean(values: list[float]) -> float:
     return sum(vals) / len(vals) if vals else 0.0
 
 
+
+
+def _preseason_merits(history_store: HistoryStore, name: str) -> dict:
+    """Merits as they existed before the current 2026/27 season started.
+
+    Crucially, this bypasses current-season fallback podiums so the published
+    pre-season market does not rewrite itself after August results arrive.
+    """
+    key = history_store.key(name)
+    overall = history_store.overall_results()
+    cup = history_store.cup_results()
+    official_monthly = history_store.official_monthly_titles()
+
+    def count(df: pd.DataFrame, column: str) -> int:
+        if df is None or df.empty or column not in df.columns:
+            return 0
+        return int(sum(1 for value in df[column].tolist() if history_store.key(str(value or "")) == key))
+
+    return {
+        "league_gold": count(overall, "winner"),
+        "league_silver": count(overall, "runner_up"),
+        "league_bronze": count(overall, "third_place"),
+        "cup_gold": count(cup, "winner"),
+        "cup_silver": count(cup, "runner_up"),
+        "monthly_gold": int(official_monthly.get(key, 0)),
+    }
+
 def build_preseason_odds(
     managers: list[dict],
     histories: dict[int, dict],
@@ -264,7 +291,7 @@ def build_preseason_odds(
             + 0.03 * top_500k_rate
         )
         name = history_store.canonical(str(manager.get("player_name") or "Ukjent manager"))
-        merits = history_store.merits_for(name)
+        merits = _preseason_merits(history_store, name)
         rows.append({
             "entry": entry,
             "manager": name,

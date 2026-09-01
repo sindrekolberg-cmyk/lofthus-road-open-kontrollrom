@@ -465,7 +465,17 @@ def rival_analysis(
             for entry in rival_entries
             if element_id in rival_sets.get(int(entry), set())
         ]
+
+    def _rival_missing(element_id: int) -> list[str]:
+        element_id = int(element_id)
+        return [
+            rival_name_map.get(int(entry), str(entry))
+            for entry in rival_entries
+            if element_id not in rival_sets.get(int(entry), set())
+        ]
+
     player_df["rival_owners"] = player_df["element_id"].map(_rival_owners)
+    player_df["rival_missing"] = player_df["element_id"].map(_rival_missing)
     player_df["i_own"] = player_df["element_id"].isin(me)
     player_df = _relevance_filter(player_df, event)
 

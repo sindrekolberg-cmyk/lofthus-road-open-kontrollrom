@@ -1,0 +1,39 @@
+LOFTHUS ROAD OPEN V500 — TEST REPORT
+=====================================
+
+Kjørt lokalt i byggecontainer:
+
+[OK] Python syntax/compile: app.py
+[OK] Python syntax/compile: lro_ui.py
+[OK] Python syntax/compile: lro_analysis.py
+[OK] Python syntax/compile: lro_fpl.py
+[OK] Python syntax/compile: lro_history.py
+[OK] Python syntax/compile: lro_odds.py
+
+[OK] Hall of Fame-regresjon:
+     2 sesongtitler rangerer foran 1 sesongtittel + 2 cupgull + 20 månedsseire.
+
+[OK] Nordmo-alumni:
+     2021/22 = 2599 poeng finnes i alumni-historikken.
+
+[OK] Triple Captain-snakkis:
+     TC på Tzolis med 0 spillerpoeng produserer eksplisitt 0-poeng-snakkis.
+
+[OK] Før-sesongodds:
+     Bruker en egen pre-season-merittfunksjon og tar ikke inn 2026/27 August-fallbacken.
+
+[OK] Rivalradar:
+     Spillerdata merkes både med rival_owners og rival_missing.
+
+[OK] Navigasjon/statisk kontroll:
+     Odds før sesongstart ligger under Ligaen.
+     Rivalradar har Rivaler + Spilleroversikt.
+     Hall of Fame bruker Månedskonger.
+
+[OK] UI-regresjon:
+     Kapteinsoversikten er en todelt klikkbar komponent med TC skilt fra vanlig C.
+     Ligatabellen beholder lokal klikk-sortering.
+
+MERKNAD:
+Byggemiljøet har ikke Streamlit installert og har ikke live internett/FPL-tilgang.
+Derfor er live deploy-smoke mot Streamlit Community Cloud/FPL API ikke kjørt her.
