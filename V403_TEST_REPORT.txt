@@ -1,0 +1,17 @@
+LRO V403 TEST REPORT
+====================
+
+PASS: Python compile: app.py
+PASS: Python compile: lro_fpl.py
+PASS: Python compile: lro_analysis.py
+PASS: Python compile: lro_history.py
+PASS: Python compile: lro_odds.py
+PASS: Python compile: lro_ui.py
+PASS: Nordmo alumni history contains 2020/21 = 2515 points / OR 4759
+PASS: Nordmo alumni history contains only LRO-era seasons (2020/21 onward)
+PASS: Preseason odds smoke test returns ranked winner/top-3 odds
+PASS: Main navigation no longer contains a separate Sesong page
+PASS: Rivalradar contains Rivaler / Sesong / Odds
+PASS: Home Topp 5 + current month use two-column responsive layout
+
+NOTE: Live FPL API behaviour is validated at runtime by the app's existing error handling/cache layer.

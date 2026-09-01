@@ -13,6 +13,19 @@ MONTH_ORDER = {
 }
 
 # Bekreftet i LRO for august 2026. Brukes kun dersom denne måneden ikke finnes i CSV/API.
+
+# FPL-historikk for tidligere LRO-managere som ikke lenger finnes i dagens liga.
+# Kun sesonger fra Lofthus Road Open startet (2020/21) tas med.
+# Kilde: managerens FPL "Previous Seasons"-side, dokumentert 1. september 2026.
+ALUMNI_SEASON_HISTORY = [
+    {"manager": "Øyvind Nordmo Sivertsen", "season": "2020/21", "total_points": 2515, "overall_rank": 4759, "source": "FPL Previous Seasons"},
+    {"manager": "Øyvind Nordmo Sivertsen", "season": "2021/22", "total_points": 2599, "overall_rank": 19100, "source": "FPL Previous Seasons"},
+    {"manager": "Øyvind Nordmo Sivertsen", "season": "2022/23", "total_points": 2429, "overall_rank": 477228, "source": "FPL Previous Seasons"},
+    {"manager": "Øyvind Nordmo Sivertsen", "season": "2023/24", "total_points": 2557, "overall_rank": 17663, "source": "FPL Previous Seasons"},
+    {"manager": "Øyvind Nordmo Sivertsen", "season": "2024/25", "total_points": 2488, "overall_rank": 158118, "source": "FPL Previous Seasons"},
+    {"manager": "Øyvind Nordmo Sivertsen", "season": "2025/26", "total_points": 2244, "overall_rank": 496413, "source": "FPL Previous Seasons"},
+]
+
 CURRENT_SEASON_FALLBACK_PODIUMS = [
     {"season": "2026/27", "month": "August", "place": 1, "manager": "Vegard Røstby", "status": "Bekreftet", "source": "LRO"},
     {"season": "2026/27", "month": "August", "place": 2, "manager": "Edward Stenlund", "status": "Bekreftet", "source": "LRO"},
@@ -323,6 +336,19 @@ class HistoryStore:
         df = pd.DataFrame(rows).sort_values(sort_cols, ascending=ascending).reset_index(drop=True)
         df.insert(0, "rank", range(1, len(df) + 1))
         return df
+
+    def alumni_season_history(self) -> pd.DataFrame:
+        """Known previous-season FPL history for former LRO managers.
+
+        This is intentionally small and source-backed. It must never invent
+        membership or points for a season we have not documented.
+        """
+        rows = []
+        for row in ALUMNI_SEASON_HISTORY:
+            item = dict(row)
+            item["manager"] = self.canonical(str(item.get("manager") or ""))
+            rows.append(item)
+        return pd.DataFrame(rows, columns=["manager", "season", "total_points", "overall_rank", "source"])
 
     def merits_for(self, name: str, auto_rows: list[dict] | None = None) -> dict:
         hof = self.hall_of_fame(auto_rows)
