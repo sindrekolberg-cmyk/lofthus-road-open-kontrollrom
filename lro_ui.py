@@ -102,23 +102,21 @@ div[data-testid="stHorizontalBlock"]:has(button[kind="primary"]), div[data-testi
 label, .stSelectbox label, .stMultiSelect label {font-weight:800 !important; color:var(--text) !important;}
 [data-testid="stPopover"] button{border:1px solid var(--line)!important;border-radius:10px!important;background:rgba(255,255,255,.55)!important;}
 
-/* editorial hero */
-.v500-home-hero{position:relative;overflow:hidden;display:grid;grid-template-columns:minmax(0,1.35fr) minmax(420px,.9fr);gap:0;background:var(--ink);border-radius:12px;margin:.8rem 0 1.05rem;box-shadow:0 14px 34px rgba(8,17,31,.15);color:#fff;min-height:205px;border:1px solid rgba(255,255,255,.08)}
-.v500-home-hero::before{content:"";position:absolute;inset:0;pointer-events:none;background:
- radial-gradient(circle at 77% 20%,rgba(214,185,109,.32),transparent 17rem),
- linear-gradient(110deg,transparent 0 53%,rgba(255,255,255,.035) 53% 54%,transparent 54% 100%),
- linear-gradient(70deg,transparent 0 68%,rgba(255,255,255,.03) 68% 69%,transparent 69% 100%)}
-.v500-hero-main{position:relative;padding:1.35rem 1.5rem 1.25rem;display:flex;flex-direction:column;justify-content:flex-end;min-height:205px;border-right:1px solid var(--line-dark)}
-.v500-kicker{font-size:.66rem;font-weight:950;letter-spacing:.12em;text-transform:uppercase;color:var(--gold-soft);margin-bottom:.48rem}
-.v500-hero-title{font-size:clamp(2.15rem,3.7vw,3.9rem);line-height:.9;font-weight:950;letter-spacing:-.065em;color:#fff;max-width:760px;text-wrap:balance}
-.v500-hero-deck{margin-top:.52rem;color:#c2ccda;font-size:.86rem;line-height:1.4;max-width:640px}
-.v500-hero-number{position:absolute;right:.7rem;top:.15rem;font-size:clamp(4rem,7vw,6.8rem);font-weight:950;letter-spacing:-.08em;line-height:1;color:rgba(255,255,255,.05);user-select:none}
-.v500-hero-side{position:relative;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr;background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.015))}
-.v500-hero-mini{padding:1.15rem 1.1rem 1.05rem;display:flex;flex-direction:column;justify-content:flex-end}
-.v500-hero-mini + .v500-hero-mini{border-left:1px solid var(--line-dark)}
-.v500-mini-label{font-size:.69rem;font-weight:900;letter-spacing:.09em;text-transform:uppercase;color:#9daabe}
-.v500-mini-value{font-size:1.24rem;font-weight:950;letter-spacing:-.04em;margin-top:.28rem;color:#fff}
-.v500-mini-meta{font-size:.75rem;color:#b8c3d4;margin-top:.14rem}
+/* V603 front-page scoreline: newspaper masthead strip, not a giant hero */
+.v603-scoreline{display:grid;grid-template-columns:1.35fr 1fr 1fr;margin:.55rem 0 .7rem;border-top:3px solid var(--ink);border-bottom:1px solid var(--line);background:transparent}
+.v603-score-item{min-width:0;padding:.68rem 1rem .7rem 0}
+.v603-score-item + .v603-score-item{padding-left:1rem;border-left:1px solid var(--line)}
+.v603-score-kicker{font-size:.63rem;font-weight:950;letter-spacing:.11em;text-transform:uppercase;color:var(--gold);margin-bottom:.22rem}
+.v603-score-name{font-size:1.28rem;line-height:1.05;font-weight:950;letter-spacing:-.045em;color:var(--text);white-space:normal}
+.v603-score-item.lead .v603-score-name{font-size:1.55rem}
+.v603-score-meta{margin-top:.18rem;color:var(--muted);font-size:.76rem;font-weight:700}
+.v603-front-section{margin:.7rem 0 .42rem;display:flex;align-items:end;justify-content:space-between;gap:1rem;border-bottom:2px solid var(--ink);padding-bottom:.38rem}
+.v603-front-section-title{font-size:1.22rem;font-weight:950;letter-spacing:-.04em}
+.v603-front-section-note{font-size:.73rem;color:var(--muted);font-weight:700}
+.v603-popular .v500-row{padding:.72rem .1rem}
+.v603-popular .v500-who{font-size:.94rem}
+.v603-popular .v500-meta{font-size:.72rem}
+.v603-popular .v500-num{font-size:.82rem}
 
 /* editorial stories: one list, no dashboard cards */
 .v500-story-list{border-top:1px solid var(--line);margin:.45rem 0 1.2rem}
@@ -205,9 +203,9 @@ label, .stSelectbox label, .stMultiSelect label {font-weight:800 !important; col
 /* expander */
 [data-testid="stExpander"] {border:1px solid var(--line) !important; border-radius:11px !important; background:rgba(255,255,255,.3) !important;}
 
-@media(max-width:900px){.v500-home-hero{grid-template-columns:1fr}.v500-hero-main{min-height:180px;border-right:0;border-bottom:1px solid var(--line-dark)}.v500-hero-side{grid-template-columns:1fr 1fr;grid-template-rows:1fr}.v500-hero-mini + .v500-hero-mini{border-left:1px solid var(--line-dark)}.v500-hof-row{grid-template-columns:52px minmax(0,1fr)}}
+@media(max-width:900px){.v603-scoreline{grid-template-columns:1fr 1fr}.v603-score-item.lead{grid-column:1/-1;border-bottom:1px solid var(--line)}.v603-score-item:nth-child(2){padding-left:0;border-left:0}.v500-hof-row{grid-template-columns:52px minmax(0,1fr)}}
 @media(max-width:760px){
- .block-container{padding:.7rem .72rem 3rem !important}.v500-header{border-radius:14px;padding:1.1rem 1.05rem 1rem}.v500-brand{font-size:2.2rem}.v500-page-title{font-size:2.15rem}.v500-section{margin-top:1.55rem}.v500-home-hero{min-height:0}.v500-hero-main{min-height:168px;padding:1.05rem}.v500-hero-title{font-size:2.45rem}.v500-hero-side{grid-template-columns:1fr 1fr}.v500-hero-mini{padding:.85rem .75rem}.v500-mini-value{font-size:1rem}.v500-hero-mini + .v500-hero-mini{border-left:1px solid var(--line-dark)}.v500-story-list{display:block}.v500-my-metrics{grid-template-columns:1fr}.v500-stats{grid-template-columns:repeat(2,1fr)}.v500-stat:nth-child(3){border-left:0;padding-left:0;border-top:1px solid var(--line)}.v500-stat:nth-child(4){border-top:1px solid var(--line)}.v500-row{grid-template-columns:38px minmax(0,1fr) auto}.v500-table{min-width:520px}.v500-hide-mobile{display:none !important}.stButton > button{font-size:.77rem !important;padding:.45rem .15rem !important}.v500-my-top{align-items:flex-start}.v500-my-rank{font-size:1.8rem}
+ .block-container{padding:.7rem .72rem 3rem !important}.v500-header{border-radius:14px;padding:1.1rem 1.05rem 1rem}.v500-brand{font-size:2.2rem}.v500-page-title{font-size:2.15rem}.v500-section{margin-top:1.55rem}.v603-scoreline{grid-template-columns:1fr;margin-top:.4rem}.v603-score-item,.v603-score-item + .v603-score-item{padding:.6rem .05rem;border-left:0;border-bottom:1px solid var(--line)}.v603-score-item:last-child{border-bottom:0}.v603-score-item.lead{grid-column:auto}.v603-score-item.lead .v603-score-name{font-size:1.3rem}.v603-score-name{font-size:1.05rem}.v500-story-list{display:block}.v500-my-metrics{grid-template-columns:1fr}.v500-stats{grid-template-columns:repeat(2,1fr)}.v500-stat:nth-child(3){border-left:0;padding-left:0;border-top:1px solid var(--line)}.v500-stat:nth-child(4){border-top:1px solid var(--line)}.v500-row{grid-template-columns:38px minmax(0,1fr) auto}.v500-table{min-width:520px}.v500-hide-mobile{display:none !important}.stButton > button{font-size:.77rem !important;padding:.45rem .15rem !important}.v500-my-top{align-items:flex-start}.v500-my-rank{font-size:1.8rem}
 }
 </style>
 """
@@ -258,33 +256,43 @@ def section(title: str, note: str = "") -> None:
     )
 
 
-def home_hero(leader: str, leader_points: int, round_winner: str, round_points: int, month_manager: str, month_label: str) -> None:
+def home_scoreline(leader: str, leader_points: int, round_winner: str, round_points: int, month_manager: str, month_label: str) -> None:
+    """Compact front-page scoreline. The tables and stories are the real front-page leads."""
     leader = leader or "–"
     round_winner = round_winner or "–"
     month_manager = month_manager or "–"
     st.markdown(
         f"""
-        <div class='v500-home-hero'>
-          <div class='v500-hero-main'>
-            <div class='v500-hero-number'>{esc(leader_points)}</div>
-            <div class='v500-kicker'>Lofthus akkurat nå</div>
-            <div class='v500-hero-title'>{esc(leader)}</div>
-            <div class='v500-hero-deck'>{esc(leader_points)} poeng · leder Lofthus Road Open</div>
+        <div class='v603-scoreline'>
+          <div class='v603-score-item lead'>
+            <div class='v603-score-kicker'>Leder akkurat nå</div>
+            <div class='v603-score-name'>{esc(leader)}</div>
+            <div class='v603-score-meta'>{esc(leader_points)} poeng · leder Lofthus Road Open</div>
           </div>
-          <div class='v500-hero-side'>
-            <div class='v500-hero-mini'>
-              <div class='v500-mini-label'>Siste runde</div>
-              <div class='v500-mini-value'>{esc(round_winner)}</div>
-              <div class='v500-mini-meta'>{esc(round_points)} poeng</div>
-            </div>
-            <div class='v500-hero-mini'>
-              <div class='v500-mini-label'>{esc(month_label)}</div>
-              <div class='v500-mini-value'>{esc(month_manager)}</div>
-              <div class='v500-mini-meta'>Månedskampen</div>
-            </div>
+          <div class='v603-score-item'>
+            <div class='v603-score-kicker'>Siste runde</div>
+            <div class='v603-score-name'>{esc(round_winner)}</div>
+            <div class='v603-score-meta'>{esc(round_points)} poeng</div>
+          </div>
+          <div class='v603-score-item'>
+            <div class='v603-score-kicker'>{esc(month_label)}</div>
+            <div class='v603-score-name'>{esc(month_manager)}</div>
+            <div class='v603-score-meta'>Månedskampen</div>
           </div>
         </div>
         """,
+        unsafe_allow_html=True,
+    )
+
+
+def home_hero(leader: str, leader_points: int, round_winner: str, round_points: int, month_manager: str, month_label: str) -> None:
+    # Backwards-compatible alias; V603 deliberately removes the oversized hero composition.
+    home_scoreline(leader, leader_points, round_winner, round_points, month_manager, month_label)
+
+
+def front_section(title: str, note: str = "") -> None:
+    st.markdown(
+        f"<div class='v603-front-section'><div class='v603-front-section-title'>{esc(title)}</div><div class='v603-front-section-note'>{esc(note)}</div></div>",
         unsafe_allow_html=True,
     )
 

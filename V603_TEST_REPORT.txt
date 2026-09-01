@@ -1,0 +1,16 @@
+LRO V603 TEST REPORT
+====================
+
+PASS: Python compile – all Python modules
+PASS: oversized V500/V602 home hero CSS removed
+PASS: compact V603 scoreline present
+PASS: Topp 5 + monthly table render before Snakkiser / Mitt Lofthus
+PASS: Snakkiser remain editorial list, not cards
+PASS: Top 3 popular-player block added to front page
+PASS: Live section no longer pushes league/month tables down
+PASS: Mitt Lofthus remains available but secondary on front page
+PASS: Hall of Fame: 2 season titles always beat 1 season title + arbitrary secondary honours
+PASS: Hall of Fame: with equal season titles, four monthly golds beat one monthly gold + silvers
+PASS: current data/ directory is not included in package
+
+NOTE: Streamlit Cloud + live FPL API smoke test must run after deployment.

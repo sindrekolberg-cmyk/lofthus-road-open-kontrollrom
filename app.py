@@ -369,13 +369,13 @@ def render_live(managers: list[dict], bootstrap: dict, compact: bool = False) ->
     return True
 
 
-def render_month(managers: list[dict], bootstrap: dict, top: int = 5) -> None:
+def render_month(managers: list[dict], bootstrap: dict, top: int = 5, front: bool = False) -> None:
     phase, df, is_current_live = display_month_table(managers, bootstrap)
     if phase is None:
         st.caption("Månedstabellen er ikke tilgjengelig akkurat nå.")
         return
     title = f"{phase['name']} · live" if is_current_live else phase["name"]
-    ui.section(title)
+    (ui.front_section if front else ui.section)(title)
     ui.rows([
         {
             "rank": nint(r.get("rank")),
@@ -547,6 +547,7 @@ def render_my_lofthus(managers: list[dict], bootstrap: dict, ownership: dict) ->
 
 
 def render_home(managers: list[dict], bootstrap: dict) -> None:
+    """Front page ordered like a newspaper: standings first, stories second, tools after."""
     move = round_movements(managers, history_store)
     leader = move.get("leader", {})
     winner = move.get("gw_winner", {})
@@ -558,7 +559,8 @@ def render_home(managers: list[dict], bootstrap: dict) -> None:
     else:
         month_label = "Månedskampen"
 
-    ui.home_hero(
+    # A compact scoreline replaces the oversized hero. The actual tables are the lead story.
+    ui.home_scoreline(
         str(leader.get("manager") or "–"),
         nint(leader.get("points"), nint(leader.get("total"))),
         str(winner.get("manager") or "–"),
@@ -567,21 +569,10 @@ def render_home(managers: list[dict], bootstrap: dict) -> None:
         month_label,
     )
 
-    # Live is useful, but it should not replace the identity of the front page.
-    render_live(managers, bootstrap, compact=True)
-
-    ownership = selected_ownership(managers)
-    ui.section("Snakkiser")
-    story_items = stories(managers, ownership, history_store)
-    if not story_items:
-        story_items = ["Ligaen er i gang. Flere snakkiser kommer når rundene begynner å sette seg."]
-    ui.editorial_stories(story_items[:4])
-
-    render_my_lofthus(managers, bootstrap, ownership)
-
+    # FRONT-PAGE LEAD: league and month are the two most important tables.
     left, right = st.columns(2, gap="large")
     with left:
-        ui.section("Topp 5")
+        ui.front_section("Topp 5", "Sammenlagt")
         top = sorted(managers, key=lambda m: (nint(m.get("rank"), 10**9), -nint(m.get("total"))))[:5]
         ui.rows([
             {
@@ -590,12 +581,33 @@ def render_home(managers: list[dict], bootstrap: dict) -> None:
                 "who": manager_name(m),
                 "meta": str(m.get("entry_name") or ""),
                 "num": f"{nint(m.get('total'))} poeng",
-                "href": f"?page=Ligaen&league_view=Manager&manager={nint(m.get('entry'))}" if nint(m.get('entry')) else "",
+                "href": f"?page=Ligaen&league_view=Manager&manager={nint(m.get('entry'))}" if nint(m.get("entry")) else "",
             }
             for i, m in enumerate(top)
         ])
     with right:
-        render_month(managers, bootstrap, top=5)
+        render_month(managers, bootstrap, top=5, front=True)
+
+    ownership = selected_ownership(managers)
+
+    # EDITORIAL DESK: the four best league stories plus the three most-owned players.
+    news, popular = st.columns([1.7, 0.8], gap="large")
+    with news:
+        ui.front_section("Snakkiser", "Det viktigste fra forrige runde og akkurat nå")
+        story_items = stories(managers, ownership, history_store)
+        if not story_items:
+            story_items = ["Ligaen er i gang. Flere snakkiser kommer når rundene begynner å sette seg."]
+        ui.editorial_stories(story_items[:4])
+    with popular:
+        ui.front_section("Mest populære", "Topp 3 i Lofthus")
+        render_popular(ownership, top=3)
+
+    # Live is useful when there is actually a match, but must never push the front-page leads down.
+    render_live(managers, bootstrap, compact=True)
+
+    # Personal layer is important, but secondary to the league front page.
+    render_my_lofthus(managers, bootstrap, ownership)
+
 
 def render_captains(ownership: dict) -> None:
     players = ownership.get("players", pd.DataFrame())
@@ -617,7 +629,7 @@ def render_captains(ownership: dict) -> None:
         })
     ui.captain_board(board_rows)
 
-def render_popular(ownership: dict) -> None:
+def render_popular(ownership: dict, top: int = 10) -> None:
     players = ownership.get("players", pd.DataFrame())
     if players.empty:
         st.caption("Eierskapsdata mangler.")
@@ -630,7 +642,7 @@ def render_popular(ownership: dict) -> None:
             "meta": f"{r.get('club')} · {r.get('position')} · {fmt_price(r.get('current_price'))}",
             "num": f"{nint(r.get('ownership_count'))}/{total} · {fmt_pct(r.get('ownership_pct'))}",
         }
-        for i, r in enumerate(players.sort_values("ownership_count", ascending=False).head(10).to_dict("records"))
+        for i, r in enumerate(players.sort_values(["ownership_count", "player"], ascending=[False, True]).head(top).to_dict("records"))
     ])
 
 
