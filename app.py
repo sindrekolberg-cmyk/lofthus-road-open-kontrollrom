@@ -34,7 +34,7 @@ from lro_history import HistoryStore, normalize_text
 from lro_odds import build_preseason_odds, compare_group_odds, decimal_odds_from_pct, simulate_group
 import lro_ui as ui
 
-APP_VERSION = "lofthus-road-open-v404-hall-of-fame-fix"
+APP_VERSION = "lofthus-road-open-v407-polish"
 DATA_DIR = Path(__file__).resolve().parent / "data"
 
 st.set_page_config(page_title="Lofthus Road Open", page_icon="⚽", layout="wide", initial_sidebar_state="collapsed")
@@ -337,12 +337,17 @@ def render_home(managers: list[dict], bootstrap: dict) -> None:
     if not live:
         leader = move.get("leader", {})
         winner = move.get("gw_winner", {})
-        phase, month_df = current_month_table(managers, bootstrap)
+        display_phase, month_df, month_is_live = display_month_table(managers, bootstrap)
         month_leader = month_df.iloc[0].to_dict() if not month_df.empty else {}
+        if display_phase:
+            month_name = str(display_phase.get("name") or "måneden").lower()
+            month_label = f"Leder {month_name} måned" if month_is_live else f"Vinner av {month_name} måned"
+        else:
+            month_label = "Måneden"
         ui.stat_strip([
             (leader.get("manager", "–"), "Ligaleder"),
             (f"{winner.get('manager', '–')} · {winner.get('gw', 0)} poeng", "Siste runde"),
-            (month_leader.get("manager", "–"), f"{phase['name']}" if phase else "Måneden"),
+            (month_leader.get("manager", "–"), month_label),
         ])
 
     ui.section("Snakkiser")
@@ -570,13 +575,11 @@ def current_chip_map(managers: list[dict], bootstrap: dict) -> dict[int, str]:
 
 
 def render_league_table(managers: list[dict], bootstrap: dict) -> None:
-    """Render the league as a native sortable sports table.
+    """Render a compact sports table with click-to-sort headers.
 
-    Important UX rule: no separate sorting control. Streamlit's dataframe header
-    handles sorting directly, so clicking +/- toggles biggest rise / biggest fall.
-    The # column always contains the manager's real league rank.
+    The displayed # is always the real league position. Sorting only changes row
+    order, never the underlying rank. Chip use sits quietly under the team name.
     """
-    # Chip information belongs with the team name, not in another column.
     chip_by_entry: dict[int, str] = {}
     try:
         with st.spinner("Henter chipbruk …"):
@@ -596,39 +599,18 @@ def render_league_table(managers: list[dict], bootstrap: dict) -> None:
         entry = nint(m.get("entry"))
         team_name = str(m.get("entry_name") or "").strip()
         chip = str(chip_by_entry.get(entry, "") or "").strip()
-        if chip:
-            team_name = f"{team_name} · {chip}" if team_name else chip
-
         data.append({
-            "#": rank if rank < 10**9 else None,
-            "Manager": manager_name(m),
-            "Lag": team_name,
-            "GW": nint(m.get("event_total")),
-            "Poeng": nint(m.get("total")),
-            "+/-": int(move),
+            "rank": rank if rank < 10**9 else None,
+            "manager": manager_name(m),
+            "team": team_name,
+            "chip": chip,
+            "gw": nint(m.get("event_total")),
+            "points": nint(m.get("total")),
+            "move": int(move),
         })
 
-    # Keep the default order as the real league table. The user can then click any
-    # header, especially +/-, to sort client-side without another UI control.
-    data.sort(key=lambda r: ((r["#"] if r["#"] is not None else 10**9), -r["Poeng"]))
-    df = pd.DataFrame(data, columns=["#", "Manager", "Lag", "GW", "Poeng", "+/-"])
-
-    # Native st.dataframe is deliberately used here: header-click sorting is fast,
-    # local and requires no rerun/API calls. +/- stays numeric, so sorting is correct.
-    st.dataframe(
-        df,
-        hide_index=True,
-        use_container_width=True,
-        height=min(2500, max(420, 38 + 35 * len(df))),
-        column_config={
-            "#": st.column_config.NumberColumn("#", format="%d", width="small"),
-            "Manager": st.column_config.TextColumn("Manager", width="medium"),
-            "Lag": st.column_config.TextColumn("Lag", width="large"),
-            "GW": st.column_config.NumberColumn("GW", format="%d", width="small"),
-            "Poeng": st.column_config.NumberColumn("Poeng", format="%d", width="small"),
-            "+/-": st.column_config.NumberColumn("+/-", format="%+d", width="small"),
-        },
-    )
+    data.sort(key=lambda r: ((r["rank"] if r["rank"] is not None else 10**9), -r["points"]))
+    ui.sortable_league_table(data)
 
 
 def render_form(managers: list[dict], entry: int) -> dict:
@@ -999,7 +981,27 @@ def champion_season_history(managers: list[dict]) -> pd.DataFrame:
     if overall.empty:
         return pd.DataFrame()
 
-    alumni = history_store.alumni_season_history()
+    alumni_loader = getattr(history_store, "alumni_season_history", None)
+    if callable(alumni_loader):
+        try:
+            alumni = alumni_loader()
+        except Exception:
+            alumni = pd.DataFrame()
+    else:
+        alumni = pd.DataFrame()
+
+    # Defensive fallback for Nordmo. Keeping these verified rows in app.py means
+    # Mesterrekorder still works even if Streamlit briefly serves an older cached
+    # HistoryStore object during a deploy.
+    if alumni.empty:
+        alumni = pd.DataFrame([
+            {"manager": "Øyvind Nordmo Sivertsen", "season": "2020/21", "total_points": 2515, "overall_rank": 4759, "source": "FPL Previous Seasons"},
+            {"manager": "Øyvind Nordmo Sivertsen", "season": "2021/22", "total_points": 2599, "overall_rank": 19100, "source": "FPL Previous Seasons"},
+            {"manager": "Øyvind Nordmo Sivertsen", "season": "2022/23", "total_points": 2429, "overall_rank": 477228, "source": "FPL Previous Seasons"},
+            {"manager": "Øyvind Nordmo Sivertsen", "season": "2023/24", "total_points": 2557, "overall_rank": 17663, "source": "FPL Previous Seasons"},
+            {"manager": "Øyvind Nordmo Sivertsen", "season": "2024/25", "total_points": 2488, "overall_rank": 158118, "source": "FPL Previous Seasons"},
+            {"manager": "Øyvind Nordmo Sivertsen", "season": "2025/26", "total_points": 2244, "overall_rank": 496413, "source": "FPL Previous Seasons"},
+        ])
     current_by_name = {history_store.key(manager_name(m)): m for m in managers}
     current_winner_entries: list[int] = []
     for row in overall.to_dict("records"):
@@ -1126,40 +1128,54 @@ def render_history(auto_rows: list[dict], managers: list[dict] | None = None) ->
         # Two league titles MUST rank above one league title regardless of cups,
         # monthly wins or total podiums. This also protects the UI if an older
         # lro_history.py is accidentally left in a deployment.
-        sort_spec = [
-            ("league_gold", False),
-            ("league_silver", False),
-            ("league_bronze", False),
-            ("cup_gold", False),
-            ("cup_silver", False),
-            ("monthly_gold", False),
-            ("monthly_silver", False),
-            ("monthly_bronze", False),
-            ("podiums", False),
-            ("display_name", True),
-        ]
-        sort_cols = [c for c, _ in sort_spec if c in hof.columns]
-        ascending = [a for c, a in sort_spec if c in hof.columns]
-        hof = hof.sort_values(sort_cols, ascending=ascending, kind="stable").reset_index(drop=True)
-        hof["rank"] = range(1, len(hof) + 1)
+        # Numeric tuple sort, deliberately independent of pandas dtypes. This is
+        # the final guardrail against old CSV/string values changing the hierarchy:
+        # two season titles always beat one. After season titles, cup and monthly
+        # wins separate equal champions before the remaining podium medals.
+        hof_records = sorted(
+            hof.to_dict("records"),
+            key=lambda r: (
+                -nint(r.get("league_gold")),
+                -nint(r.get("cup_gold")),
+                -nint(r.get("monthly_gold")),
+                -nint(r.get("league_silver")),
+                -nint(r.get("cup_silver")),
+                -nint(r.get("monthly_silver")),
+                -nint(r.get("league_bronze")),
+                -nint(r.get("monthly_bronze")),
+                normalize_text(str(r.get("display_name") or "")),
+            ),
+        )
 
         hall_rows = []
-        for i, r in enumerate(hof.head(40).to_dict("records")):
+        for i, r in enumerate(hof_records[:40]):
             merits = []
-            if nint(r.get("league_gold")):
-                merits.append(f"{nint(r.get('league_gold'))} sesongtittel" + ("er" if nint(r.get("league_gold")) != 1 else ""))
-            if nint(r.get("cup_gold")):
-                merits.append(f"{nint(r.get('cup_gold'))} cupgull")
-            if nint(r.get("monthly_gold")):
-                merits.append(f"{nint(r.get('monthly_gold'))} månedskonge" + ("r" if nint(r.get("monthly_gold")) != 1 else ""))
+            league_gold = nint(r.get("league_gold"))
+            monthly_gold = nint(r.get("monthly_gold"))
+            cup_gold = nint(r.get("cup_gold"))
+            if league_gold:
+                merits.append(f"{league_gold} sesongtittel" if league_gold == 1 else f"{league_gold} sesongtitler")
+            if cup_gold:
+                merits.append(f"{cup_gold} cupgull")
+            if monthly_gold:
+                merits.append(f"{monthly_gold} månedsseier" if monthly_gold == 1 else f"{monthly_gold} månedsseire")
             if not merits:
-                merits.append(f"{nint(r.get('podiums'))} pallplasser")
+                # Ranking may still be earned through silver/bronze, but the
+                # aggregate 'pallplasser' label is deliberately not shown here.
+                if nint(r.get("league_silver")):
+                    merits.append(f"{nint(r.get('league_silver'))} sølv sammenlagt")
+                elif nint(r.get("league_bronze")):
+                    merits.append(f"{nint(r.get('league_bronze'))} bronse sammenlagt")
+                elif nint(r.get("monthly_silver")):
+                    merits.append(f"{nint(r.get('monthly_silver'))} månedssølv")
+                elif nint(r.get("monthly_bronze")):
+                    merits.append(f"{nint(r.get('monthly_bronze'))} månedsbronse")
             hall_rows.append({
                 "rank": i + 1,
                 "rank_class": "gold" if i == 0 else "silver" if i == 1 else "bronze" if i == 2 else "",
                 "who": r.get("display_name"),
                 "meta": " · ".join(merits),
-                "num": f"{nint(r.get('podiums'))} pallplasser",
+                "num": "",
             })
         ui.rows(hall_rows)
         st.caption("Sesongtitler rangerer høyest. To sesongtitler slår alltid én, uansett cup- og månedsmeritter.")
@@ -1191,7 +1207,7 @@ def render_history(auto_rows: list[dict], managers: list[dict] | None = None) ->
         ui.rows([
             {"rank": "L", "who": league["display_name"], "meta": "Flest ligatitler", "num": nint(league["league_gold"])},
             {"rank": "C", "who": cup["display_name"], "meta": "Flest cupgull", "num": nint(cup["cup_gold"])},
-            {"rank": "M", "who": month["display_name"], "meta": "Flest månedskonge-titler", "num": nint(month["monthly_gold"])},
+            {"rank": "M", "who": month["display_name"], "meta": "Flest månedsseire", "num": nint(month["monthly_gold"])},
             {"rank": "P", "who": podium["display_name"], "meta": "Flest pallplasser", "num": nint(podium["podiums"])},
         ])
 

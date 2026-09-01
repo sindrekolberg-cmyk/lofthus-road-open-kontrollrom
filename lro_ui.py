@@ -6,6 +6,7 @@ from typing import Any
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 
 CSS = r"""
@@ -332,6 +333,34 @@ def recommendation(name: str, label: str, meta: str, reasons: list[str]) -> None
     )
 
 
+def sortable_league_table(rows: list[dict]) -> None:
+    """League table in the same visual language as the rest of LRO.
+
+    Headers sort locally in the browser. Rank remains the actual league rank.
+    """
+    import json
+
+    payload = json.dumps(rows or [], ensure_ascii=False).replace("</", "<\\/")
+    doc = r"""
+<!doctype html><html><head><meta charset="utf-8"><style>
+:root{--paper:#f5f3ee;--line:#d9dde3;--text:#121824;--muted:#6c7687;--gold:#b98a1f;--green:#167a52;--red:#b63a34}
+*{box-sizing:border-box}body{margin:0;background:transparent;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text)}
+.wrap{width:100%;overflow-x:auto;border-top:1px solid var(--line)}table{border-collapse:collapse;width:100%;min-width:720px}th{text-align:left;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.07em;font-weight:800;padding:11px 9px;border-bottom:1px solid var(--line);cursor:pointer;user-select:none}td{padding:13px 9px;border-bottom:1px solid var(--line);vertical-align:middle;font-size:14px}tr:hover td{background:rgba(255,255,255,.45)}.right{text-align:right;white-space:nowrap}.manager{font-weight:850}.team{font-weight:650}.chip{display:block;color:var(--muted);font-size:12px;font-weight:650;margin-top:2px}.rank{font-weight:850;color:var(--muted)}.rank.gold{color:#977013}.rank.silver{color:#657080}.rank.bronze{color:#925f3a}.up{color:var(--green);font-weight:850}.down{color:var(--red);font-weight:850}.sort{margin-left:5px;color:var(--gold)}
+@media(max-width:760px){table{min-width:560px}th,td{padding:10px 7px}.hide-mobile{display:none}}
+</style></head><body><div class="wrap"><table><thead><tr>
+<th data-k="rank" data-type="n">#</th><th data-k="manager">Manager</th><th data-k="team">Lag</th><th class="right" data-k="gw" data-type="n">GW</th><th class="right" data-k="points" data-type="n">Poeng</th><th class="right" data-k="move" data-type="n">+/-</th>
+</tr></thead><tbody id="body"></tbody></table></div><script>
+const rows=__ROWS__; let key='rank', dir=1;
+const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+function cmp(a,b){let av=a[key],bv=b[key]; if(typeof av==='number'||typeof bv==='number'){av=(av===null||av===undefined)?1e15:Number(av);bv=(bv===null||bv===undefined)?1e15:Number(bv);return (av-bv)*dir;} return String(av||'').localeCompare(String(bv||''),'nb')*dir;}
+function render(){const body=document.getElementById('body');body.innerHTML='';[...rows].sort(cmp).forEach(r=>{const tr=document.createElement('tr');const rc=r.rank===1?'gold':r.rank===2?'silver':r.rank===3?'bronze':'';const mv=Number(r.move||0);const move=mv>0?'↑'+mv:mv<0?'↓'+Math.abs(mv):'–';const mc=mv>0?'up':mv<0?'down':'';tr.innerHTML=`<td><span class="rank ${rc}">${esc(r.rank??'')}</span></td><td class="manager">${esc(r.manager)}</td><td><span class="team">${esc(r.team)}</span>${r.chip?`<span class="chip">${esc(r.chip)}</span>`:''}</td><td class="right">${esc(r.gw)}</td><td class="right"><strong>${esc(r.points)}</strong></td><td class="right ${mc}">${move}</td>`;body.appendChild(tr)});document.querySelectorAll('th').forEach(th=>{th.querySelectorAll('.sort').forEach(x=>x.remove());if(th.dataset.k===key){const x=document.createElement('span');x.className='sort';x.textContent=dir===1?'▲':'▼';th.appendChild(x)}})}
+document.querySelectorAll('th').forEach(th=>th.onclick=()=>{const k=th.dataset.k;if(key===k)dir*=-1;else{key=k;dir=(k==='manager'||k==='team')?1:(k==='move'?-1:1)}render()});render();
+</script></body></html>
+""".replace("__ROWS__", payload)
+    height = min(3400, max(420, 58 + 48 * len(rows or [])))
+    components.html(doc, height=height, scrolling=False)
+
+
 def dataframe_compact(df: pd.DataFrame, columns: list[str], labels: dict[str, str] | None = None) -> None:
     if df is None or df.empty:
         st.caption("Ingen data akkurat nå.")
@@ -341,6 +370,5 @@ def dataframe_compact(df: pd.DataFrame, columns: list[str], labels: dict[str, st
         if col not in work.columns:
             work[col] = ""
     work = work[columns].fillna("")
-    if labels:
-        work = work.rename(columns=labels)
-    st.dataframe(work, hide_index=True, use_container_width=True)
+    headers = [(col, (labels or {}).get(col, col)) for col in columns]
+    html_table(headers, work.to_dict("records"))

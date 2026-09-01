@@ -1,0 +1,10 @@
+V407 static regression checks
+- Python compilation: PASS
+- Hall of Fame Norwegian inflection: PASS
+- Hall ranking aggregate pallplasser removed: PASS
+- August/current-month home stat logic: PASS
+- Mesterrekorder cached/older HistoryStore fallback: PASS
+- Sortable custom league table present: PASS
+- Hall of Fame season tables use custom sports table: PASS
+- Hall of Fame explicit numeric hierarchy test (2 league titles beats 1 + 99 cups/months): PASS
+- League table iframe avoids nested scrollbar for normal 63-manager field: PASS
