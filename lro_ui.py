@@ -184,6 +184,22 @@ label, .stSelectbox label, .stMultiSelect label {font-weight:800 !important; col
 .v500-profile-name {position:relative;z-index:1;font-size:clamp(1.9rem,3.6vw,2.9rem); font-weight:950; letter-spacing:-.055em;}.v500-profile-team {position:relative;z-index:1;color:var(--muted); margin-top:.15rem;}
 .v500-merits {display:flex;flex-wrap:wrap;gap:.55rem 1.4rem;padding:.68rem 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}.v500-merit strong {font-size:1.1rem}.v500-merit span {color:var(--muted);font-size:.75rem;margin-left:.25rem}
 
+/* V605 manager profile: denser, editorial, useful above the fold */
+.v605-profile{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:17px;background:linear-gradient(125deg,rgba(255,255,255,.82),rgba(244,241,233,.68));box-shadow:0 10px 28px rgba(8,17,31,.04);padding:1.05rem 1.15rem .9rem}
+.v605-profile:after{content:"";position:absolute;right:-55px;top:-85px;width:250px;height:250px;border:1px solid rgba(184,137,32,.11);border-radius:50%;box-shadow:0 0 0 44px rgba(184,137,32,.025);pointer-events:none}
+.v605-profile-top{position:relative;z-index:1;display:flex;align-items:flex-end;justify-content:space-between;gap:1.2rem}
+.v605-profile-name{font-size:clamp(1.7rem,3vw,2.5rem);font-weight:950;letter-spacing:-.055em;line-height:1}.v605-profile-team{font-size:.78rem;color:var(--muted);font-weight:700;margin-top:.35rem}
+.v605-profile-stats{position:relative;z-index:1;display:grid;grid-template-columns:repeat(4,minmax(90px,1fr));border-top:1px solid var(--line);margin-top:.9rem;padding-top:.72rem}
+.v605-profile-stat{padding:0 .85rem}.v605-profile-stat:first-child{padding-left:0}.v605-profile-stat+.v605-profile-stat{border-left:1px solid var(--line)}
+.v605-profile-stat strong{display:block;font-size:1.18rem;font-weight:950;letter-spacing:-.035em;line-height:1.05}.v605-profile-stat span{display:block;color:var(--muted);font-size:.64rem;text-transform:uppercase;letter-spacing:.065em;font-weight:900;margin-top:.22rem}
+.v605-honours{border-top:2px solid var(--gold);border-bottom:1px solid var(--line);padding:.65rem .1rem .72rem;margin:.15rem 0 .8rem}.v605-honours-title{font-size:.68rem;text-transform:uppercase;letter-spacing:.085em;color:var(--gold);font-weight:950;margin-bottom:.35rem}.v605-honours-line{font-size:1rem;font-weight:900;line-height:1.45}.v605-honours-empty{font-size:.78rem;color:var(--muted)}
+.v605-sidebox{border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.5);padding:.9rem 1rem;margin:.15rem 0 1rem}.v605-sidebox-title{font-size:.7rem;text-transform:uppercase;letter-spacing:.085em;color:var(--muted);font-weight:950;margin-bottom:.6rem}.v605-sidegrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.62rem .9rem}.v605-side-stat strong{display:block;font-size:1.02rem;font-weight:950;letter-spacing:-.025em}.v605-side-stat span{display:block;font-size:.64rem;color:var(--muted);font-weight:800;margin-top:.08rem}.v605-history-list{border-top:1px solid var(--line);margin-top:.7rem;padding-top:.32rem}.v605-history-row{display:grid;grid-template-columns:64px minmax(0,1fr) auto;gap:.55rem;align-items:center;padding:.38rem 0;border-bottom:1px solid rgba(214,217,222,.7);font-size:.72rem}.v605-history-row:last-child{border-bottom:0}.v605-history-season{font-weight:900}.v605-history-points{color:var(--muted);font-weight:750}.v605-history-rank{font-weight:900;white-space:nowrap}
+.v605-oddsgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.65rem;margin-top:.4rem}.v605-oddsitem{padding:.55rem 0;border-top:1px solid var(--line)}.v605-oddsitem strong{display:block;font-size:1.03rem;font-weight:950}.v605-oddsitem span{display:block;color:var(--muted);font-size:.65rem;font-weight:800;margin-top:.12rem}
+.v605-compact-form .v500-row{padding:.62rem .15rem}.v605-compact-form .v500-meta{font-size:.7rem}.v605-manager-grid{align-items:start}
+
+/* V605 player overview: top answers first, deep detail on demand */
+.v605-overview-note{font-size:.74rem;color:var(--muted);font-weight:700;margin:.2rem 0 .45rem}.v605-mini-head{display:flex;justify-content:space-between;align-items:baseline;gap:.8rem;border-bottom:1px solid var(--line);padding-bottom:.38rem;margin-bottom:.1rem}.v605-mini-title{font-weight:950;font-size:1rem;letter-spacing:-.025em}.v605-mini-note{font-size:.68rem;color:var(--muted);font-weight:750}
+
 /* recommendations */
 .v500-rec {padding:1rem 0; border-bottom:1px solid var(--line)}.v500-rec-top {display:flex;justify-content:space-between;align-items:baseline;gap:1rem}.v500-rec-name {font-size:1.15rem;font-weight:950}.v500-rec-label {font-size:.72rem;font-weight:950;text-transform:uppercase;letter-spacing:.065em;color:var(--green)}.v500-rec-meta {font-size:.81rem;color:var(--muted);margin:.22rem 0 .45rem}.v500-reasons {margin:.35rem 0 0;padding-left:1.05rem;color:#4f5969;font-size:.84rem;line-height:1.5}
 
@@ -201,30 +217,31 @@ label, .stSelectbox label, .stMultiSelect label {font-weight:800 !important; col
 .v500-hof-meta{font-size:.78rem;color:var(--muted);font-weight:650;margin-top:.18rem;line-height:1.4}.v500-hof-row.top1 .v500-hof-meta{color:#bdc7d6}
 
 /* V604 manager squad: actual FPL-style formation, not an eleven-row receipt */
-.v604-squad-wrap{margin:.35rem 0 1.15rem}
-.v604-pitch{position:relative;overflow:hidden;border-radius:18px;min-height:520px;padding:1.15rem 1rem;background:linear-gradient(180deg,#173d31 0%,#12372c 52%,#0f3128 100%);border:1px solid rgba(255,255,255,.18);box-shadow:0 18px 42px rgba(8,17,31,.12);display:flex;flex-direction:column;justify-content:space-between;gap:.7rem}
+.v604-squad-wrap{margin:.3rem 0 .75rem}
+.v604-pitch{position:relative;overflow:hidden;border-radius:18px;min-height:455px;padding:.9rem .85rem;background:linear-gradient(180deg,#173d31 0%,#12372c 52%,#0f3128 100%);border:1px solid rgba(255,255,255,.18);box-shadow:0 18px 42px rgba(8,17,31,.12);display:flex;flex-direction:column;justify-content:space-between;gap:.38rem}
 .v604-pitch:before{content:"";position:absolute;inset:1rem;border:2px solid rgba(244,241,233,.28);border-radius:4px;pointer-events:none}
 .v604-pitch:after{content:"";position:absolute;left:50%;top:1rem;bottom:1rem;width:2px;background:rgba(244,241,233,.22);transform:translateX(-50%);pointer-events:none}
 .v604-center-circle{position:absolute;left:50%;top:50%;width:112px;height:112px;border:2px solid rgba(244,241,233,.22);border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}
 .v604-formation{position:absolute;right:1.45rem;top:1.2rem;color:rgba(255,255,255,.72);font-size:.7rem;font-weight:950;letter-spacing:.12em;text-transform:uppercase;z-index:2}
-.v604-line{position:relative;z-index:3;display:flex;justify-content:space-evenly;align-items:center;gap:.55rem;min-height:92px}
-.v604-player{position:relative;width:min(150px,19%);min-width:96px;text-align:center;background:rgba(255,253,248,.94);border:1px solid rgba(255,255,255,.42);border-radius:11px;padding:.55rem .38rem .5rem;box-shadow:0 8px 18px rgba(4,14,11,.19)}
+.v604-line{position:relative;z-index:3;display:flex;justify-content:space-evenly;align-items:center;gap:.55rem;min-height:70px}
+.v604-player{position:relative;width:min(150px,19%);min-width:96px;text-align:center;background:rgba(255,253,248,.94);border:1px solid rgba(255,255,255,.42);border-radius:11px;padding:.44rem .34rem .42rem;box-shadow:0 8px 18px rgba(4,14,11,.19)}
 .v604-player-name{font-size:.84rem;font-weight:950;letter-spacing:-.025em;color:var(--ink);line-height:1.08;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .v604-player-meta{font-size:.66rem;font-weight:750;color:#687386;margin-top:.25rem;white-space:nowrap}
 .v604-badge{position:absolute;top:-8px;right:-7px;min-width:24px;height:24px;padding:0 5px;border-radius:12px;display:flex;align-items:center;justify-content:center;background:var(--ink);color:#fff;font-size:.62rem;font-weight:950;border:2px solid #f4f1e9}
 .v604-badge.tc{background:#b63a34}.v604-badge.vc{background:#657084}
-.v604-bench-label{font-size:.72rem;font-weight:950;letter-spacing:.11em;text-transform:uppercase;color:var(--muted);margin:.75rem 0 .38rem}
-.v604-bench{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
-.v604-bench-player{padding:.65rem .72rem;min-width:0}.v604-bench-player + .v604-bench-player{border-left:1px solid var(--line)}
-.v604-bench-name{font-size:.83rem;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.v604-bench-meta{font-size:.68rem;color:var(--muted);font-weight:700;margin-top:.18rem}
-@media(max-width:760px){.v604-pitch{min-height:440px;padding:.9rem .35rem}.v604-line{gap:.2rem;min-height:76px}.v604-player{min-width:0;width:auto;flex:0 1 22%;padding:.43rem .22rem}.v604-player-name{font-size:.68rem}.v604-player-meta{font-size:.58rem}.v604-bench{grid-template-columns:repeat(2,minmax(0,1fr))}.v604-bench-player:nth-child(3){border-left:0;border-top:1px solid var(--line)}.v604-bench-player:nth-child(4){border-top:1px solid var(--line)}}
+.v604-bench-label{font-size:.62rem;font-weight:950;letter-spacing:.11em;text-transform:uppercase;color:rgba(255,255,255,.68);margin:0 0 .28rem}
+.v604-bench-shell{position:relative;z-index:4;margin-top:.12rem;padding:.5rem .55rem .45rem;background:rgba(5,18,15,.32);border-top:1px solid rgba(255,255,255,.18);border-radius:0 0 10px 10px}
+.v604-bench{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.35rem}
+.v604-bench-player{padding:.42rem .45rem;min-width:0;background:rgba(255,253,248,.91);border-radius:8px;text-align:center}.v604-bench-player + .v604-bench-player{border-left:0}
+.v604-bench-name{font-size:.72rem;font-weight:950;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink)}.v604-bench-meta{font-size:.59rem;color:#687386;font-weight:750;margin-top:.15rem;white-space:nowrap}
+@media(max-width:760px){.v604-pitch{min-height:440px;padding:.9rem .35rem}.v604-line{gap:.2rem;min-height:76px}.v604-player{min-width:0;width:auto;flex:0 1 22%;padding:.43rem .22rem}.v604-player-name{font-size:.68rem}.v604-player-meta{font-size:.58rem}.v604-bench{grid-template-columns:repeat(2,minmax(0,1fr))}.v604-bench-player:nth-child(3),.v604-bench-player:nth-child(4){border-top:0}}
 
 /* expander */
 [data-testid="stExpander"] {border:1px solid var(--line) !important; border-radius:11px !important; background:rgba(255,255,255,.3) !important;}
 
 @media(max-width:900px){.v603-scoreline{grid-template-columns:1fr 1fr}.v603-score-item.lead{grid-column:1/-1;border-bottom:1px solid var(--line)}.v603-score-item:nth-child(2){padding-left:0;border-left:0}.v500-hof-row{grid-template-columns:52px minmax(0,1fr)}}
 @media(max-width:760px){
- .block-container{padding:.7rem .72rem 3rem !important}.v500-header{border-radius:14px;padding:1.1rem 1.05rem 1rem}.v500-brand{font-size:2.2rem}.v500-page-title{font-size:2.15rem}.v500-section{margin-top:1.55rem}.v603-scoreline{grid-template-columns:1fr;margin-top:.4rem}.v603-score-item,.v603-score-item + .v603-score-item{padding:.6rem .05rem;border-left:0;border-bottom:1px solid var(--line)}.v603-score-item:last-child{border-bottom:0}.v603-score-item.lead{grid-column:auto}.v603-score-item.lead .v603-score-name{font-size:1.3rem}.v603-score-name{font-size:1.05rem}.v500-story-list{display:block}.v500-my-metrics{grid-template-columns:1fr}.v500-stats{grid-template-columns:repeat(2,1fr)}.v500-stat:nth-child(3){border-left:0;padding-left:0;border-top:1px solid var(--line)}.v500-stat:nth-child(4){border-top:1px solid var(--line)}.v500-row{grid-template-columns:38px minmax(0,1fr) auto}.v500-table{min-width:520px}.v500-hide-mobile{display:none !important}.stButton > button{font-size:.77rem !important;padding:.45rem .15rem !important}.v500-my-top{align-items:flex-start}.v500-my-rank{font-size:1.8rem}
+ .block-container{padding:.7rem .72rem 3rem !important}.v500-header{border-radius:14px;padding:1.1rem 1.05rem 1rem}.v500-brand{font-size:2.2rem}.v500-page-title{font-size:2.15rem}.v500-section{margin-top:1.55rem}.v603-scoreline{grid-template-columns:1fr;margin-top:.4rem}.v603-score-item,.v603-score-item + .v603-score-item{padding:.6rem .05rem;border-left:0;border-bottom:1px solid var(--line)}.v603-score-item:last-child{border-bottom:0}.v603-score-item.lead{grid-column:auto}.v603-score-item.lead .v603-score-name{font-size:1.3rem}.v603-score-name{font-size:1.05rem}.v500-story-list{display:block}.v500-my-metrics{grid-template-columns:1fr}.v500-stats{grid-template-columns:repeat(2,1fr)}.v500-stat:nth-child(3){border-left:0;padding-left:0;border-top:1px solid var(--line)}.v500-stat:nth-child(4){border-top:1px solid var(--line)}.v500-row{grid-template-columns:38px minmax(0,1fr) auto}.v500-table{min-width:520px}.v500-hide-mobile{display:none !important}.stButton > button{font-size:.77rem !important;padding:.45rem .15rem !important}.v500-my-top{align-items:flex-start}.v500-my-rank{font-size:1.8rem}.v605-profile-top{align-items:flex-start}.v605-profile-stats{grid-template-columns:repeat(2,1fr)}.v605-profile-stat{padding:.5rem .45rem}.v605-profile-stat:nth-child(3){border-left:0}.v605-profile-stat:nth-child(n+3){border-top:1px solid var(--line)}.v605-sidegrid,.v605-oddsgrid{grid-template-columns:1fr 1fr}
 }
 </style>
 """
@@ -409,11 +426,11 @@ def squad_formation(starters: pd.DataFrame, bench: pd.DataFrame, price_formatter
         if cards:
             lines.append(f"<div class='v604-line'>{cards}</div>")
 
-    pitch = (
+    pitch_open = (
         "<div class='v604-squad-wrap'><div class='v604-pitch'>"
         "<div class='v604-center-circle'></div>"
         f"<div class='v604-formation'>Formasjon {esc(formation)}</div>"
-        + "".join(lines) + "</div>"
+        + "".join(lines)
     )
 
     bench_html = ""
@@ -430,9 +447,10 @@ def squad_formation(starters: pd.DataFrame, bench: pd.DataFrame, price_formatter
                 f"<div class='v604-bench-player'><div class='v604-bench-name'>{esc(row.get('player') or '')}</div>"
                 f"<div class='v604-bench-meta'>{esc(price_formatter(row.get('current_price')))} · {int(row.get('event_points') or 0)} poeng{esc(label)}</div></div>"
             )
-        bench_html = "<div class='v604-bench-label'>Benk</div><div class='v604-bench'>" + "".join(items) + "</div>"
+        bench_total = int(pd.to_numeric(b.get("event_points", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()) if "event_points" in b.columns else 0
+        bench_html = f"<div class='v604-bench-shell'><div class='v604-bench-label'>Benk · {bench_total} poeng</div><div class='v604-bench'>" + "".join(items) + "</div></div>"
 
-    st.markdown(pitch + bench_html + "</div>", unsafe_allow_html=True)
+    st.markdown(pitch_open + bench_html + "</div></div>", unsafe_allow_html=True)
 
 
 def inline_note(label: str, text: str) -> None:
@@ -477,6 +495,66 @@ def callout(title: str, text: str, tone: str = "") -> None:
 
 def alert(title: str, main: str) -> None:
     st.markdown(f"<div class='v500-alert'><div class='v500-alert-bar'></div><div class='v500-alert-body'><div class='v500-alert-title'>{esc(title)}</div><div class='v500-alert-main'>{esc(main)}</div></div></div>", unsafe_allow_html=True)
+
+
+def manager_profile_header(name: str, team: str, stats: list[tuple[Any, str]]) -> None:
+    stat_html = "".join(
+        f"<div class='v605-profile-stat'><strong>{esc(value)}</strong><span>{esc(label)}</span></div>"
+        for value, label in stats[:4]
+    )
+    st.markdown(
+        f"<div class='v605-profile'><div class='v605-profile-top'><div><div class='v605-profile-name'>{esc(name)}</div><div class='v605-profile-team'>{esc(team)}</div></div></div>"
+        f"<div class='v605-profile-stats'>{stat_html}</div></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def honours_panel(items: list[tuple[Any, str]]) -> None:
+    parts = []
+    for value, label in items:
+        try:
+            numeric = int(value)
+        except Exception:
+            numeric = 0
+        if numeric <= 0:
+            continue
+        parts.append(f"{numeric} {label}")
+    body = " · ".join(parts)
+    if body:
+        st.markdown(f"<div class='v605-honours'><div class='v605-honours-title'>Lofthus-meritter</div><div class='v605-honours-line'>{esc(body)}</div></div>", unsafe_allow_html=True)
+    else:
+        st.markdown("<div class='v605-honours'><div class='v605-honours-title'>Lofthus-meritter</div><div class='v605-honours-empty'>Ingen registrerte meritter ennå.</div></div>", unsafe_allow_html=True)
+
+
+def career_panel(stats: list[tuple[Any, str]], seasons: list[dict]) -> None:
+    stat_html = "".join(
+        f"<div class='v605-side-stat'><strong>{esc(value)}</strong><span>{esc(label)}</span></div>" for value, label in stats[:4]
+    )
+    rows = []
+    for r in seasons[:5]:
+        rows.append(
+            f"<div class='v605-history-row'><span class='v605-history-season'>{esc(r.get('season'))}</span>"
+            f"<span class='v605-history-points'>{esc(r.get('points'))} poeng</span>"
+            f"<span class='v605-history-rank'>{esc(r.get('rank'))}</span></div>"
+        )
+    history_html = "<div class='v605-history-list'>" + "".join(rows) + "</div>" if rows else ""
+    st.markdown(
+        "<div class='v605-sidebox'><div class='v605-sidebox-title'>FPL-karriere</div>"
+        f"<div class='v605-sidegrid'>{stat_html}</div>{history_html}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def manager_odds_panel(pre_win: str, pre_top3: str, live_win: str, live_pct: str = "") -> None:
+    st.markdown(
+        "<div class='v605-sidebox'><div class='v605-sidebox-title'>Odds</div><div class='v605-oddsgrid'>"
+        f"<div class='v605-oddsitem'><strong>{esc(pre_win)}</strong><span>Vinner · før sesongstart</span></div>"
+        f"<div class='v605-oddsitem'><strong>{esc(pre_top3)}</strong><span>Topp 3 · før sesongstart</span></div>"
+        f"<div class='v605-oddsitem'><strong>{esc(live_win)}</strong><span>Vinner · akkurat nå</span></div>"
+        + (f"<div class='v605-oddsitem'><strong>{esc(live_pct)}</strong><span>Modellens vinnersjanse</span></div>" if live_pct else "")
+        + "</div></div>",
+        unsafe_allow_html=True,
+    )
 
 
 def profile_header(name: str, team: str) -> None:

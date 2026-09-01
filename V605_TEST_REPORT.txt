@@ -1,0 +1,16 @@
+LRO V605 TEST REPORT
+====================
+
+PASS: python -m py_compile på alle Python-moduler.
+PASS: squad_formation smoke-test med 3-4-3.
+PASS: benk integrert i pitch-markup.
+PASS: benkepoeng summeres fra benkespillernes event_points (0+6+3+2 = 11).
+PASS: Hall of Fame-regresjon: 2 sesongtitler > 1; øvrige gull > sølv.
+PASS: managerheader inneholder fire statusfelt.
+PASS: managerprofil viser karrierepanel + før-sesongodds + live vinnerodds.
+PASS: lagverdi/bank-statstrip fjernet fra managerprofilen.
+PASS: Spilleroversikt standardvisning bruker topp 5 kapteiner/eierskap/differensialer.
+PASS: full kapteinsoversikt beholdt som on-demand expander.
+PASS: måned/rundebevegelse fjernet fra standard Spilleroversikt for mindre scroll.
+
+Merk: Full Streamlit Cloud/FPL live-smoke må skje etter deploy fordi byggemiljøet ikke har Streamlit installert eller internett.
