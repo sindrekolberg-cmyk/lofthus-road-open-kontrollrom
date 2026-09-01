@@ -1,0 +1,6 @@
+V601 deploy compatibility hotfix
+py_compile all modules: PASS
+normal V601 lro_history import: PASS
+stale V500 lro_history compatibility: PASS
+Hall of Fame 2 titles > 1 title + side honours: PASS
+lro_archive.py included: PASS

@@ -30,12 +30,36 @@ from lro_fpl import (
     season_label,
     short_season_label,
 )
-from lro_history import HistoryStore, hall_of_fame_sort_key, normalize_text
+try:
+    from lro_history import HistoryStore, hall_of_fame_sort_key, normalize_text
+except ImportError:
+    # Backward-compatible deploy guard: an older cached/deployed lro_history.py
+    # may not yet export hall_of_fame_sort_key. The app must still boot.
+    from lro_history import HistoryStore, normalize_text
+
+    def hall_of_fame_sort_key(row: dict) -> tuple:
+        def num(key: str) -> int:
+            try:
+                return int(float(row.get(key) or 0))
+            except Exception:
+                return 0
+
+        return (
+            -num("league_gold"),
+            -num("league_silver"),
+            -num("league_bronze"),
+            -num("cup_gold"),
+            -num("monthly_gold"),
+            -num("cup_silver"),
+            -num("monthly_silver"),
+            -num("monthly_bronze"),
+            normalize_text(row.get("display_name") or ""),
+        )
 from lro_archive import SnapshotStore
 from lro_odds import build_preseason_odds, compare_group_odds, decimal_odds_from_pct, simulate_group
 import lro_ui as ui
 
-APP_VERSION = "lofthus-road-open-v600-editorial-my-lofthus"
+APP_VERSION = "lofthus-road-open-v601-deploy-compat-hotfix"
 DATA_DIR = Path(__file__).resolve().parent / "data"
 PRESEASON_ODDS_FILE = DATA_DIR / "preseason_odds_2026_27.csv"
 
