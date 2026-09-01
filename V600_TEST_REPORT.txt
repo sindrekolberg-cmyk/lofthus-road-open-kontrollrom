@@ -1,0 +1,19 @@
+LOFTHUS ROAD OPEN V600 — TEST REPORT
+=====================================
+
+[OK] Hall of Fame: sesongtitler absolutt først; sammenlagtpaller før cup/måned ved likt gull
+[OK] Snakkiser: TC 0 poeng + tabellbevegelse sier «forrige runde»
+[OK] Historikkarkiv: atomisk GW-snapshot + sesongfinale-format
+[OK] Design: Hall of Fame topp 3 i én liste; Snakkiser uten kort-grid
+[OK] Navigasjon: Rivalradar kun Rivaler + Spilleroversikt; før-sesongodds under Ligaen
+[OK] Mitt Lofthus/Rivalradar: automatisk relevante rivaler
+[OK] Rivaldata: navn på eiere/manglende + faktiske rival-kapteiner
+[OK] Spilleroversikt: Lofthus-eierskap + FPL-eierskap fra bootstrap
+[OK] Klikkflyt: manager i ligatabellen kan åpne managerprofil
+[OK] Pris: current market price fortsatt fra now_cost / 10
+[OK] Før-sesongodds: best-effort immutabel CSV-snapshot uten overskriving
+
+[OK] Python syntax/compile: app.py, lro_ui.py, lro_analysis.py, lro_fpl.py, lro_history.py, lro_odds.py, lro_archive.py
+
+MERKNAD:
+Byggemiljøet har ikke Streamlit installert og har ikke live FPL-tilgang. Live Community Cloud-smoke er derfor ikke kjørt her. Snapshot-filer skrevet av Streamlit Cloud må synkes/committes for å overleve en ny deploy; formatet i V600 er laget for dette og krasjer aldri appen dersom filsystemet ikke kan skrives.

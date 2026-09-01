@@ -103,7 +103,7 @@ label, .stSelectbox label, .stMultiSelect label {font-weight:800 !important; col
 [data-testid="stPopover"] button{border:1px solid var(--line)!important;border-radius:10px!important;background:rgba(255,255,255,.55)!important;}
 
 /* editorial hero */
-.v500-home-hero{position:relative;overflow:hidden;display:grid;grid-template-columns:minmax(0,1.55fr) minmax(290px,.75fr);gap:0;background:var(--ink);border-radius:var(--radius-lg);margin:1rem 0 1.25rem;box-shadow:var(--shadow-dark);color:#fff;min-height:315px;border:1px solid rgba(255,255,255,.08)}
+.v500-home-hero{position:relative;overflow:hidden;display:grid;grid-template-columns:minmax(0,1.55fr) minmax(290px,.75fr);gap:0;background:var(--ink);border-radius:10px;margin:1rem 0 1.25rem;box-shadow:0 18px 46px rgba(8,17,31,.18);color:#fff;min-height:315px;border:1px solid rgba(255,255,255,.08)}
 .v500-home-hero::before{content:"";position:absolute;inset:0;pointer-events:none;background:
  radial-gradient(circle at 77% 20%,rgba(214,185,109,.32),transparent 17rem),
  linear-gradient(110deg,transparent 0 53%,rgba(255,255,255,.035) 53% 54%,transparent 54% 100%),
@@ -120,25 +120,25 @@ label, .stSelectbox label, .stMultiSelect label {font-weight:800 !important; col
 .v500-mini-value{font-size:1.55rem;font-weight:950;letter-spacing:-.045em;margin-top:.35rem;color:#fff}
 .v500-mini-meta{font-size:.8rem;color:#b8c3d4;margin-top:.18rem}
 
-/* story cards */
-.v500-story-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.75rem;margin:.65rem 0 1.1rem}
-.v500-story{position:relative;min-height:112px;padding:1rem 1.05rem 1rem 3.55rem;background:rgba(255,255,255,.58);border:1px solid rgba(214,217,222,.9);border-radius:13px;overflow:hidden}
-.v500-story::before{content:attr(data-n);position:absolute;left:.9rem;top:.85rem;font-size:2rem;line-height:1;font-weight:950;letter-spacing:-.06em;color:rgba(184,137,32,.7)}
-.v500-story-text{font-weight:900;font-size:1.02rem;line-height:1.32;letter-spacing:-.02em}
-.v500-story-tag{font-size:.68rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:850;margin-bottom:.35rem}
+/* editorial stories: one list, no dashboard cards */
+.v500-story-list{border-top:1px solid var(--line);margin:.45rem 0 1.2rem}
+.v500-story-line{display:grid;grid-template-columns:46px minmax(0,1fr);gap:.75rem;align-items:start;padding:.9rem .1rem;border-bottom:1px solid var(--line)}
+.v500-story-line:hover{background:rgba(255,255,255,.34)}
+.v500-story-n{font-size:1.42rem;line-height:1;font-weight:950;letter-spacing:-.06em;color:rgba(184,137,32,.8)}
+.v500-story-text{font-weight:900;font-size:1rem;line-height:1.38;letter-spacing:-.02em}
 
-/* my Lofthus */
-.v500-my{position:relative;overflow:hidden;background:linear-gradient(135deg,#fffefa,#f2eee4);border:1px solid var(--line);border-radius:16px;padding:1.1rem 1.15rem;box-shadow:0 12px 30px rgba(8,17,31,.045)}
-.v500-my::after{content:"";position:absolute;right:-50px;bottom:-80px;width:220px;height:220px;border-radius:50%;border:1px solid rgba(184,137,32,.16);box-shadow:0 0 0 35px rgba(184,137,32,.035),0 0 0 70px rgba(184,137,32,.02)}
-.v500-my-top{position:relative;z-index:1;display:flex;justify-content:space-between;gap:1rem;align-items:baseline}
-.v500-my-name{font-size:1.35rem;font-weight:950;letter-spacing:-.04em}
-.v500-my-rank{font-size:2.35rem;font-weight:950;letter-spacing:-.07em;color:var(--ink)}
-.v500-my-rank span{font-size:.72rem;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);margin-left:.3rem}
-.v500-my-metrics{position:relative;z-index:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.65rem;margin-top:.85rem}
-.v500-my-metric{border-top:1px solid var(--line);padding-top:.65rem}
-.v500-my-metric strong{display:block;font-size:1.05rem}
+/* My Lofthus: editorial strip rather than another card */
+.v500-my{padding:.9rem 0 0;border-top:2px solid var(--ink);border-bottom:1px solid var(--line);margin:.55rem 0 1.1rem}
+.v500-my-top{display:flex;justify-content:space-between;gap:1rem;align-items:baseline;padding:0 .05rem .75rem}
+.v500-my-name{font-size:1.5rem;font-weight:950;letter-spacing:-.045em}
+.v500-my-rank{font-size:2.1rem;font-weight:950;letter-spacing:-.07em;color:var(--ink)}
+.v500-my-rank span{font-size:.7rem;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);margin-left:.3rem}
+.v500-my-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-top:1px solid var(--line)}
+.v500-my-metric{padding:.72rem .8rem .72rem 0}
+.v500-my-metric + .v500-my-metric{padding-left:.9rem;border-left:1px solid var(--line)}
+.v500-my-metric strong{display:block;font-size:1.08rem}
 .v500-my-metric span{font-size:.72rem;color:var(--muted);font-weight:700}
-.v500-my-insights{position:relative;z-index:1;margin:.75rem 0 0;padding-left:1.05rem;color:#4e5969;font-size:.84rem;line-height:1.55}
+.v500-my-insights{margin:.1rem 0 0;padding:.72rem 0 .8rem 1.05rem;border-top:1px solid var(--line);color:#4e5969;font-size:.84rem;line-height:1.55}
 
 /* stat strip */
 .v500-stats {display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); margin:1rem 0 1.25rem;}
@@ -153,7 +153,7 @@ label, .stSelectbox label, .stMultiSelect label {font-weight:800 !important; col
 .v500-row:hover {background:rgba(255,255,255,.46);}
 .v500-rank {font-size:.8rem; color:var(--muted); font-weight:900;}
 .v500-rank.gold {color:#977013;}.v500-rank.silver {color:#657080;}.v500-rank.bronze {color:#925f3a;}
-.v500-who {font-weight:900; min-width:0; letter-spacing:-.015em;}
+.v500-who {font-weight:900; min-width:0; letter-spacing:-.015em;}.v500-row-link{color:inherit;text-decoration:none}.v500-row-link:hover{text-decoration:underline;text-decoration-color:var(--gold);text-underline-offset:3px}
 .v500-meta {display:block; color:var(--muted); font-size:.78rem; font-weight:650; margin-top:.12rem; white-space:normal;}
 .v500-num {font-size:.94rem; font-weight:900; text-align:right; white-space:nowrap;}
 .v500-num.up {color:var(--green);}.v500-num.down {color:var(--red);}
@@ -189,15 +189,25 @@ label, .stSelectbox label, .stMultiSelect label {font-weight:800 !important; col
 /* recommendations */
 .v500-rec {padding:1rem 0; border-bottom:1px solid var(--line)}.v500-rec-top {display:flex;justify-content:space-between;align-items:baseline;gap:1rem}.v500-rec-name {font-size:1.15rem;font-weight:950}.v500-rec-label {font-size:.72rem;font-weight:950;text-transform:uppercase;letter-spacing:.065em;color:var(--green)}.v500-rec-meta {font-size:.81rem;color:var(--muted);margin:.22rem 0 .45rem}.v500-reasons {margin:.35rem 0 0;padding-left:1.05rem;color:#4f5969;font-size:.84rem;line-height:1.5}
 
-/* Hall of Fame */
-.v500-hof-podium{display:grid;grid-template-columns:1.08fr 1fr 1fr;gap:.75rem;margin:.8rem 0 1rem}.v500-hof-card{position:relative;overflow:hidden;min-height:180px;border:1px solid var(--line);border-radius:15px;padding:1rem 1rem 1.05rem;background:rgba(255,255,255,.56)}.v500-hof-card.first{background:linear-gradient(145deg,#0a1424,#101d31);color:#fff;border-color:rgba(255,255,255,.08);box-shadow:var(--shadow-dark)}.v500-hof-card.first::after{content:"";position:absolute;right:-35px;bottom:-70px;width:210px;height:210px;border-radius:50%;background:radial-gradient(circle,rgba(214,185,109,.2),transparent 65%)}.v500-hof-place{font-size:3.4rem;font-weight:950;letter-spacing:-.08em;line-height:.9;color:rgba(18,24,36,.12)}.v500-hof-card.first .v500-hof-place{color:rgba(255,255,255,.13)}.v500-hof-name{font-size:1.2rem;font-weight:950;letter-spacing:-.035em;margin-top:2.35rem}.v500-hof-card.first .v500-hof-name{color:#fff}.v500-hof-meta{font-size:.78rem;color:var(--muted);font-weight:650;margin-top:.3rem;line-height:1.4}.v500-hof-card.first .v500-hof-meta{color:#b9c5d5}
+/* Hall of Fame: one continuous honours list */
+.v500-hof-list{border-top:1px solid var(--line);margin-top:.65rem}
+.v500-hof-row{position:relative;display:grid;grid-template-columns:64px minmax(0,1fr);gap:.9rem;align-items:center;padding:1rem .55rem;border-bottom:1px solid var(--line);overflow:hidden}
+.v500-hof-row:hover{background:rgba(255,255,255,.4)}
+.v500-hof-row.top1{background:linear-gradient(90deg,#0a1424 0%,#101d31 62%,rgba(16,29,49,.94) 100%);color:#fff;border-radius:10px;margin:.28rem 0;border-bottom-color:transparent;padding-left:.8rem;padding-right:.8rem}
+.v500-hof-row.top2{background:linear-gradient(90deg,rgba(108,119,135,.10),transparent 72%)}
+.v500-hof-row.top3{background:linear-gradient(90deg,rgba(146,95,58,.10),transparent 72%)}
+.v500-hof-place{font-size:1.8rem;font-weight:950;letter-spacing:-.07em;color:rgba(18,24,36,.24)}
+.v500-hof-row.top1 .v500-hof-place{color:var(--gold-soft)}
+.v500-hof-row.top2 .v500-hof-place{color:#657080}.v500-hof-row.top3 .v500-hof-place{color:#925f3a}
+.v500-hof-name{font-size:1.04rem;font-weight:950;letter-spacing:-.025em}.v500-hof-row.top1 .v500-hof-name{font-size:1.15rem;color:#fff}
+.v500-hof-meta{font-size:.78rem;color:var(--muted);font-weight:650;margin-top:.18rem;line-height:1.4}.v500-hof-row.top1 .v500-hof-meta{color:#bdc7d6}
 
 /* expander */
 [data-testid="stExpander"] {border:1px solid var(--line) !important; border-radius:11px !important; background:rgba(255,255,255,.3) !important;}
 
-@media(max-width:900px){.v500-home-hero{grid-template-columns:1fr}.v500-hero-main{border-right:0;border-bottom:1px solid var(--line-dark)}.v500-hero-side{grid-template-columns:1fr 1fr;grid-template-rows:1fr}.v500-hero-mini + .v500-hero-mini{border-top:0;border-left:1px solid var(--line-dark)}.v500-hof-podium{grid-template-columns:1fr}.v500-hof-card{min-height:135px}.v500-hof-name{margin-top:1.25rem}}
+@media(max-width:900px){.v500-home-hero{grid-template-columns:1fr}.v500-hero-main{border-right:0;border-bottom:1px solid var(--line-dark)}.v500-hero-side{grid-template-columns:1fr 1fr;grid-template-rows:1fr}.v500-hero-mini + .v500-hero-mini{border-top:0;border-left:1px solid var(--line-dark)}.v500-hof-row{grid-template-columns:52px minmax(0,1fr)}}
 @media(max-width:760px){
- .block-container{padding:.7rem .72rem 3rem !important}.v500-header{border-radius:14px;padding:1.1rem 1.05rem 1rem}.v500-brand{font-size:2.2rem}.v500-page-title{font-size:2.15rem}.v500-section{margin-top:1.55rem}.v500-home-hero{min-height:0}.v500-hero-main{min-height:245px;padding:1.25rem}.v500-hero-title{font-size:2.8rem}.v500-hero-side{grid-template-columns:1fr}.v500-hero-mini + .v500-hero-mini{border-left:0;border-top:1px solid var(--line-dark)}.v500-story-grid{grid-template-columns:1fr}.v500-my-metrics{grid-template-columns:1fr}.v500-stats{grid-template-columns:repeat(2,1fr)}.v500-stat:nth-child(3){border-left:0;padding-left:0;border-top:1px solid var(--line)}.v500-stat:nth-child(4){border-top:1px solid var(--line)}.v500-row{grid-template-columns:38px minmax(0,1fr) auto}.v500-table{min-width:520px}.v500-hide-mobile{display:none !important}.stButton > button{font-size:.77rem !important;padding:.45rem .15rem !important}.v500-my-top{align-items:flex-start}.v500-my-rank{font-size:1.8rem}
+ .block-container{padding:.7rem .72rem 3rem !important}.v500-header{border-radius:14px;padding:1.1rem 1.05rem 1rem}.v500-brand{font-size:2.2rem}.v500-page-title{font-size:2.15rem}.v500-section{margin-top:1.55rem}.v500-home-hero{min-height:0}.v500-hero-main{min-height:245px;padding:1.25rem}.v500-hero-title{font-size:2.8rem}.v500-hero-side{grid-template-columns:1fr}.v500-hero-mini + .v500-hero-mini{border-left:0;border-top:1px solid var(--line-dark)}.v500-story-list{display:block}.v500-my-metrics{grid-template-columns:1fr}.v500-stats{grid-template-columns:repeat(2,1fr)}.v500-stat:nth-child(3){border-left:0;padding-left:0;border-top:1px solid var(--line)}.v500-stat:nth-child(4){border-top:1px solid var(--line)}.v500-row{grid-template-columns:38px minmax(0,1fr) auto}.v500-table{min-width:520px}.v500-hide-mobile{display:none !important}.stButton > button{font-size:.77rem !important;padding:.45rem .15rem !important}.v500-my-top{align-items:flex-start}.v500-my-rank{font-size:1.8rem}
 }
 </style>
 """
@@ -280,14 +290,15 @@ def home_hero(leader: str, leader_points: int, round_winner: str, round_points: 
 
 
 def editorial_stories(items: list[str]) -> None:
+    """Render Snakkiser as an editorial rundown, never as a card grid."""
     if not items:
         return
     bits = []
     for i, text in enumerate(items[:4], start=1):
         bits.append(
-            f"<div class='v500-story' data-n='{i:02d}'><div class='v500-story-tag'>Snakkis</div><div class='v500-story-text'>{esc(text)}</div></div>"
+            f"<div class='v500-story-line'><div class='v500-story-n'>{i:02d}</div><div class='v500-story-text'>{esc(text)}</div></div>"
         )
-    st.markdown("<div class='v500-story-grid'>" + "".join(bits) + "</div>", unsafe_allow_html=True)
+    st.markdown("<div class='v500-story-list'>" + "".join(bits) + "</div>", unsafe_allow_html=True)
 
 
 def my_lofthus_panel(name: str, rank: int, metrics: list[tuple[str, str]], insights: list[str]) -> None:
@@ -315,9 +326,11 @@ def rows(items: list[dict]) -> None:
     for item in items:
         rank = esc(item.get("rank", "")); who = esc(item.get("who", "")); meta = esc(item.get("meta", "")); num = esc(item.get("num", ""))
         rank_class = esc(item.get("rank_class", "")); num_class = esc(item.get("num_class", ""))
+        href = str(item.get("href") or "").strip()
+        who_html = f"<a href='{esc(href)}' class='v500-row-link'>{who}</a>" if href else who
         bits.append(
             f"<div class='v500-row'><div class='v500-rank {rank_class}'>{rank}</div>"
-            f"<div class='v500-who'>{who}<span class='v500-meta'>{meta}</span></div>"
+            f"<div class='v500-who'>{who_html}<span class='v500-meta'>{meta}</span></div>"
             f"<div class='v500-num {num_class}'>{num}</div></div>"
         )
     if bits:
@@ -388,13 +401,13 @@ def sortable_league_table(rows: list[dict]) -> None:
 <!doctype html><html><head><meta charset="utf-8"><style>
 :root{--line:#d6d9de;--text:#121824;--muted:#687386;--gold:#b88920;--green:#167a52;--red:#b63a34}
 *{box-sizing:border-box}body{margin:0;background:transparent;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text)}
-.wrap{width:100%;overflow-x:auto;border:1px solid var(--line);border-radius:13px;background:rgba(255,255,255,.42)}table{border-collapse:collapse;width:100%;min-width:720px}th{text-align:left;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.075em;font-weight:900;padding:12px 10px;border-bottom:1px solid var(--line);cursor:pointer;user-select:none;background:rgba(8,17,31,.025)}td{padding:13px 10px;border-bottom:1px solid var(--line);vertical-align:middle;font-size:13.5px}tbody tr:last-child td{border-bottom:0}tr:hover td{background:rgba(255,255,255,.58)}.right{text-align:right;white-space:nowrap}.manager{font-weight:900}.team{font-weight:700}.chip{display:block;color:var(--muted);font-size:11.5px;font-weight:700;margin-top:2px}.rank{font-weight:900;color:var(--muted)}.rank.gold{color:#977013}.rank.silver{color:#657080}.rank.bronze{color:#925f3a}.up{color:var(--green);font-weight:900}.down{color:var(--red);font-weight:900}.sort{margin-left:5px;color:var(--gold)}
+.wrap{width:100%;overflow-x:auto;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:transparent}table{border-collapse:collapse;width:100%;min-width:720px}th{text-align:left;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.075em;font-weight:900;padding:12px 10px;border-bottom:1px solid var(--line);cursor:pointer;user-select:none;background:transparent}td{padding:13px 10px;border-bottom:1px solid var(--line);vertical-align:middle;font-size:13.5px}tbody tr:last-child td{border-bottom:0}tr:hover td{background:rgba(255,255,255,.58)}.right{text-align:right;white-space:nowrap}.manager{font-weight:900}.manager-link{cursor:pointer;text-decoration:none;color:inherit}.manager-link:hover{text-decoration:underline;text-decoration-color:var(--gold);text-underline-offset:3px}.team{font-weight:700}.chip{display:block;color:var(--muted);font-size:11.5px;font-weight:700;margin-top:2px}.rank{font-weight:900;color:var(--muted)}.rank.gold{color:#977013}.rank.silver{color:#657080}.rank.bronze{color:#925f3a}.up{color:var(--green);font-weight:900}.down{color:var(--red);font-weight:900}.sort{margin-left:5px;color:var(--gold)}
 @media(max-width:760px){table{min-width:560px}th,td{padding:10px 7px}}
 </style></head><body><div class="wrap"><table><thead><tr><th data-k="rank" data-type="n">#</th><th data-k="manager">Manager</th><th data-k="team">Lag</th><th class="right" data-k="gw" data-type="n">GW</th><th class="right" data-k="points" data-type="n">Poeng</th><th class="right" data-k="move" data-type="n">+/-</th></tr></thead><tbody id="body"></tbody></table></div><script>
 const rows=__ROWS__; let key='rank', dir=1; const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 function cmp(a,b){let av=a[key],bv=b[key];if(typeof av==='number'||typeof bv==='number'){av=(av===null||av===undefined)?1e15:Number(av);bv=(bv===null||bv===undefined)?1e15:Number(bv);return(av-bv)*dir}return String(av||'').localeCompare(String(bv||''),'nb')*dir}
-function render(){const body=document.getElementById('body');body.innerHTML='';[...rows].sort(cmp).forEach(r=>{const tr=document.createElement('tr');const rc=r.rank===1?'gold':r.rank===2?'silver':r.rank===3?'bronze':'';const mv=Number(r.move||0);const move=mv>0?'↑'+mv:mv<0?'↓'+Math.abs(mv):'–';const mc=mv>0?'up':mv<0?'down':'';tr.innerHTML=`<td><span class="rank ${rc}">${esc(r.rank??'')}</span></td><td class="manager">${esc(r.manager)}</td><td><span class="team">${esc(r.team)}</span>${r.chip?`<span class="chip">${esc(r.chip)}</span>`:''}</td><td class="right">${esc(r.gw)}</td><td class="right"><strong>${esc(r.points)}</strong></td><td class="right ${mc}">${move}</td>`;body.appendChild(tr)});document.querySelectorAll('th').forEach(th=>{th.querySelectorAll('.sort').forEach(x=>x.remove());if(th.dataset.k===key){const x=document.createElement('span');x.className='sort';x.textContent=dir===1?'▲':'▼';th.appendChild(x)}})}
-document.querySelectorAll('th').forEach(th=>th.onclick=()=>{const k=th.dataset.k;if(key===k)dir*=-1;else{key=k;dir=(k==='manager'||k==='team')?1:(k==='move'?-1:1)}render()});render();
+function render(){const body=document.getElementById('body');body.innerHTML='';[...rows].sort(cmp).forEach(r=>{const tr=document.createElement('tr');const rc=r.rank===1?'gold':r.rank===2?'silver':r.rank===3?'bronze':'';const mv=Number(r.move||0);const move=mv>0?'↑'+mv:mv<0?'↓'+Math.abs(mv):'–';const mc=mv>0?'up':mv<0?'down':'';tr.innerHTML=`<td><span class="rank ${rc}">${esc(r.rank??'')}</span></td><td class="manager"><span class="manager-link" data-entry="${esc(r.entry)}">${esc(r.manager)}</span></td><td><span class="team">${esc(r.team)}</span>${r.chip?`<span class="chip">${esc(r.chip)}</span>`:''}</td><td class="right">${esc(r.gw)}</td><td class="right"><strong>${esc(r.points)}</strong></td><td class="right ${mc}">${move}</td>`;body.appendChild(tr)});document.querySelectorAll('th').forEach(th=>{th.querySelectorAll('.sort').forEach(x=>x.remove());if(th.dataset.k===key){const x=document.createElement('span');x.className='sort';x.textContent=dir===1?'▲':'▼';th.appendChild(x)}})}
+document.querySelectorAll('th').forEach(th=>th.onclick=()=>{const k=th.dataset.k;if(key===k)dir*=-1;else{key=k;dir=(k==='manager'||k==='team')?1:(k==='move'?-1:1)}render()});document.addEventListener('click',e=>{const link=e.target.closest('.manager-link');if(!link)return;const entry=link.dataset.entry;if(!entry)return;const url=new URL(window.parent.location.href);url.searchParams.set('page','Ligaen');url.searchParams.set('league_view','Manager');url.searchParams.set('manager',entry);window.parent.location.href=url.toString();});render();
 </script></body></html>
 """.replace("__ROWS__", payload)
     height = min(3400, max(420, 58 + 48 * len(rows or [])))
@@ -411,7 +424,7 @@ def captain_board(rows: list[dict]) -> None:
 <!doctype html><html><head><meta charset="utf-8"><style>
 :root{--line:#d6d9de;--text:#121824;--muted:#687386;--gold:#b88920;--ink:#08111f;--red:#b63a34}
 *{box-sizing:border-box}body{margin:0;background:transparent;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text)}
-.board{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(260px,.7fr);gap:14px}.list,.detail{border:1px solid var(--line);border-radius:13px;background:rgba(255,255,255,.46);overflow:hidden}.list{max-height:520px;overflow-y:auto}.row{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:9px;align-items:center;padding:12px 13px;border-bottom:1px solid var(--line);cursor:pointer}.row:last-child{border-bottom:0}.row:hover,.row.active{background:rgba(184,137,32,.07)}.rank{font-size:11px;color:var(--muted);font-weight:900}.name{font-weight:900;font-size:14px}.meta{display:block;color:var(--muted);font-size:11.5px;font-weight:650;margin-top:2px}.count{font-weight:900;font-size:13px;white-space:nowrap}.detail{padding:16px;min-height:250px;position:sticky;top:0;max-height:520px;overflow-y:auto}.eyebrow{text-transform:uppercase;letter-spacing:.085em;color:var(--gold);font-size:10px;font-weight:950}.dname{font-weight:950;font-size:25px;letter-spacing:-.045em;margin:5px 0 2px}.dmeta{font-size:12px;color:var(--muted);font-weight:650}.group{margin-top:17px;border-top:1px solid var(--line);padding-top:10px}.label{font-size:10px;text-transform:uppercase;letter-spacing:.07em;font-weight:900;color:var(--muted);margin-bottom:6px}.person{font-size:12.5px;font-weight:750;padding:5px 0}.tc{color:var(--red)}
+.board{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(260px,.7fr);gap:22px}.list,.detail{border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:transparent;overflow:hidden}.list{max-height:520px;overflow-y:auto}.row{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:9px;align-items:center;padding:12px 13px;border-bottom:1px solid var(--line);cursor:pointer}.row:last-child{border-bottom:0}.row:hover,.row.active{background:rgba(184,137,32,.07)}.rank{font-size:11px;color:var(--muted);font-weight:900}.name{font-weight:900;font-size:14px}.meta{display:block;color:var(--muted);font-size:11.5px;font-weight:650;margin-top:2px}.count{font-weight:900;font-size:13px;white-space:nowrap}.detail{padding:16px 2px;min-height:250px;position:sticky;top:0;max-height:520px;overflow-y:auto}.eyebrow{text-transform:uppercase;letter-spacing:.085em;color:var(--gold);font-size:10px;font-weight:950}.dname{font-weight:950;font-size:25px;letter-spacing:-.045em;margin:5px 0 2px}.dmeta{font-size:12px;color:var(--muted);font-weight:650}.group{margin-top:17px;border-top:1px solid var(--line);padding-top:10px}.label{font-size:10px;text-transform:uppercase;letter-spacing:.07em;font-weight:900;color:var(--muted);margin-bottom:6px}.person{font-size:12.5px;font-weight:750;padding:5px 0}.tc{color:var(--red)}
 @media(max-width:760px){.board{grid-template-columns:1fr}.detail{position:static}.list{max-height:360px}}
 </style></head><body><div class="board"><div class="list" id="list"></div><div class="detail" id="detail"></div></div><script>
 const rows=__ROWS__;let selected=0;const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
@@ -424,17 +437,19 @@ function drawDetail(){const r=rows[selected]||{};const detail=document.getElemen
 
 
 def hall_of_fame(rows_data: list[dict]) -> None:
+    """One continuous Hall of Fame list; top three are accented in place."""
     if not rows_data:
         st.caption("Ingen historikk funnet.")
         return
-    top = rows_data[:3]
-    cards = []
-    for i, row in enumerate(top, start=1):
-        cls = " first" if i == 1 else ""
-        cards.append(f"<div class='v500-hof-card{cls}'><div class='v500-hof-place'>0{i}</div><div class='v500-hof-name'>{esc(row.get('who'))}</div><div class='v500-hof-meta'>{esc(row.get('meta'))}</div></div>")
-    st.markdown("<div class='v500-hof-podium'>" + "".join(cards) + "</div>", unsafe_allow_html=True)
-    if len(rows_data) > 3:
-        rows(rows_data[3:])
+    bits = []
+    for i, row in enumerate(rows_data, start=1):
+        cls = "top1" if i == 1 else "top2" if i == 2 else "top3" if i == 3 else ""
+        bits.append(
+            f"<div class='v500-hof-row {cls}'><div class='v500-hof-place'>{i:02d}</div>"
+            f"<div><div class='v500-hof-name'>{esc(row.get('who'))}</div>"
+            f"<div class='v500-hof-meta'>{esc(row.get('meta'))}</div></div></div>"
+        )
+    st.markdown("<div class='v500-hof-list'>" + "".join(bits) + "</div>", unsafe_allow_html=True)
 
 
 def odds_table(df: pd.DataFrame) -> None:

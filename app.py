@@ -30,12 +30,14 @@ from lro_fpl import (
     season_label,
     short_season_label,
 )
-from lro_history import HistoryStore, normalize_text
+from lro_history import HistoryStore, hall_of_fame_sort_key, normalize_text
+from lro_archive import SnapshotStore
 from lro_odds import build_preseason_odds, compare_group_odds, decimal_odds_from_pct, simulate_group
 import lro_ui as ui
 
-APP_VERSION = "lofthus-road-open-v500-my-lofthus"
+APP_VERSION = "lofthus-road-open-v600-editorial-my-lofthus"
 DATA_DIR = Path(__file__).resolve().parent / "data"
+PRESEASON_ODDS_FILE = DATA_DIR / "preseason_odds_2026_27.csv"
 
 st.set_page_config(page_title="Lofthus Road Open", page_icon="⚽", layout="wide", initial_sidebar_state="collapsed")
 ui.install_styles()
@@ -54,6 +56,7 @@ def get_history_store(version: str) -> HistoryStore:
 
 client = get_client()
 history_store = get_history_store(APP_VERSION)
+snapshot_store = SnapshotStore(DATA_DIR / "snapshots")
 
 
 def fmt_price(value: Any) -> str:
@@ -105,7 +108,12 @@ def selected_ownership(managers: list[dict], entries: list[int] | None = None) -
             max_workers=8 if len(key_entries) > 8 else 6,
         )
         st.session_state[stamp_key] = time.time()
-    return st.session_state[cache_key]
+    ownership = st.session_state[cache_key]
+    # A full-league load after a completed GW is enough to build a repo-friendly
+    # archive snapshot. Failure to write must never break the live app.
+    if len(key_entries) >= len(managers) and current_event_finished(bootstrap):
+        archive_completed_round(managers, bootstrap, ownership)
+    return ownership
 
 
 def histories_for(entries: list[int]) -> tuple[dict[int, dict], dict[int, str]]:
@@ -260,6 +268,30 @@ def current_event_finished(bootstrap: dict) -> bool:
     return False
 
 
+def archive_completed_round(managers: list[dict], bootstrap: dict, ownership: dict) -> None:
+    """Best-effort snapshot. The UI keeps working even on a read-only filesystem."""
+    event = current_event_id(bootstrap)
+    if not event or not current_event_finished(bootstrap):
+        return
+    if nint(ownership.get("loaded_managers")) < len(managers):
+        return
+    try:
+        phase, month_df = current_month_table(managers, bootstrap)
+        payload = snapshot_store.make_payload(
+            season=season_label(bootstrap),
+            event=int(event),
+            managers=managers,
+            ownership=ownership,
+            month_name=str((phase or {}).get("name") or ""),
+            month_table=month_df.to_dict("records") if not month_df.empty else [],
+        )
+        snapshot_store.write(payload, replace=False)
+        if int(event) >= 38:
+            snapshot_store.freeze_season_final(payload)
+    except Exception:
+        return
+
+
 def fixture_score(f: dict, teams: dict[int, str]) -> str:
     home = teams.get(nint(f.get("team_h")), "?")
     away = teams.get(nint(f.get("team_a")), "?")
@@ -327,6 +359,7 @@ def render_month(managers: list[dict], bootstrap: dict, top: int = 5) -> None:
             "who": r.get("manager"),
             "meta": r.get("team"),
             "num": f"{nint(r.get('points'))} poeng",
+            "href": f"?page=Ligaen&league_view=Manager&manager={nint(r.get('entry'))}" if nint(r.get('entry')) else "",
         }
         for i, r in enumerate(df.head(top).to_dict("records"))
     ])
@@ -342,8 +375,40 @@ def _manager_neighborhood(managers: list[dict], entry: int, radius: int = 2) -> 
     return [m for m in ordered[lo:hi] if nint(m.get("entry")) != int(entry)]
 
 
+def suggested_rival_entries(managers: list[dict], bootstrap: dict, entry: int, limit: int = 5) -> list[int]:
+    """Managers who matter now: three ahead, two behind, plus nearby month rivals."""
+    ordered = sorted(managers, key=lambda m: (nint(m.get("rank"), 10**9), -nint(m.get("total"))))
+    idx = next((i for i, m in enumerate(ordered) if nint(m.get("entry")) == int(entry)), None)
+    if idx is None:
+        return []
+    picks: list[int] = []
+    ahead = list(reversed(ordered[max(0, idx - 3):idx]))
+    behind = ordered[idx + 1:idx + 3]
+    for m in ahead + behind:
+        eid = nint(m.get("entry"))
+        if eid and eid != int(entry) and eid not in picks:
+            picks.append(eid)
+
+    # Month neighbours matter when the monthly race has real points. Do not let a
+    # zero-point alphabetical table manufacture rivals.
+    try:
+        _, month_df = current_month_table(managers, bootstrap)
+        if not month_df.empty and int(pd.to_numeric(month_df["points"], errors="coerce").fillna(0).sum()) > 0:
+            month_ordered = month_df.sort_values(["rank", "manager"]).reset_index(drop=True)
+            hit = month_ordered.index[month_ordered["entry"] == int(entry)].tolist()
+            if hit:
+                mi = int(hit[0])
+                for r in month_ordered.iloc[max(0, mi - 2):mi + 3].to_dict("records"):
+                    eid = nint(r.get("entry"))
+                    if eid and eid != int(entry) and eid not in picks:
+                        picks.append(eid)
+    except Exception:
+        pass
+    return picks[:limit]
+
+
 def render_my_lofthus(managers: list[dict], bootstrap: dict, ownership: dict) -> None:
-    ui.section("Mitt Lofthus", "Velg deg selv én gang. Resten av appen bruker valget videre.")
+    ui.section("Mitt Lofthus")
     opts = manager_options(managers)
     ids = [x[0] for x in opts]
     labels = dict(opts)
@@ -435,17 +500,23 @@ def render_my_lofthus(managers: list[dict], bootstrap: dict, ownership: dict) ->
                 if pname:
                     insights.append(f"{manager_name(above)} har {pname}; du mangler ham.")
 
+    movement = nint(me.get("last_rank"), my_rank) - my_rank
+    if movement > 0:
+        insights.insert(0, f"Du klatret {movement} plasser forrige runde.")
+    elif movement < 0:
+        insights.insert(0, f"Du falt {abs(movement)} plasser forrige runde.")
+
     ui.my_lofthus_panel(
         manager_name(me),
         my_rank,
-        [(top5_value, top5_label), (above_value, above_label), (month_value, month_metric_label)],
-        insights,
+        [(f"{my_points}", "poeng"), (above_value, above_label), (top5_value, top5_label)],
+        ([f"{month_value} i {month_label.lower()} · {month_points} poeng"] if month_rank else []) + insights,
     )
 
-    nearby = _manager_neighborhood(managers, selected, radius=2)
+    suggested = suggested_rival_entries(managers, bootstrap, selected, limit=5)
     if st.button("Åpne Rivalradar mot managerne rundt meg", key="v500_open_nearby_rivals", use_container_width=True):
         st.session_state["v400_my_manager"] = selected
-        st.session_state["v400_rivals"] = [nint(m.get("entry")) for m in nearby if nint(m.get("entry"))][:4]
+        st.session_state["v400_rivals"] = suggested[:5]
         st.session_state["v400_main_page"] = "Rivalradar"
         st.session_state["v406_rival_view"] = "Rivaler"
         st.rerun()
@@ -495,6 +566,7 @@ def render_home(managers: list[dict], bootstrap: dict) -> None:
                 "who": manager_name(m),
                 "meta": str(m.get("entry_name") or ""),
                 "num": f"{nint(m.get('total'))} poeng",
+                "href": f"?page=Ligaen&league_view=Manager&manager={nint(m.get('entry'))}" if nint(m.get('entry')) else "",
             }
             for i, m in enumerate(top)
         ])
@@ -542,7 +614,8 @@ def render_player_profile(player: dict, ownership: dict, bootstrap: dict) -> Non
     total = nint(ownership.get("loaded_managers"))
     ui.profile_header(str(player.get("player") or ""), f"{player.get('club')} · {player.get('position')} · {fmt_price(player.get('current_price'))}")
     ui.stat_strip([
-        (f"{nint(player.get('ownership_count'))}/{total}", "Eier"),
+        (f"{nint(player.get('ownership_count'))}/{total}", "Lofthus-eiere"),
+        (f"{nfloat(player.get('fpl_ownership_pct')):.1f}%", "FPL-eierskap"),
         (nint(player.get("captain_count")), "Kapteiner"),
         (nint(player.get("triple_captain_count")), "Triple Captain"),
         (nint(player.get("bench_count")), "På benken"),
@@ -604,23 +677,30 @@ def render_season(managers: list[dict], bootstrap: dict, embedded: bool = False)
     with st.spinner("Henter Lofthus-lag …"):
         ownership = selected_ownership(managers)
     data_quality_note(ownership)
+
+    # Search first: the most common use case is a concrete question about one player.
+    ui.section("Finn spiller")
+    render_player_search(ownership, "v600_player_search")
+
     ui.section("Hvem har cappet hvem?")
     render_captains(ownership)
-    c1, c2 = st.columns([0.9, 1.1], gap="large")
+
+    players = ownership.get("players", pd.DataFrame())
+    c1, c2 = st.columns(2, gap="large")
     with c1:
         ui.section("Mest eide")
         render_popular(ownership)
     with c2:
-        ui.section("Finn spiller")
-        render_player_search(ownership, "v400_player_search")
-    ui.section("Differensialer")
-    players = ownership.get("players", pd.DataFrame())
-    if not players.empty:
-        current = current_event_id(bootstrap) or 1
-        # Small ownership + actual output/minutes: avoids a cemetery of bench fodder.
-        dif = players[(players["ownership_count"].between(1, 6)) & ((players["season_points"] >= max(6, current * 3)) | (players["event_points"] >= 4))]
-        dif = dif.sort_values(["event_points", "season_points", "ownership_count"], ascending=[False, False, True]).head(8)
-        ui.rows([{"rank": i + 1, "who": r.get("player"), "meta": f"{r.get('club')} · {r.get('position')}", "num": f"{nint(r.get('ownership_count'))} eiere"} for i, r in enumerate(dif.to_dict("records"))])
+        ui.section("Differensialer")
+        if not players.empty:
+            current = current_event_id(bootstrap) or 1
+            # Small ownership + actual output/minutes: avoids a cemetery of bench fodder.
+            dif = players[(players["ownership_count"].between(1, 6)) & ((players["season_points"] >= max(6, current * 3)) | (players["event_points"] >= 4))]
+            dif = dif.sort_values(["event_points", "season_points", "ownership_count"], ascending=[False, False, True]).head(8)
+            ui.rows([{"rank": i + 1, "who": r.get("player"), "meta": f"{r.get('club')} · {r.get('position')}", "num": f"{nint(r.get('ownership_count'))} eiere"} for i, r in enumerate(dif.to_dict("records"))])
+        else:
+            st.caption("Ingen spillerdata akkurat nå.")
+
     render_month(managers, bootstrap, top=5)
     ui.section("Rundebevegelser")
     mv = round_movements(managers, history_store)
@@ -628,9 +708,9 @@ def render_season(managers: list[dict], bootstrap: dict, embedded: bool = False)
     if mv.get("gw_winner"):
         r = mv["gw_winner"]; bits.append({"rank": "GW", "who": r["manager"], "meta": "Rundens beste", "num": f"{r['gw']} poeng"})
     if mv.get("best_climber"):
-        r = mv["best_climber"]; bits.append({"rank": "↑", "who": r["manager"], "meta": "Største klatring", "num": f"+{r['move']}" if r["move"] >= 0 else str(r["move"]), "num_class": "up"})
+        r = mv["best_climber"]; bits.append({"rank": "↑", "who": r["manager"], "meta": "Største klatring forrige runde", "num": f"+{r['move']}" if r["move"] >= 0 else str(r["move"]), "num_class": "up"})
     if mv.get("biggest_fall"):
-        r = mv["biggest_fall"]; bits.append({"rank": "↓", "who": r["manager"], "meta": "Største fall", "num": str(r["move"]), "num_class": "down"})
+        r = mv["biggest_fall"]; bits.append({"rank": "↓", "who": r["manager"], "meta": "Største fall forrige runde", "num": str(r["move"]), "num_class": "down"})
     ui.rows(bits)
     with st.expander("Sesongutvikling"):
         st.caption("Velg manager under Ligaen for detaljert form. Full 63-linjers graf er bevisst ikke standardvisningen.")
@@ -690,6 +770,7 @@ def render_league_table(managers: list[dict], bootstrap: dict) -> None:
         team_name = str(m.get("entry_name") or "").strip()
         chip = str(chip_by_entry.get(entry, "") or "").strip()
         data.append({
+            "entry": entry,
             "rank": rank if rank < 10**9 else None,
             "manager": manager_name(m),
             "team": team_name,
@@ -797,10 +878,10 @@ def render_manager_profile(entry: int, managers: list[dict], bootstrap: dict, au
         (nint(m.get("event_total")), "Denne GW"),
         (f"{month_rank}." if month_rank else "–", phase["name"] if phase else "Måneden"),
     ])
-    ui.section("Form")
-    entry_history = render_form(managers, entry)
     ui.section("Meritter")
     render_merits(name, auto_rows)
+    ui.section("Form")
+    entry_history = render_form(managers, entry)
     render_chip_history(entry_history)
     ownership, squad = render_squad(entry, managers, bootstrap)
     if not squad.empty:
@@ -922,6 +1003,8 @@ def render_league(managers: list[dict], bootstrap: dict, auto_rows: list[dict]) 
         render_league_table(managers, bootstrap)
     elif view == "Manager":
         opts = manager_options(managers); ids = [x[0] for x in opts]; labels = dict(opts)
+        if st.session_state.get("v400_manager_select") not in ids:
+            st.session_state.pop("v400_manager_select", None)
         entry = st.selectbox("Finn manager", ids, format_func=lambda x: labels.get(int(x), str(x)), key="v400_manager_select")
         render_manager_profile(int(entry), managers, bootstrap, auto_rows)
     elif view == "Sammenlign":
@@ -971,6 +1054,12 @@ def render_rival_matchup(managers: list[dict], bootstrap: dict) -> None:
         default_me = ids[0] if ids else None
     me = st.selectbox("Min manager", ids, index=ids.index(default_me) if default_me in ids else 0, format_func=lambda x: labels.get(int(x), str(x)), key="v400_my_manager")
     rival_choices = [x for x in ids if int(x) != int(me)]
+    suggestion_signature = int(me)
+    if st.session_state.get("v600_rival_suggestion_for") != suggestion_signature:
+        st.session_state["v400_rivals"] = suggested_rival_entries(managers, bootstrap, int(me), limit=5)
+        st.session_state["v600_rival_suggestion_for"] = suggestion_signature
+    current_rivals = [int(x) for x in (st.session_state.get("v400_rivals") or []) if int(x) in rival_choices]
+    st.session_state["v400_rivals"] = current_rivals
     rivals = st.multiselect("Rivaler", rival_choices, max_selections=8, format_func=lambda x: labels.get(int(x), str(x)), key="v400_rivals")
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -1025,7 +1114,10 @@ def render_rival_matchup(managers: list[dict], bootstrap: dict) -> None:
                 label = "Offensivt"
             else:
                 label = "Alternativ"
-            meta = f"{r['out_player']} → {r['in_player']} · {fmt_price(r['in_price'])} · budsjett etter {fmt_price(r['budget_after'])}"
+            meta = (
+                f"{r['out_player']} ({fmt_price(r.get('selling_price'))}) → "
+                f"{r['in_player']} ({fmt_price(r.get('in_price'))}) · {fmt_price(r.get('budget_after'))} igjen"
+            )
             ui.recommendation(r["in_player"], label, meta, r.get("reasons") or [])
         if not bool(suggestions.iloc[0].get("selling_price_exact")):
             st.caption("Minst ett forslag bruker estimert salgspris fordi FPL ikke leverte managerens eksakte salgspris i picks-dataene.")
@@ -1034,10 +1126,22 @@ def render_rival_matchup(managers: list[dict], bootstrap: dict) -> None:
     caps = result.get("captains", pd.DataFrame())
     if caps is not None and not caps.empty:
         labels_cap = ["Beste valg", "Tryggere alternativ", "Mer offensivt"]
-        ui.rows([
-            {"rank": i + 1, "who": r.get("web_name"), "meta": labels_cap[i] if i < len(labels_cap) else "Alternativ", "num": f"{nint(r.get('outlook_expected_low'))}–{nint(r.get('outlook_expected_high'))} poeng"}
-            for i, r in enumerate(caps.to_dict("records"))
-        ])
+        cap_items = []
+        for i, r in enumerate(caps.to_dict("records")):
+            base = labels_cap[i] if i < len(labels_cap) else "Alternativ"
+            rival_cap_names = list(r.get("rival_captain_names") or [])
+            if rival_cap_names:
+                preview = ", ".join(rival_cap_names[:3])
+                if len(rival_cap_names) > 3:
+                    preview += f" +{len(rival_cap_names) - 3}"
+                base += f" · Kaptein hos {preview} denne runden"
+            cap_items.append({
+                "rank": i + 1,
+                "who": r.get("web_name"),
+                "meta": base,
+                "num": f"{nint(r.get('outlook_expected_low'))}–{nint(r.get('outlook_expected_high'))} poeng",
+            })
+        ui.rows(cap_items)
 
     with st.expander("Mer analyse"):
         ui.section("Hva om?")
@@ -1148,17 +1252,37 @@ def champion_season_history(managers: list[dict]) -> pd.DataFrame:
 
 
 def render_preseason_odds(managers: list[dict]) -> None:
-    entries = [nint(m.get("entry")) for m in managers if nint(m.get("entry"))]
-    with st.spinner("Henter før-sesonghistorikken …"):
-        histories, errors = histories_for(entries)
-        odds = build_preseason_odds(managers, histories, history_store)
+    """Show an immutable pre-season market when a frozen CSV exists.
+
+    On the first run without a snapshot we reconstruct it strictly from pre-2026/27
+    history, then write a best-effort CSV without ever overwriting it. Committing
+    that file to data/ turns the market into a permanent historical artifact.
+    """
+    errors: dict[int, str] = {}
+    odds = pd.DataFrame()
+    if PRESEASON_ODDS_FILE.exists():
+        try:
+            odds = pd.read_csv(PRESEASON_ODDS_FILE)
+        except Exception:
+            odds = pd.DataFrame()
+    if odds.empty:
+        entries = [nint(m.get("entry")) for m in managers if nint(m.get("entry"))]
+        with st.spinner("Henter før-sesonghistorikken …"):
+            histories, errors = histories_for(entries)
+            odds = build_preseason_odds(managers, histories, history_store)
+        if not odds.empty and not PRESEASON_ODDS_FILE.exists():
+            try:
+                PRESEASON_ODDS_FILE.parent.mkdir(parents=True, exist_ok=True)
+                odds.to_csv(PRESEASON_ODDS_FILE, index=False)
+            except Exception:
+                pass
     if odds.empty:
         st.caption("Før-sesongoddsen er ikke tilgjengelig akkurat nå.")
         return
     ui.odds_table(odds)
     if errors:
-        st.caption(f"Historikk tilgjengelig for {len(histories)} av {len(entries)} managere.")
-    st.caption("Før-sesongmarkedet bruker bare historikk og registrerte Lofthus-meritter. Poeng fra 2026/27 påvirker ikke denne tabellen.")
+        st.caption("Noen historikkprofiler manglet under rekonstruksjonen av før-sesongmarkedet.")
+    st.caption("Historisk før-sesongmarked. 2026/27-poeng endrer ikke oddsen.")
 
 
 def render_rivalradar(managers: list[dict], bootstrap: dict) -> None:
@@ -1188,20 +1312,7 @@ def render_history(auto_rows: list[dict], managers: list[dict] | None = None) ->
         # the final guardrail against old CSV/string values changing the hierarchy:
         # two season titles always beat one. After season titles, cup and monthly
         # wins separate equal champions before the remaining podium medals.
-        hof_records = sorted(
-            hof.to_dict("records"),
-            key=lambda r: (
-                -nint(r.get("league_gold")),
-                -nint(r.get("cup_gold")),
-                -nint(r.get("monthly_gold")),
-                -nint(r.get("league_silver")),
-                -nint(r.get("cup_silver")),
-                -nint(r.get("monthly_silver")),
-                -nint(r.get("league_bronze")),
-                -nint(r.get("monthly_bronze")),
-                normalize_text(str(r.get("display_name") or "")),
-            ),
-        )
+        hof_records = sorted(hof.to_dict("records"), key=hall_of_fame_sort_key)
 
         hall_rows = []
         for i, r in enumerate(hof_records[:40]):
@@ -1234,7 +1345,7 @@ def render_history(auto_rows: list[dict], managers: list[dict] | None = None) ->
                 "num": "",
             })
         ui.hall_of_fame(hall_rows)
-        st.caption("Sesongtitler rangerer høyest. Cup- og månedsmeritter skiller managere med like mange sesongtitler.")
+        st.caption("Sesongtitler rangerer høyest. Ved likt antall titler teller sammenlagtplasseringer før cup- og månedsmeritter.")
     elif view == "Månedskonger":
         medals = history_store.monthly_medals(auto_rows)
         ui.rows([
@@ -1302,6 +1413,9 @@ def health_check(managers: list[dict], bootstrap: dict) -> list[str]:
         issues.append(f"Forventet 63 managere, fant {len(managers)}.")
     if len(entries) != len(set(entries)):
         issues.append("Duplikate entry-ID-er i ligadata.")
+    canonical_names = [history_store.key(manager_name(m)) for m in managers]
+    if len(canonical_names) != len(set(canonical_names)):
+        issues.append("Duplikate manageridentiteter etter aliasing.")
     catalog = player_catalog(bootstrap)
     invalid_prices = [p for p in catalog.values() if p["current_price"] <= 0 or p["current_price"] > 25]
     if invalid_prices:
@@ -1326,6 +1440,25 @@ def load_app_data() -> tuple[dict, list[dict], list[str]]:
 
 
 bootstrap, managers, load_errors = load_app_data()
+
+# Deep-link bridge used by custom sports tables. This makes manager names behave
+# like navigation without introducing another visible button or control.
+try:
+    requested_page = st.query_params.get("page")
+    requested_view = st.query_params.get("league_view")
+    requested_manager = st.query_params.get("manager")
+    deep_link_signature = f"{requested_page}|{requested_view}|{requested_manager}"
+    if st.session_state.get("_v600_consumed_deeplink") != deep_link_signature:
+        if requested_page in {"Forside", "Ligaen", "Rivalradar", "Hall of Fame"}:
+            st.session_state["v400_main_page"] = requested_page
+        if requested_view in {"Tabell", "Manager", "Sammenlign", "Odds før sesongstart"}:
+            st.session_state["v405_league_view"] = requested_view
+        if requested_manager and str(requested_manager).isdigit():
+            st.session_state["v400_manager_select"] = int(requested_manager)
+        st.session_state["_v600_consumed_deeplink"] = deep_link_signature
+except Exception:
+    pass
+
 ui.header(short_season_label(bootstrap) if bootstrap else "26/27")
 main_page = ui.nav(["Forside", "Ligaen", "Rivalradar", "Hall of Fame"], "v400_main_page", "Forside")
 
@@ -1348,7 +1481,8 @@ else:
 
 # Hidden developer health data: no sidebar, no normal UI noise.
 if st.query_params.get("debug") == "1" and bootstrap:
-    with st.expander("V500 debug"):
+    with st.expander("V600 debug"):
         st.code(APP_VERSION)
         issues = health_check(managers, bootstrap)
         st.write(issues or ["Ingen kjente health-check-avvik."])
+        st.caption(f"Arkivsnapshots i data/snapshots: {len(snapshot_store.list_snapshots())}")

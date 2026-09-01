@@ -195,6 +195,7 @@ def build_ownership(
             "position_id": nint(first.get("position_id")),
             "position": str(first.get("position") or ""),
             "current_price": first.get("current_price"),
+            "fpl_ownership_pct": nfloat(catalog.get(int(element), {}).get("selected_by_pct"), 0.0),
             "ownership_count": owner_count,
             "ownership_pct": round(owner_count / loaded * 100, 1) if loaded else 0.0,
             "captain_count": captain_count,
@@ -476,6 +477,17 @@ def rival_analysis(
 
     player_df["rival_owners"] = player_df["element_id"].map(_rival_owners)
     player_df["rival_missing"] = player_df["element_id"].map(_rival_missing)
+
+    # Current-GW captain choices among the selected rivals. This is factual live
+    # information, not a made-up probability. It lets the UI say who is actually
+    # captaining a recommended player right now.
+    rival_captain_rows = rivals[rivals["is_captain"]].copy() if not rivals.empty else pd.DataFrame()
+    captain_name_map: dict[int, list[str]] = {}
+    if not rival_captain_rows.empty:
+        for element_id, block in rival_captain_rows.groupby("element"):
+            captain_name_map[int(element_id)] = sorted(block["manager"].astype(str).unique().tolist(), key=normalize_text)
+    player_df["rival_captain_names"] = player_df["element_id"].map(lambda x: captain_name_map.get(int(x), []))
+    player_df["rival_captain_count"] = player_df["rival_captain_names"].map(len)
     player_df["i_own"] = player_df["element_id"].isin(me)
     player_df = _relevance_filter(player_df, event)
 
@@ -678,10 +690,10 @@ def stories(managers: list[dict], ownership: dict | None, history: HistoryStore)
                 out.append(f"{row['manager']} brukte Triple Captain på {row['player']} – {points} poeng.")
     if move.get("best_climber") and move["best_climber"]["move"] >= 8:
         r = move["best_climber"]
-        out.append(f"{r['manager']} klatret {r['move']} plasser.")
+        out.append(f"{r['manager']} klatret {r['move']} plasser forrige runde.")
     if move.get("biggest_fall") and move["biggest_fall"]["move"] <= -8:
         r = move["biggest_fall"]
-        out.append(f"{r['manager']} falt {abs(r['move'])} plasser.")
+        out.append(f"{r['manager']} falt {abs(r['move'])} plasser forrige runde.")
     if ownership and not ownership.get("players", pd.DataFrame()).empty:
         top = ownership["players"].sort_values("ownership_count", ascending=False).iloc[0]
         without = max(0, int(ownership.get("loaded_managers", 0)) - nint(top.get("ownership_count")))

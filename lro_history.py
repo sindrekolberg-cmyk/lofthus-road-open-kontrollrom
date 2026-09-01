@@ -66,6 +66,26 @@ def clean_cell(value: Any) -> str:
     return str(value).strip()
 
 
+def hall_of_fame_sort_key(row: dict) -> tuple:
+    """Deterministic LRO honours hierarchy. Lower tuple sorts first."""
+    def num(key: str) -> int:
+        try:
+            return int(float(row.get(key) or 0))
+        except Exception:
+            return 0
+    return (
+        -num("league_gold"),
+        -num("league_silver"),
+        -num("league_bronze"),
+        -num("cup_gold"),
+        -num("monthly_gold"),
+        -num("cup_silver"),
+        -num("monthly_silver"),
+        -num("monthly_bronze"),
+        normalize_text(row.get("display_name") or ""),
+    )
+
+
 class HistoryStore:
     def __init__(self, data_dir: str | Path):
         self.data_dir = Path(data_dir)
@@ -321,21 +341,9 @@ class HistoryStore:
         # Cup wins and monthly wins separate managers after league titles, followed
         # by the remaining podium record. This avoids treating every "gold" as
         # equal and ensures the most successful league champions rank highest.
-        sort_cols = [
-            "league_gold",
-            "cup_gold",
-            "monthly_gold",
-            "league_silver",
-            "cup_silver",
-            "monthly_silver",
-            "league_bronze",
-            "monthly_bronze",
-            "display_name",
-        ]
-        # Season championships are absolute. Cup/month wins only separate managers
-        # with the same number of LRO league titles.
-        ascending = [False, False, False, False, False, False, False, False, True]
-        df = pd.DataFrame(rows).sort_values(sort_cols, ascending=ascending).reset_index(drop=True)
+        # One shared deterministic hierarchy for data and UI.
+        ordered_rows = sorted(rows, key=hall_of_fame_sort_key)
+        df = pd.DataFrame(ordered_rows).reset_index(drop=True)
         df.insert(0, "rank", range(1, len(df) + 1))
         return df
 
