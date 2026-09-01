@@ -1,0 +1,73 @@
+LOFTHUS ROAD OPEN V400 – TEST REPORT
+Dato: 2026-09-01
+
+PASS – Python-kompilering
+- app.py
+- lro_fpl.py
+- lro_analysis.py
+- lro_history.py
+- lro_odds.py
+- lro_ui.py
+
+PASS – Pure-module imports
+- lro_fpl
+- lro_history
+- lro_analysis
+- lro_odds
+
+PASS – Prislogikk
+- now_cost=71 -> markedspris £7.1
+- purchase_price og selling_price holdes separat
+- managerprofilmodellen beholder current_price selv når selling_price avviker
+- transferbudsjett-test: current £8.0, selling £7.7, bank £0.5 -> maks £8.2
+- kandidat £8.2 tillates, kandidat £8.3 avvises
+
+PASS – Kaptein / Triple Captain
+- to managere med samme captain -> captain_count=2
+- én av dem med 3x -> triple_captain_count=1
+- TC teller fortsatt som én manager i captain_count
+
+PASS – Alias / canonical identity
+- Oskar Brun -> Oskar Kristensen Brun
+- Kristoffer Wollvik Pettersen -> Kristoffer W Pettersen
+
+PASS – Måned
+- kalender september -> September-fasen selv om aktiv GW ligger igjen i augustfasen
+- August 2026 fallback beholdes
+- dynamisk månedsseier legges oppå offisiell historisk månedstittel-count uten dobbeltføring
+
+PASS – Hall of Fame
+- olympisk sortering: 4 gull slår 3 gull + ekstra sølv
+
+
+PASS – 63-manager mock
+- 63 av 63 picks lastes i mock
+- spiller eid av 63/63 registreres korrekt
+- 20 kapteiner + 1 TC -> captain_count=20, triple_captain_count=1
+
+PASS – Rivalradar API-budsjett
+- mock med 3 liga-managere og 1 valgt rival hentet bare picks for meg + rivalen
+- øvrig manager ble ikke hentet
+- «de har – du mangler» og «ingen av dere har» identifiseres
+
+PASS – Legacy-søk
+- ingen .lro-hero
+- ingen home-scoreboard
+- ingen V110/V115/V200/V202 frontendklasser
+- ingen v300_* frontendfunksjoner
+- ingen gamle render_clubhouse_home/render_season_radar-kjeder
+
+PASS – Core regression suite
+- tests_v400.py
+
+IKKE KJØRT I DETTE BYGGMILJØET
+- Ekte FPL API, fordi byggmiljøet ikke har internett.
+- Ekte Streamlit browser-rendering, fordi Streamlit-pakken ikke finnes lokalt og kan ikke lastes ned i dette miljøet.
+
+Derfor må første GitHub/Streamlit-deploy brukes som live smoke-test for:
+- ekte 63-managers liga
+- ekte spillerpriser
+- browserlayout desktop/mobil
+- FPL API-felter i 2026/27
+
+Design og datamodell er skrevet for å feile mykt dersom enkeltfelt mangler.
