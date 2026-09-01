@@ -8,6 +8,7 @@ from difflib import SequenceMatcher
 from typing import Any
 from pathlib import Path
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
 import requests
@@ -22,11 +23,11 @@ except ImportError:
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-APP_VERSION = "lofthus-road-open-ferrari-v114-auto-month-live-command-centre"
+APP_VERSION = "lofthus-road-open-v200-clubhouse-2"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open Kontrollrom"}
 
-st.set_page_config(page_title="Lofthus Road Open", layout="wide")
+st.set_page_config(page_title="Lofthus Road Open", page_icon="⚽", layout="wide", initial_sidebar_state="collapsed")
 
 if st.session_state.get("_app_version") != APP_VERSION:
     st.session_state.clear()
@@ -317,18 +318,18 @@ st.markdown(
 
     </style>
     <div class="lro-hero">
-        <div class="lro-beta">OFFISIELL SESONG 2026/27</div>
+        <div class="lro-beta">SESONG 2026/27</div>
         <h1>Lofthus Road Open</h1>
-        <div class="lro-premium-line">Fantasy Football Club · Live kontrollrom</div>
-        <div class="lro-club-mark">🏆 LRO 2026/27</div>
+        <div class="lro-premium-line">Fantasy Football Club</div>
+        <div class="lro-club-mark">LRO · SIDEN 2014</div>
     </div>
     """,
     unsafe_allow_html=True,
 )
-st.caption("V114 · Automatisk månedspall + live kontrollrom")
+st.caption("Lofthus Road Open 2.0 · V200")
 
 with st.sidebar:
-    st.header("Lofthus Road Open Clubhouse")
+    st.header("Lofthus Road Open")
     st.caption(f"Liga-ID: {DEFAULT_LEAGUE_ID}")
     if st.session_state.get("last_updated"):
         st.caption(f"Sist hentet: {st.session_state['last_updated']}")
@@ -337,7 +338,7 @@ with st.sidebar:
         st.rerun()
     st.markdown("---")
     st.caption("Lofthus Road Open 2026/27")
-    st.caption("Build: V114 · Automatisk månedspall + live kontrollrom")
+    st.caption("Build: V200 · Lofthus Road Open 2.0")
 
 
 # -----------------------------
@@ -4039,22 +4040,37 @@ def build_league_ownership(managers: list[dict], event_id: int | None = None) ->
     errors = []
     loaded_entries = set()
 
-    for manager in managers:
+    def _fetch_one(manager: dict):
         entry = manager.get("entry")
         if not entry:
-            continue
+            return manager, None, "Mangler entry-ID"
         try:
             entry = int(entry)
-            payload = get_entry_event_picks(entry, int(event_id))
-            picks = payload.get("picks", []) or []
+            return manager, get_entry_event_picks(entry, int(event_id)), None
         except Exception as error:
+            return manager, None, str(error)
+
+    fetched = []
+    # 63 offentlige lag er nok til at sekvensielle kall merkes. Hold worker-antallet
+    # moderat, både for FPL og for Streamlit Cloud.
+    with ThreadPoolExecutor(max_workers=min(12, max(1, len(managers)))) as pool:
+        futures = [pool.submit(_fetch_one, manager) for manager in managers if manager.get("entry")]
+        for future in as_completed(futures):
+            fetched.append(future.result())
+
+    # Stabil rekkefølge gjør både testing og UI forutsigbart.
+    fetched.sort(key=lambda item: normalize_text(str((item[0] or {}).get("player_name") or "")))
+
+    for manager, payload, fetch_error in fetched:
+        entry = int(manager.get("entry"))
+        if fetch_error or payload is None:
             errors.append({
                 "manager": str(manager.get("player_name") or "Ukjent manager"),
                 "entry": entry,
-                "error": str(error),
+                "error": fetch_error or "Ukjent feil",
             })
             continue
-
+        picks = payload.get("picks", []) or []
         if not picks:
             errors.append({
                 "manager": str(manager.get("player_name") or "Ukjent manager"),
@@ -4064,7 +4080,7 @@ def build_league_ownership(managers: list[dict], event_id: int | None = None) ->
             continue
 
         loaded_entries.add(entry)
-        manager_name = str(manager.get("player_name") or "Ukjent manager")
+        manager_name = canonical_hof_name(str(manager.get("player_name") or "Ukjent manager"))
         team_name = str(manager.get("entry_name") or "Ukjent lag")
         rank_value = pd.to_numeric(manager.get("rank"), errors="coerce")
         entry_history = payload.get("entry_history") or {}
@@ -4387,65 +4403,97 @@ def _role_label(row: pd.Series) -> str:
     return "Start"
 
 
+def _short_manager_list(values, max_names: int = 3) -> str:
+    names = [str(v).strip() for v in list(values) if str(v).strip()]
+    if not names:
+        return "Ingen"
+    if len(names) <= max_names:
+        return " · ".join(names)
+    return " · ".join(names[:max_names]) + f" · +{len(names) - max_names} til"
+
+
 def render_player_profile(selected_row: pd.Series, ownership: dict):
-    players_df = ownership["players"]
+    """Forklar ett spillervalg som et menneske faktisk ville gjort det i sofaen."""
     picks_df = ownership["picks"]
-    loaded = int(ownership["loaded_managers"])
+    loaded = int(ownership["loaded_managers"] or 0)
     selected_id = int(selected_row["element"])
+    player_name = str(selected_row.get("player") or "Spilleren")
+    club = str(selected_row.get("club") or "")
+
     owners = picks_df[picks_df["element"] == selected_id].copy().sort_values(["multiplier", "manager"], ascending=[False, True])
     owners["rolle"] = owners.apply(_role_label, axis=1)
-
-    radar_metric_strip([
-        {"label": "Eierskap", "value": f"{int(selected_row['ownership_count'])} av {loaded}", "caption": f"{float(selected_row['ownership_pct']):.1f}% av Lofthus"},
-        {"label": "Eff. eierskap", "value": f"{float(selected_row['effective_ownership_pct']):.1f}%", "caption": "Kapteinsmultiplier inkludert"},
-        {"label": "Kaptein", "value": str(int(selected_row["captain_count"])), "caption": f"{float(selected_row['captain_pct']):.1f}% av ligaen"},
-        {"label": "GW-poeng", "value": str(int(selected_row.get("event_points", 0))), "caption": f"{int(selected_row['bench_count'])} har spilleren på benk"},
-    ])
-
     captains = owners[owners["is_captain"]]
     triple_captains = captains[captains["multiplier"] >= 3]
     normal_captains = captains[captains["multiplier"] < 3]
     starters = owners[(~owners["on_bench"]) & (~owners["is_captain"])]
     benched = owners[owners["on_bench"]]
+
+    owner_count = int(selected_row.get("ownership_count") or len(owners))
+    captain_count = int(selected_row.get("captain_count") or len(captains))
+    tc_count = int(selected_row.get("triple_captain_count") or len(triple_captains))
+    without_count = max(0, loaded - owner_count)
+
+    st.markdown(f"### {player_name}" + (f" · {club}" if club else ""))
+    radar_metric_strip([
+        {"label": "Eies av", "value": f"{owner_count} av {loaded}", "caption": f"{float(selected_row.get('ownership_pct') or 0):.1f}% av ligaen"},
+        {"label": "Kaptein hos", "value": str(captain_count), "caption": "inkludert Triple Captain"},
+        {"label": "Triple Captain", "value": str(tc_count), "caption": "får trippel uttelling"},
+        {"label": "Har ham ikke", "value": str(without_count), "caption": "får ingen poeng fra spilleren"},
+    ])
+
+    st.markdown(f"#### Hvis {player_name} leverer")
+    sentence_bits = []
+    if tc_count:
+        sentence_bits.append(f"**{tc_count}** får trippel uttelling")
+    if len(normal_captains):
+        sentence_bits.append(f"**{len(normal_captains)}** får dobbel uttelling")
+    if len(starters):
+        sentence_bits.append(f"**{len(starters)}** får vanlige poeng")
+    if len(benched):
+        sentence_bits.append(f"**{len(benched)}** har ham på benken")
+    if without_count:
+        sentence_bits.append(f"**{without_count}** har ham ikke")
+    if sentence_bits:
+        st.write(", ".join(sentence_bits[:-1]) + ((" og " + sentence_bits[-1]) if len(sentence_bits) > 1 else sentence_bits[-1]) + ".")
+
     if not triple_captains.empty:
-        lro_note("TRIPLE CAPTAIN", ", ".join(triple_captains["manager"].tolist()), "gold")
-    c1, c2, c3 = st.columns(3, gap="medium")
-    with c1:
-        st.caption("KAPTEIN")
-        st.write(", ".join(normal_captains["manager"].tolist()) if not normal_captains.empty else "Ingen vanlig C")
-    with c2:
-        st.caption("STARTER UTEN BIND")
-        st.write(", ".join(starters["manager"].tolist()) if not starters.empty else "Ingen")
-    with c3:
-        st.caption("PÅ BENK")
-        st.write(", ".join(benched["manager"].tolist()) if not benched.empty else "Ingen")
+        lro_note("🚨 TRIPLE CAPTAIN", _short_manager_list(triple_captains["manager"], 5), "gold")
 
-    avg_multiplier = float(picks_df[picks_df["element"] == selected_id]["multiplier"].sum()) / loaded if loaded else 0.0
-    exposure = []
-    owners_by_entry = owners.set_index("entry") if not owners.empty else pd.DataFrame()
-    for _, manager_row in ownership["manager_events"].iterrows():
-        entry = int(manager_row["entry"])
-        multiplier = int(owners_by_entry.loc[entry, "multiplier"]) if not owners_by_entry.empty and entry in owners_by_entry.index else 0
-        if isinstance(multiplier, pd.Series):
-            multiplier = int(multiplier.iloc[0])
-        exposure.append({
-            "manager": manager_row["manager"],
-            "multiplier": multiplier,
-            "relative_swing": round(multiplier - avg_multiplier, 2),
-        })
-    exposure_df = pd.DataFrame(exposure)
-    if not exposure_df.empty:
-        winners = exposure_df.sort_values(["relative_swing", "manager"], ascending=[False, True]).head(8)
-        losers = exposure_df.sort_values(["relative_swing", "manager"], ascending=[True, True]).head(8)
-        with st.expander(f"Hvis {selected_row['player']} får neste poeng – hvem tjener og taper relativt?"):
-            a, b = st.columns(2)
-            with a:
-                st.markdown("**Tjener mest**")
-                display_table(winners, ["manager", "multiplier", "relative_swing"], {"manager": "Manager", "multiplier": "Eksponering", "relative_swing": "Mot feltet"})
-            with b:
-                st.markdown("**Taper mest relativt**")
-                display_table(losers, ["manager", "multiplier", "relative_swing"], {"manager": "Manager", "multiplier": "Eksponering", "relative_swing": "Mot feltet"})
+    with st.container(border=True):
+        st.markdown("**© Hvem har gitt ham kapteinsbindet?**")
+        if normal_captains.empty:
+            st.caption("Ingen har vanlig kaptein på spilleren denne runden.")
+        else:
+            st.write(_short_manager_list(normal_captains["manager"], 5))
+            if len(normal_captains) > 5:
+                with st.expander(f"Se alle {len(normal_captains)} vanlige kapteiner"):
+                    for name in normal_captains["manager"].tolist():
+                        st.write(f"• {name}")
 
+    quick = st.columns(3, gap="medium")
+    with quick[0]:
+        with st.container(border=True):
+            st.caption("STARTER UTEN BIND")
+            st.markdown(f"**{len(starters)} managere**")
+    with quick[1]:
+        with st.container(border=True):
+            st.caption("PÅ BENKEN")
+            st.markdown(f"**{len(benched)} managere**")
+    with quick[2]:
+        with st.container(border=True):
+            st.caption("UTEN SPILLEREN")
+            st.markdown(f"**{without_count} managere**")
+
+    with st.expander(f"Se alle som eier {player_name} ({owner_count})"):
+        if owners.empty:
+            st.caption("Ingen eiere registrert.")
+        else:
+            roles = owners[["manager", "rolle"]].copy()
+            display_table(roles, ["manager", "rolle"], {"manager": "Manager", "rolle": "Bruk"})
+
+    with st.expander("Hva betyr tallene?"):
+        st.write("Kaptein gir dobbel uttelling. Triple Captain gir trippel. Vanlige startere får spillerens vanlige poeng, mens en spiller på benken normalt ikke teller med mindre han blir autosubbet inn.")
+        st.caption(f"Effektivt eierskap (EO) er {float(selected_row.get('effective_ownership_pct') or 0):.1f} %. Det er et nerdetall som også tar hensyn til kapteinsdobling og Triple Captain, og derfor ligger det her nede i stedet for å late som alle trenger det til frokost.")
 
 def render_manager_profile(selected_entry: int, ownership: dict, managers: list[dict]):
     picks_df = ownership["picks"]
@@ -5237,7 +5285,7 @@ def render_clubhouse_home(managers: list[dict]):
 
 
 # ============================================================
-# V114 - AUTOMATISK MÅNEDSPALL, RUNDEMINNE OG LIVE KONTROLLROM
+# V115 - FOLKELIG KAPTEINSRADAR, RYDDIG LIVEVISNING OG KALENDERMÅNED
 # ============================================================
 
 CURRENT_SEASON_FALLBACK_PODIUMS = [
@@ -5416,12 +5464,29 @@ def build_official_monthly_map() -> dict:
 
 
 def current_month_phase(bootstrap: dict | None = None, event_id: int | None = None) -> dict | None:
+    """Finn måneden som skal vises nå. Kalenderen vinner over gammel aktiv GW.
+
+    FPL kan stå igjen på forrige gameweek noen dager inn i en ny måned. Da skal
+    Lofthus likevel vise f.eks. «September · live», ikke late som august fortsetter.
+    """
     try:
         bootstrap = bootstrap or get_bootstrap_static()
     except Exception:
         return None
-    event_id = int(event_id or current_fpl_event_id() or 0)
     phases = _month_phases(bootstrap)
+    if not phases:
+        return None
+
+    norwegian_months = {
+        1: "Januar", 2: "Februar", 3: "Mars", 4: "April", 5: "Mai", 6: "Juni",
+        7: "Juli", 8: "August", 9: "September", 10: "Oktober", 11: "November", 12: "Desember",
+    }
+    calendar_month = norwegian_months.get(datetime.now().month)
+    for phase in phases:
+        if phase.get("name") == calendar_month:
+            return phase
+
+    event_id = int(event_id or current_fpl_event_id() or 0)
     for phase in phases:
         if int(phase["start_event"]) <= event_id <= int(phase["stop_event"]):
             return phase
@@ -5429,8 +5494,7 @@ def current_month_phase(bootstrap: dict | None = None, event_id: int | None = No
     for phase in reversed(phases):
         if int(phase["stop_event"]) <= latest:
             return phase
-    return phases[0] if phases else None
-
+    return phases[0]
 
 def get_current_month_table(league_id: int = DEFAULT_LEAGUE_ID) -> tuple[dict | None, pd.DataFrame]:
     try:
@@ -5589,11 +5653,30 @@ def render_month_snapshot(compact: bool = False):
                 for row in podium.head(3).itertuples():
                     st.write(f"{medals.get(int(row.place), str(row.place))} {row.manager}")
                 return
-        if not month_df.empty and pd.to_numeric(month_df["points"], errors="coerce").fillna(0).max() > 0:
-            display_table(month_df.head(3), ["rank", "manager", "points"], {"rank": "#", "manager": "Manager", "points": "Måned"})
-        else:
-            st.caption(f"{month}tabellen får liv når neste tellende GW starter.")
 
+        max_points = 0
+        if not month_df.empty:
+            max_points = int(pd.to_numeric(month_df["points"], errors="coerce").fillna(0).max())
+        if max_points > 0:
+            display_table(month_df.head(3), ["rank", "manager", "points"], {"rank": "#", "manager": "Manager", "points": "Måned"})
+            return
+
+        # Ny måned, ingen tellende poeng ennå: vis en faktisk live-tabell på 0 poeng.
+        zero_df = month_df[["manager"]].drop_duplicates().copy() if not month_df.empty else pd.DataFrame()
+        if zero_df.empty:
+            try:
+                _, managers, _ = get_league_managers(DEFAULT_LEAGUE_ID)
+                zero_df = pd.DataFrame({"manager": [canonical_hof_name(str(m.get("player_name") or "")) for m in managers]})
+            except Exception:
+                zero_df = pd.DataFrame()
+        if not zero_df.empty:
+            zero_df = zero_df[zero_df["manager"].astype(str).str.strip() != ""].drop_duplicates().sort_values("manager").head(3).reset_index(drop=True)
+            zero_df["rank"] = range(1, len(zero_df) + 1)
+            zero_df["points"] = 0
+            display_table(zero_df, ["rank", "manager", "points"], {"rank": "#", "manager": "Manager", "points": "September" if month == "September" else "Poeng"})
+            st.caption(f"Ingen {month.lower()}poeng registrert ennå. Rekkefølgen er alfabetisk fram til første tellende poeng.")
+        else:
+            st.caption(f"Ingen {month.lower()}poeng registrert ennå.")
 
 def _captain_tag(row: pd.Series) -> str:
     tc, c = int(row.get("triple_captain_count") or 0), int(row.get("captain_count") or 0)
@@ -5603,7 +5686,7 @@ def _captain_tag(row: pd.Series) -> str:
 
 
 def render_live_match_centre(managers: list[dict], ownership: dict | None = None):
-    """Live-kampkontroll: kamper, liga-status og spillerne som kan flytte tabellen nå."""
+    """Live-kampkontroll: hva skjer, hvem betyr noe, og hvem har bindet."""
     event_id = current_fpl_event_id()
     if event_id is None:
         return
@@ -5628,42 +5711,48 @@ def render_live_match_centre(managers: list[dict], ownership: dict | None = None
             r = rounders.iloc[0]
             cards.append({"label": f"GW{event_id} best", "value": r.get("player_name", "–"), "caption": f"{int(r.get('event_num') or 0)} poeng"})
     if not players_df.empty:
-        capped = players_df[players_df["captain_count"] > 0].sort_values(["triple_captain_count", "captain_count"], ascending=[False, False])
+        capped = players_df[players_df["captain_count"] > 0].sort_values(["captain_count", "triple_captain_count", "ownership_count", "player"], ascending=[False, False, False, True])
         if not capped.empty:
             r = capped.iloc[0]
             cards.append({"label": "Mest cappet", "value": r["player"], "caption": f"{int(r['captain_count'])} kapteiner"})
     radar_metric_strip(cards[:4])
+
     if not active:
         with st.container(border=True):
             st.caption(f"GW{event_id} · INGEN KAMP PÅGÅR")
             st.markdown(f"**Neste: {_next_fixture_label(context.get('next'), teams)}**")
             if not players_df.empty:
-                cap = players_df[players_df["captain_count"] > 0].sort_values(["triple_captain_count", "captain_count"], ascending=[False, False]).head(4)
+                cap = players_df[players_df["captain_count"] > 0].sort_values(["captain_count", "triple_captain_count", "ownership_count"], ascending=[False, False, False]).head(4)
                 if not cap.empty:
-                    st.caption("Kapteinsbildet: " + " · ".join(f"{r.player} ({int(r.captain_count)} C{', ' + str(int(r.triple_captain_count)) + ' TC' if int(r.triple_captain_count) else ''})" for r in cap.itertuples()))
+                    st.caption("Mest populære kapteiner: " + " · ".join(f"{r.player} ({int(r.captain_count)})" for r in cap.itertuples()))
         return
+
     active_ids, labels = set(), []
     for fixture in active:
         labels.append(_fixture_label(fixture, teams))
         active_ids.update({int(fixture.get("team_h") or 0), int(fixture.get("team_a") or 0)})
     matches_html = " &nbsp; | &nbsp; ".join(html.escape(x) for x in labels)
     st.markdown(
-        f"<div style='background:linear-gradient(110deg,#071525,#064e3b 58%,#511b1b);color:white;border-radius:18px;padding:16px 18px;margin:4px 0 14px 0'><div style='font-size:.72rem;color:#fde68a;font-weight:900;letter-spacing:.09em'>GW{event_id} · LIVE</div><div style='font-size:1.12rem;font-weight:900;margin-top:4px'>{matches_html}</div><div style='font-size:.84rem;color:#d1fae5;margin-top:5px'>Spillerne med størst Lofthus-eksponering ligger øverst.</div></div>",
+        f"<div style='background:linear-gradient(110deg,#071525,#064e3b 58%,#511b1b);color:white;border-radius:18px;padding:16px 18px;margin:4px 0 14px 0'><div style='font-size:.72rem;color:#fde68a;font-weight:900;letter-spacing:.09em'>GW{event_id} · LIVE</div><div style='font-size:1.12rem;font-weight:900;margin-top:4px'>{matches_html}</div><div style='font-size:.84rem;color:#d1fae5;margin-top:5px'>Her ser du spillerne i kamp som betyr mest for Lofthus-ligaen akkurat nå.</div></div>",
         unsafe_allow_html=True,
     )
     if players_df.empty:
-        st.caption("Kampene er live, men picks kunne ikke kobles akkurat nå.")
+        st.caption("Kampene er live, men laguttakene kunne ikke kobles akkurat nå.")
         return
     live = players_df[players_df["team_id"].isin(active_ids)].copy()
     if live.empty:
         st.caption("Ingen Lofthus-eide spillere er i aksjon i disse kampene.")
         return
-    live = live.sort_values(["triple_captain_count", "captain_count", "ownership_count", "event_points"], ascending=[False, False, False, False])
+    live = live.sort_values(["captain_count", "triple_captain_count", "ownership_count", "event_points"], ascending=[False, False, False, False])
     tc = live[live["triple_captain_count"] > 0]
     if not tc.empty:
-        lro_note("🚨 Triple captain i aksjon", " · ".join(f"{r.player}: {getattr(r, 'triple_captains_text', '')}" for r in tc.itertuples()), "gold")
-    display_table(live.head(15), ["player", "club", "event_points", "ownership_count", "effective_ownership_pct", "captain_count", "triple_captain_count", "captains_text"], {"player": "Spiller", "club": "Klubb", "event_points": "GW", "ownership_count": "Eiere", "effective_ownership_pct": "EO %", "captain_count": "C", "triple_captain_count": "TC", "captains_text": "Hvem har bindet"})
-
+        lro_note("🚨 Triple Captain i aksjon", " · ".join(f"{r.player}: {getattr(r, 'triple_captains_text', '')}" for r in tc.itertuples()), "gold")
+    live["kapteiner_kort"] = live["captains_text"].fillna("").apply(lambda x: _short_manager_list(str(x).split(" · ") if x else [], 2))
+    display_table(
+        live.head(10),
+        ["player", "club", "event_points", "ownership_count", "captain_count", "triple_captain_count", "kapteiner_kort"],
+        {"player": "Spiller", "club": "Klubb", "event_points": "GW-poeng", "ownership_count": "Eies av", "captain_count": "Kaptein", "triple_captain_count": "TC", "kapteiner_kort": "Hvem"},
+    )
 
 def render_ownership_trends(managers: list[dict], ownership: dict):
     event_id = int(ownership.get("event") or 0)
@@ -5696,7 +5785,7 @@ def render_ownership_trends(managers: list[dict], ownership: dict):
 
 
 def render_ownership_dashboard(managers: list[dict], ownership: dict | None = None):
-    """Kapteiner + spillerfunn først. Alt nerdestoff bak én detaljseksjon."""
+    """Kapteinsradar først. Navnelister bare når de faktisk hjelper."""
     event_id = current_fpl_event_id()
     if event_id is None:
         st.info("Spiller- og kapteinsradaren våkner når FPL har en aktiv eller ferdig gameweek.")
@@ -5708,41 +5797,79 @@ def render_ownership_dashboard(managers: list[dict], ownership: dict | None = No
     players_df, picks_df = ownership.get("players", pd.DataFrame()), ownership.get("picks", pd.DataFrame())
     loaded, league_size = int(ownership.get("loaded_managers") or 0), int(ownership.get("league_size") or 0)
     if players_df.empty:
-        st.warning("Fant ingen offentlige picks for denne runden ennå.")
+        st.warning("Fant ingen offentlige laguttak for denne runden ennå.")
         return ownership
+
     st.markdown("## Spillere & kapteiner")
-    st.caption("Søk på spilleren. Se eierne. Se kapteinene. Se TC. Ferdig snakka.")
-    captained = players_df[players_df["captain_count"] > 0].copy().sort_values(["triple_captain_count", "captain_count", "effective_ownership_pct"], ascending=[False, False, False])
+    st.caption("Hvem er mest populær? Hvem har bindet? Og hvem har gjort noe sprekt? Det skal være mulig å finne på noen sekunder.")
+
+    captained = players_df[players_df["captain_count"] > 0].copy().sort_values(
+        ["captain_count", "triple_captain_count", "ownership_count", "player"],
+        ascending=[False, False, False, True],
+    )
     tc_rows = captained[captained["triple_captain_count"] > 0]
+    most_owned = players_df.sort_values(["ownership_count", "captain_count", "player"], ascending=[False, False, True]).iloc[0]
+    most_captained = captained.iloc[0] if not captained.empty else None
+
+    radar_metric_strip([
+        {"label": "Mest eid", "value": most_owned["player"], "caption": f"{int(most_owned['ownership_count'])} av {loaded}"},
+        {"label": "Mest cappet", "value": most_captained["player"] if most_captained is not None else "–", "caption": f"{int(most_captained['captain_count'])} kapteiner" if most_captained is not None else "Ingen"},
+        {"label": "Triple Captain", "value": str(int(players_df["triple_captain_count"].sum())), "caption": "TC-valg denne runden"},
+        {"label": "Lag lest", "value": f"{loaded}/{league_size}", "caption": "grunnlag for tallene"},
+    ])
+
     if not tc_rows.empty:
         lro_note("🚨 TRIPLE CAPTAIN", " · ".join(f"{r.player}: {getattr(r, 'triple_captains_text', '')}" for r in tc_rows.itertuples()), "gold")
-    st.markdown("### Kapteiner denne GW-en")
+
+    st.markdown("### Hvem har cappet hvem?")
     if not captained.empty:
-        display_table(captained, ["player", "club", "captain_count", "triple_captain_count", "event_points", "effective_ownership_pct", "captains_text"], {"player": "Spiller", "club": "Klubb", "captain_count": "C", "triple_captain_count": "TC", "event_points": "GW", "effective_ownership_pct": "EO %", "captains_text": "Hvem"})
+        cap_view = captained.copy()
+        cap_view["hvem_kort"] = cap_view["captains_text"].fillna("").apply(lambda x: _short_manager_list(str(x).split(" · ") if x else [], 3))
+        display_table(
+            cap_view.head(8),
+            ["player", "captain_count", "triple_captain_count", "event_points", "hvem_kort"],
+            {"player": "Spiller", "captain_count": "Kapteiner", "triple_captain_count": "TC", "event_points": "GW-poeng", "hvem_kort": "Hvem"},
+        )
+        if len(cap_view) > 8:
+            with st.expander(f"Se alle {len(cap_view)} spillere som er cappet"):
+                display_table(
+                    cap_view.iloc[8:],
+                    ["player", "captain_count", "triple_captain_count", "hvem_kort"],
+                    {"player": "Spiller", "captain_count": "Kapteiner", "triple_captain_count": "TC", "hvem_kort": "Hvem"},
+                )
+
+        st.markdown("### Finn et kapteinsvalg")
+        cap_options = captained["element"].astype(int).tolist()
+        labels = {}
+        for r in captained.itertuples():
+            tc_text = f" · {int(r.triple_captain_count)} TC" if int(r.triple_captain_count) else ""
+            labels[int(r.element)] = f"{r.player} · {int(r.captain_count)} kapteiner{tc_text}"
+        selected_id = st.selectbox(
+            "Kapteinsspiller", cap_options,
+            format_func=lambda e: labels.get(int(e), str(e)),
+            index=0, key="captain_search_v115",
+            help="Lista inneholder bare spillere som faktisk er cappet denne runden.",
+            label_visibility="collapsed",
+        )
+        render_player_profile(players_df[players_df["element"] == int(selected_id)].iloc[0], ownership)
     else:
         st.caption("Ingen kapteinsvalg tilgjengelig ennå.")
-    st.markdown("### Finn en spiller")
-    ordered = players_df.copy()
-    ordered["cap_priority"] = ordered["triple_captain_count"] * 1000 + ordered["captain_count"] * 10 + ordered["ownership_count"]
-    ordered = ordered.sort_values(["cap_priority", "ownership_count", "player"], ascending=[False, False, True])
-    options, labels = ordered["element"].astype(int).tolist(), {}
-    for r in ordered.itertuples():
-        suffix = []
-        if int(r.triple_captain_count): suffix.append(f"🚨 {int(r.triple_captain_count)} TC")
-        if int(r.captain_count): suffix.append(f"{int(r.captain_count)} C")
-        suffix.append(f"{int(r.ownership_count)}/{loaded} eiere")
-        labels[int(r.element)] = f"{r.player} · {r.club} · " + " · ".join(suffix)
-    selected_id = st.selectbox("Søk spiller", options, format_func=lambda e: labels.get(int(e), str(e)), index=0, key="player_search_v114", help="Klikk og skriv Tzolis, Haaland, Palmer osv. Kapteiner og TC ligger øverst.", label_visibility="collapsed")
-    render_player_profile(players_df[players_df["element"] == int(selected_id)].iloc[0], ownership)
-    st.markdown("### Mest populære i Lofthus")
-    popular = players_df.sort_values(["ownership_count", "captain_count", "season_points"], ascending=[False, False, False]).head(12)
-    display_table(popular, ["player", "club", "ownership_count", "ownership_pct", "captain_count", "event_points"], {"player": "Spiller", "club": "Klubb", "ownership_count": "Eiere", "ownership_pct": "%", "captain_count": "C", "event_points": "GW"})
-    with st.expander("Mer liveanalyse · manager, transfers, template og dueller"):
+
+    st.markdown("### Mest populære spillere")
+    popular = players_df.sort_values(["ownership_count", "captain_count", "season_points", "player"], ascending=[False, False, False, True]).head(10).copy()
+    display_table(
+        popular,
+        ["player", "club", "ownership_count", "ownership_pct", "captain_count", "event_points"],
+        {"player": "Spiller", "club": "Klubb", "ownership_count": "Eies av", "ownership_pct": "%", "captain_count": "Kaptein", "event_points": "GW-poeng"},
+    )
+
+    with st.expander("Mer statistikk · manager, transfers, template og dueller"):
         st.markdown("### Managerblikk")
         manager_options = picks_df[["entry", "manager"]].drop_duplicates().sort_values("manager") if not picks_df.empty else pd.DataFrame()
         if not manager_options.empty:
-            ids = manager_options["entry"].astype(int).tolist(); names = dict(zip(manager_options["entry"].astype(int), manager_options["manager"].astype(str)))
-            selected_manager = st.selectbox("Manager", ids, format_func=lambda e: names.get(int(e), str(e)), key="manager_profile_v114", label_visibility="collapsed")
+            ids = manager_options["entry"].astype(int).tolist()
+            names = dict(zip(manager_options["entry"].astype(int), manager_options["manager"].astype(str)))
+            selected_manager = st.selectbox("Manager", ids, format_func=lambda e: names.get(int(e), str(e)), key="manager_profile_v115", label_visibility="collapsed")
             render_manager_profile(int(selected_manager), ownership, managers)
         st.markdown("### Endringer fra forrige GW")
         render_ownership_trends(managers, ownership)
@@ -5754,14 +5881,13 @@ def render_ownership_dashboard(managers: list[dict], ownership: dict | None = No
         template, formation = build_template_xi(players_df)
         if not template.empty:
             st.caption(f"Mest populære lovlige XI · {formation}")
-            for pos_id in [1,2,3,4]:
+            for pos_id in [1, 2, 3, 4]:
                 group = template[template["position_id"] == pos_id]
                 if not group.empty:
                     st.write(f"**{POSITION_LABELS[pos_id]}:** " + " · ".join(f"{r.player} ({int(r.ownership_count)}/{loaded})" for r in group.itertuples()))
     if loaded < league_size:
-        st.warning(f"Picks er lest fra {loaded} av {league_size} lag. Prosentene gjelder lagene FPL faktisk svarte for.")
+        st.warning(f"Laguttak er lest fra {loaded} av {league_size} lag. Prosentene gjelder lagene FPL faktisk svarte for.")
     return ownership
-
 
 def render_home_live_snapshot(managers: list[dict]):
     event_id = current_fpl_event_id()
@@ -5837,348 +5963,809 @@ def render_clubhouse_home(managers: list[dict]):
 if st.session_state.get("managers"):
     persist_season_archive(st.session_state.get("managers", []))
 
-# -----------------------------
-# UI
-# -----------------------------
 
-MAIN_PAGES = ["Forside", "Ligatabell", "Sesongradar", "Hall of Fame og historikk"]
-main_page = nav_choice("", MAIN_PAGES, "main_page_v106", default="Forside")
+# ============================================================
+# LRO V200 · LOFTHUS ROAD OPEN 2.0
+# Produktregel: vis det folk trenger først. Resten får vente.
+# ============================================================
+
+st.markdown(
+    """
+    <style>
+    /* V200: færre dashboard-signaler, mer sportsside. */
+    #MainMenu, footer {visibility:hidden;}
+    [data-testid="stHeader"] {background: rgba(255,255,255,.92);}
+    .block-container {max-width: 1480px; padding-top: 1.25rem;}
+    .lro-hero {margin-bottom: 10px; padding: 24px 28px; border-radius: 22px;}
+    .lro-hero:before, .lro-hero:after {opacity:.12;}
+    .lro-hero h1 {font-size:clamp(2.05rem,4vw,3.2rem);}
+    .lro-premium-line {font-size:1rem; color:#e5e7eb;}
+    .lro-club-mark {display:none;}
+
+    .v200-kicker {font-size:.72rem; font-weight:900; letter-spacing:.1em; text-transform:uppercase; color:#991b1b; margin:0 0 3px 0;}
+    .v200-title {font-size:clamp(1.55rem,2.8vw,2.25rem); font-weight:950; letter-spacing:-.04em; color:#111827; line-height:1.03; margin:0 0 8px 0;}
+    .v200-sub {font-size:.98rem; color:#6b7280; margin:0 0 16px 0; max-width:780px; line-height:1.45;}
+    .v200-section {margin:28px 0 10px 0;}
+
+    .v200-score {background:linear-gradient(115deg,#071525 0%,#064e3b 57%,#551d1d 100%);border-radius:22px;color:white;padding:22px 24px;box-shadow:0 16px 38px rgba(15,23,42,.16);margin:8px 0 18px 0;}
+    .v200-score .kick {font-size:.72rem;color:#fde68a;font-weight:900;letter-spacing:.1em;text-transform:uppercase;}
+    .v200-score .main {font-size:clamp(1.55rem,3.2vw,2.6rem);font-weight:950;letter-spacing:-.045em;line-height:1.02;margin-top:7px;}
+    .v200-score .soft {color:#d1fae5;font-size:.9rem;margin-top:7px;}
+
+    .v200-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(205px,1fr));gap:12px;margin:12px 0 18px 0;}
+    .v200-stat {background:white;border:1px solid #e5e7eb;border-radius:17px;padding:16px 17px;box-shadow:0 6px 18px rgba(15,23,42,.045);min-height:98px;}
+    .v200-stat .lab {font-size:.7rem;color:#991b1b;font-weight:900;letter-spacing:.08em;text-transform:uppercase;margin-bottom:7px;}
+    .v200-stat .val {font-size:1.2rem;font-weight:900;line-height:1.15;color:#111827;}
+    .v200-stat .cap {font-size:.85rem;color:#6b7280;margin-top:6px;line-height:1.35;}
+
+    .v200-list {background:white;border:1px solid #e5e7eb;border-radius:18px;overflow:hidden;margin:8px 0 14px 0;}
+    .v200-row {display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:10px;align-items:center;padding:12px 15px;border-bottom:1px solid #eef2f7;}
+    .v200-row:last-child {border-bottom:0;}
+    .v200-row .rank {font-weight:950;color:#111827;}
+    .v200-row .who {font-weight:850;color:#111827;min-width:0;}
+    .v200-row .meta {display:block;color:#6b7280;font-weight:500;font-size:.82rem;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    .v200-row .num {font-weight:900;color:#111827;text-align:right;white-space:nowrap;}
+    .v200-badge {display:inline-block;border-radius:999px;padding:3px 8px;font-size:.72rem;font-weight:900;background:#f3f4f6;color:#374151;margin-left:5px;}
+    .v200-badge.gold {background:#fffbeb;color:#92400e;border:1px solid #fde68a;}
+    .v200-badge.red {background:#fef2f2;color:#991b1b;border:1px solid #fecaca;}
+    .v200-badge.green {background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0;}
+
+    .v200-alert {border-radius:18px;padding:16px 18px;margin:10px 0 16px 0;background:#fffbeb;border:1px solid #fde68a;}
+    .v200-alert .head {font-weight:950;color:#92400e;margin-bottom:4px;}
+    .v200-alert .body {color:#78350f;line-height:1.45;}
+
+    .v200-story {padding:12px 0;border-bottom:1px solid #eef2f7;font-size:1rem;color:#1f2937;line-height:1.4;}
+    .v200-story:last-child {border-bottom:0;}
+    .v200-story strong {color:#111827;}
+
+    .v200-profile {background:linear-gradient(125deg,#111827,#0b3d2e);border-radius:20px;padding:20px;color:white;margin-bottom:16px;}
+    .v200-profile .name {font-size:1.7rem;font-weight:950;letter-spacing:-.035em;}
+    .v200-profile .team {color:#d1fae5;margin-top:3px;}
+
+    div[data-testid="stExpander"] {border:1px solid #e5e7eb;border-radius:16px;background:#fff;}
+    div[data-testid="stDataFrame"] {border-radius:16px;overflow:hidden;}
+    .stSelectbox label, .stTextInput label {font-weight:850;color:#111827;}
+
+    @media(max-width:760px){
+      .v200-row{grid-template-columns:38px minmax(0,1fr) auto;padding:11px 12px;}
+      .v200-grid{grid-template-columns:repeat(2,minmax(0,1fr));}
+      .v200-stat{min-height:90px;padding:13px;}
+      .v200-stat .val{font-size:1.05rem;}
+    }
+    @media(max-width:480px){.v200-grid{grid-template-columns:1fr 1fr;}.v200-row .meta{max-width:170px;}}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 
-if main_page == "Forside":
-    if "managers" in st.session_state:
-        render_clubhouse_home(st.session_state.get("managers", []))
-    else:
-        st.header("Klubbhuset")
-        lro_note("Henter ligaen", "FPL-data lastes inn automatisk. Bruk Oppdater fra FPL nå i venstremenyen hvis den ikke våkner.", "gold")
+def v200_num(value, default=0) -> int:
+    try:
+        if value is None or pd.isna(value):
+            return int(default)
+        return int(float(value))
+    except Exception:
+        return int(default)
 
-elif main_page == "Ligatabell":
-    st.header("Ligatabell")
 
-    if "managers" in st.session_state:
-        managers = st.session_state["managers"]
+def v200_manager_df(managers: list[dict]) -> pd.DataFrame:
+    df = pd.DataFrame(managers or []).copy()
+    if df.empty:
+        return pd.DataFrame(columns=["entry","player_name","entry_name","rank_num","last_rank_num","event_total_num","total_num","movement"])
+    for c in ["entry","player_name","entry_name","rank","last_rank","event_total","total"]:
+        if c not in df.columns:
+            df[c] = pd.NA
+    df["player_name"] = df["player_name"].fillna("").astype(str).map(canonical_hof_name)
+    df["entry_name"] = df["entry_name"].fillna("").astype(str)
+    for src, dst in [("rank","rank_num"),("last_rank","last_rank_num"),("event_total","event_total_num"),("total","total_num")]:
+        df[dst] = pd.to_numeric(df[src], errors="coerce")
+    # Positivt tall betyr at manageren har klatret.
+    df["movement"] = df["last_rank_num"] - df["rank_num"]
+    return df
 
-        if not managers:
-            st.warning("Fant ingen påmeldte/managere.")
-        else:
-            league_view = nav_choice("", ["Ligatabell", "Tabelltips"], "league_view_v36", default="Ligatabell")
 
-            table_df = pd.DataFrame(managers)
-            table_df["rank_num"] = pd.to_numeric(table_df["rank"], errors="coerce")
-            table_df["last_rank_num"] = pd.to_numeric(table_df["last_rank"], errors="coerce")
-            table_df["event_total_num"] = pd.to_numeric(table_df["event_total"], errors="coerce")
-            table_df["total_num"] = pd.to_numeric(table_df["total"], errors="coerce")
-            table_df["rank_display"] = table_df["rank_num"].apply(format_rank)
-            table_df["form_delta"] = table_df["last_rank_num"] - table_df["rank_num"]
+def v200_section(title: str, kicker: str = "", sub: str = ""):
+    bits = ["<div class='v200-section'>"]
+    if kicker:
+        bits.append(f"<div class='v200-kicker'>{html.escape(kicker)}</div>")
+    bits.append(f"<div class='v200-title'>{html.escape(title)}</div>")
+    if sub:
+        bits.append(f"<div class='v200-sub'>{html.escape(sub)}</div>")
+    bits.append("</div>")
+    st.markdown("".join(bits), unsafe_allow_html=True)
 
-            has_live_table = table_df["rank_num"].notna().any()
 
-            if league_view == "Tabelltips":
-                ensure_history_for_page()
-                summary_df = st.session_state.get("summary_df", pd.DataFrame())
+def v200_cards(cards: list[dict]):
+    html_rows = []
+    for card in cards:
+        html_rows.append(
+            "<div class='v200-stat'>"
+            f"<div class='lab'>{html.escape(str(card.get('label','')))}</div>"
+            f"<div class='val'>{html.escape(str(card.get('value','–')))}</div>"
+            f"<div class='cap'>{html.escape(str(card.get('caption','')))}</div>"
+            "</div>"
+        )
+    st.markdown("<div class='v200-grid'>" + "".join(html_rows) + "</div>", unsafe_allow_html=True)
 
-                if summary_df.empty:
-                    st.warning("Fant ikke nok historikk til å lage tabelltips.")
-                else:
-                    odds_df = build_preseason_odds(summary_df)
-                    st.subheader("Tabelltips")
-                    st.caption("Modellens før-sesongtips basert på FPL-historikk og fersk form.")
-                    render_prediction_table_component(odds_df)
-            else:
-                if has_live_table:
-                    table_df = table_df.sort_values(["rank_num", "player_name"], ascending=[True, True], na_position="last")
-                else:
-                    table_df = table_df.sort_values(["player_name"], ascending=[True], na_position="last")
 
-                render_league_table_component(table_df, has_live_table)
+def v200_short_names(text_value: str, limit: int = 4) -> str:
+    names = [canonical_hof_name(x.strip()) for x in str(text_value or "").split(" · ") if x.strip()]
+    if not names:
+        return ""
+    shown = names[:limit]
+    suffix = f" +{len(names)-limit}" if len(names) > limit else ""
+    return ", ".join(shown) + suffix
 
-                with st.expander("Hva betyr formkurven?"):
-                    st.write(
-                        """
-                        **🟢 ↑** kraftig opp.  
-                        **🔵 ↗** litt opp.  
-                        **⚪ ━** omtrent på stedet hvil / før sesongstart.  
-                        **🟡 ↘** litt ned.  
-                        **🔴 ↓** kraftig ned.
-                        """
-                    )
 
-                st.caption(f"Fant {len(table_df)} lag.")
-    else:
-        lro_note("Ikke hentet ennå", "FPL-data hentes automatisk. Bruk Oppdater fra FPL nå i venstremenyen hvis noe mangler.", "gold")
+def v200_get_ownership(managers: list[dict], event_id: int | None = None) -> dict | None:
+    event_id = int(event_id or current_fpl_event_id() or 0)
+    if event_id <= 0:
+        return None
+    key = f"_v200_ownership_{event_id}"
+    if key not in st.session_state:
+        st.session_state[key] = ownership_for_event(managers, event_id)
+    return st.session_state.get(key)
 
-elif main_page == "Sesongradar":
-    if "managers" not in st.session_state:
-        st.header("Sesongradar")
-        render_preseason_radar_preview()
-    else:
-        managers = st.session_state["managers"]
-        event_id = current_fpl_event_id()
-        gw_label = "GW" + str(event_id) if event_id else "FØR LIVE GW"
+
+def v200_live_rows(ownership: dict, active_team_ids: set[int]) -> pd.DataFrame:
+    if not ownership:
+        return pd.DataFrame()
+    players = ownership.get("players", pd.DataFrame()).copy()
+    if players.empty or "team_id" not in players.columns:
+        return pd.DataFrame()
+    live = players[players["team_id"].isin(active_team_ids)].copy()
+    if live.empty:
+        return live
+    # Relevans: TC/C først, deretter eierskap og faktiske GW-poeng.
+    live["relevance"] = (
+        pd.to_numeric(live.get("triple_captain_count"), errors="coerce").fillna(0) * 10000
+        + pd.to_numeric(live.get("captain_count"), errors="coerce").fillna(0) * 500
+        + pd.to_numeric(live.get("ownership_count"), errors="coerce").fillna(0) * 8
+        + pd.to_numeric(live.get("event_points"), errors="coerce").fillna(0) * 5
+    )
+    return live.sort_values(["relevance","event_points","player"], ascending=[False,False,True])
+
+
+def v200_live_centre(managers: list[dict], ownership: dict | None = None, compact: bool = False):
+    event_id = current_fpl_event_id()
+    if not event_id:
+        st.markdown("<div class='v200-score'><div class='kick'>LIVE</div><div class='main'>Venter på første runde</div></div>", unsafe_allow_html=True)
+        return
+    context = build_live_fixture_context(int(event_id))
+    active = context.get("active", []) or []
+    teams = context.get("teams", {}) or {}
+    if not active:
+        next_label = _next_fixture_label(context.get("next"), teams)
         st.markdown(
-            f"<div style='background:linear-gradient(110deg,#071525,#063d2e 58%,#511b1b);color:white;border-radius:20px;padding:18px 20px;margin:4px 0 18px 0;box-shadow:0 12px 30px rgba(15,23,42,.13)'><div style='font-size:.72rem;font-weight:900;letter-spacing:.1em;color:#fde68a'>{gw_label} · KONTROLLROM</div><div style='font-size:clamp(1.45rem,2.5vw,2.15rem);font-weight:950;letter-spacing:-.035em;margin-top:4px'>Hva skjer i Lofthus akkurat nå?</div><div style='font-size:.88rem;color:#d1d5db;margin-top:5px;max-width:900px'>Livekamper, kapteiner, TC og spillerpopularitet først. Sesonggraf og odds ligger som detaljer nederst.</div></div>",
+            f"<div class='v200-score'><div class='kick'>GW{event_id}</div><div class='main'>Ingen kamp pågår</div><div class='soft'>Neste: {html.escape(next_label)}</div></div>",
             unsafe_allow_html=True,
         )
-        ownership = None
-        if event_id is not None:
-            with st.spinner(f"Leser {len(managers)} Lofthus-lag i GW{event_id} …"):
-                ownership = ownership_for_event(managers, int(event_id))
-        render_live_match_centre(managers, ownership)
-        render_ownership_dashboard(managers, ownership)
-        render_month_snapshot()
-        with st.expander("Mer sesongdata · form, tabellbevegelse, graf og før-sesongodds"):
-            ensure_history_for_page()
-            summary_df = st.session_state.get("summary_df", pd.DataFrame())
-            radar = build_season_radar_tables(managers, summary_df)
-            climbers, fallers, form_three = radar.get("climbers", pd.DataFrame()), radar.get("fallers", pd.DataFrame()), radar.get("form_three", pd.DataFrame())
-            st.markdown("### Form og tabellbevegelse")
-            c1, c2 = st.columns(2)
-            with c1:
-                if not form_three.empty: display_table(form_three.head(5), ["player_name", "last_three_points", "last_three_avg", "rank_num"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
-                else: st.caption("Ikke nok rundedata ennå.")
-            with c2:
-                movement_rows = []
-                for frame, arrow in [(climbers.head(3) if not climbers.empty else pd.DataFrame(), "▲"), (fallers.head(3) if not fallers.empty else pd.DataFrame(), "▼")]:
-                    for r in frame.itertuples(): movement_rows.append({"retning": arrow, "manager": r.player_name, "utvikling": r.form_curve})
-                if movement_rows: display_table(pd.DataFrame(movement_rows), ["retning", "manager", "utvikling"], {"retning": "", "manager": "Manager", "utvikling": "Bevegelse"})
-            st.markdown("### Sesongløpet")
-            render_round_by_round_league_history(managers)
-            over, under = radar.get("over", pd.DataFrame()), radar.get("under", pd.DataFrame())
-            if not over.empty or not under.empty:
-                st.markdown("### Mot før-sesongoddsen")
-                c3, c4 = st.columns(2)
-                with c3:
-                    if not over.empty:
-                        st.markdown("**Overpresterer**"); display_table(over.head(8), ["player_name", "rank_num", "odds_rank", "performance_vs_odds"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
-                with c4:
-                    if not under.empty:
-                        st.markdown("**Underpresterer**"); display_table(under.head(8), ["player_name", "rank_num", "odds_rank", "performance_vs_odds"], RADAR_LABELS, column_config=NUMERIC_CONFIG)
+        return
+
+    labels = [_fixture_label(f, teams) for f in active]
+    st.markdown(
+        f"<div class='v200-score'><div class='kick'>GW{event_id} · LIVE NÅ</div><div class='main'>{' &nbsp; · &nbsp; '.join(html.escape(x) for x in labels)}</div><div class='soft'>Dette er spillerne som betyr mest i Lofthus akkurat nå.</div></div>",
+        unsafe_allow_html=True,
+    )
+    ownership = ownership or v200_get_ownership(managers, event_id)
+    if not ownership:
+        return
+    team_ids = {int(f.get(k) or 0) for f in active for k in ("team_h", "team_a")}
+    live = v200_live_rows(ownership, team_ids)
+    if live.empty:
+        st.caption("Ingen Lofthus-eide spillere fra kampene ble funnet akkurat nå.")
+        return
+
+    tc = live[live["triple_captain_count"] > 0]
+    if not tc.empty:
+        alerts = []
+        for r in tc.itertuples():
+            alerts.append(f"{r.player}: {v200_short_names(getattr(r,'triple_captains_text',''), 6)}")
+        st.markdown(
+            "<div class='v200-alert'><div class='head'>🚨 TRIPLE CAPTAIN I AKSJON</div><div class='body'>" + html.escape(" · ".join(alerts)) + "</div></div>",
+            unsafe_allow_html=True,
+        )
+
+    rows = []
+    for _, r in live.head(4 if compact else 7).iterrows():
+        c = v200_num(r.get("captain_count")); tc_n = v200_num(r.get("triple_captain_count")); own = v200_num(r.get("ownership_count")); pts = v200_num(r.get("event_points"))
+        badges = []
+        if tc_n: badges.append(f"<span class='v200-badge gold'>{tc_n} TC</span>")
+        if c: badges.append(f"<span class='v200-badge red'>{c} C</span>")
+        meta = f"{html.escape(str(r.get('club') or ''))} · {own} eiere"
+        cap_names = v200_short_names(str(r.get("captains_text") or ""), 3)
+        if cap_names: meta += " · C: " + html.escape(cap_names)
+        rows.append(
+            f"<div class='v200-row'><div class='rank'>{html.escape(str(r.get('position',''))[:1])}</div><div class='who'>{html.escape(str(r.get('player','')))}{''.join(badges)}<span class='meta'>{meta}</span></div><div class='num'>{pts} p</div></div>"
+        )
+    st.markdown("<div class='v200-list'>" + "".join(rows) + "</div>", unsafe_allow_html=True)
 
 
-elif main_page == "Odds":
-    st.header("Odds")
-    lro_note("Før sesongstart", "Vinnerodds, topp 3-odds og egen duellgenerator. Oddsen er laget for intern moro.", "")
+def v200_captain_table(ownership: dict, limit: int = 8):
+    players = ownership.get("players", pd.DataFrame()).copy() if ownership else pd.DataFrame()
+    if players.empty:
+        st.caption("Kapteinsvalgene er ikke tilgjengelige ennå.")
+        return pd.DataFrame()
+    captained = players[pd.to_numeric(players["captain_count"], errors="coerce").fillna(0) > 0].copy()
+    # Faktisk antall managere med bindet. TC er en egen markering, ikke en snarvei til førsteplass.
+    captained = captained.sort_values(["captain_count","triple_captain_count","player"], ascending=[False,False,True])
+    if captained.empty:
+        st.caption("Ingen kapteinsvalg funnet ennå.")
+        return captained
 
-    ensure_history_for_page()
+    tc = captained[captained["triple_captain_count"] > 0]
+    if not tc.empty:
+        alerts = []
+        for r in tc.itertuples():
+            alerts.append(f"{r.player}: {v200_short_names(getattr(r,'triple_captains_text',''), 10)}")
+        st.markdown(
+            "<div class='v200-alert'><div class='head'>🚨 TRIPLE CAPTAIN</div><div class='body'>" + html.escape(" · ".join(alerts)) + "</div></div>",
+            unsafe_allow_html=True,
+        )
 
-    if "summary_df" in st.session_state and not st.session_state["summary_df"].empty:
-        summary_df = st.session_state["summary_df"]
-        odds_df = build_preseason_odds(summary_df)
-        odds_view = odds_df.copy()
-        odds_view["top3_odds_float"] = pd.to_numeric(odds_view["top3_odds_float"], errors="coerce")
+    rows = []
+    for pos, (_, r) in enumerate(captained.head(limit).iterrows(), 1):
+        c = v200_num(r.get("captain_count")); tc_n = v200_num(r.get("triple_captain_count")); pts = v200_num(r.get("event_points"))
+        who = v200_short_names(str(r.get("captains_text") or ""), 4)
+        badges = f"<span class='v200-badge gold'>{tc_n} TC</span>" if tc_n else ""
+        rows.append(
+            f"<div class='v200-row'><div class='rank'>{pos}</div><div class='who'>{html.escape(str(r.get('player','')))}{badges}<span class='meta'>{html.escape(who)}</span></div><div class='num'>{c} C · {pts} p</div></div>"
+        )
+    st.markdown("<div class='v200-list'>" + "".join(rows) + "</div>", unsafe_allow_html=True)
+    if len(captained) > limit:
+        with st.expander(f"Se alle {len(captained)} kapteinsvalg"):
+            view = captained[["player","captain_count","triple_captain_count","captains_text"]].copy()
+            view["captains_text"] = view["captains_text"].map(lambda x: v200_short_names(x, 12))
+            display_table(view, ["player","captain_count","triple_captain_count","captains_text"], {"player":"Spiller","captain_count":"Kapteiner","triple_captain_count":"TC","captains_text":"Hvem"})
+    return captained
 
-        st.subheader("Fullstendig oddsliste")
-        render_odds_table_component(odds_view)
+
+def v200_player_detail(row: pd.Series, ownership: dict):
+    picks = ownership.get("picks", pd.DataFrame()).copy()
+    element = v200_num(row.get("element"))
+    loaded = v200_num(ownership.get("loaded_managers")) or v200_num(ownership.get("league_size"))
+    own = v200_num(row.get("ownership_count")); cap = v200_num(row.get("captain_count")); tc = v200_num(row.get("triple_captain_count")); bench = v200_num(row.get("bench_count")); pts = v200_num(row.get("event_points"))
+    not_owned = max(loaded - own, 0)
+
+    st.markdown(f"### {row.get('player','')} · {row.get('club','')}")
+    v200_cards([
+        {"label":"Eies av","value":f"{own} av {loaded}","caption":f"{float(row.get('ownership_pct') or 0):.0f} % av ligaen"},
+        {"label":"Kaptein hos","value":cap,"caption":"får dobbelt"},
+        {"label":"Triple Captain","value":tc,"caption":"får trippelt"},
+        {"label":"GW-poeng","value":pts,"caption":f"{bench} har spilleren på benken" if bench else "ingen benkeeiere"},
+    ])
+
+    if tc:
+        st.markdown(
+            f"<div class='v200-alert'><div class='head'>TRIPLE CAPTAIN</div><div class='body'>{html.escape(v200_short_names(str(row.get('triple_captains_text') or ''), 20))}</div></div>",
+            unsafe_allow_html=True,
+        )
+
+    captain_names = [x.strip() for x in str(row.get("captains_text") or "").split(" · ") if x.strip()]
+    if captain_names:
+        st.markdown("**Har bindet:** " + ", ".join(canonical_hof_name(x) for x in captain_names))
     else:
-        st.info("Oddsgrunnlaget hentes automatisk. Bruk Oppdater fra FPL nå i venstremenyen hvis noe mangler.")
+        st.caption("Ingen har spilleren som kaptein.")
 
-    st.subheader("Lag egne dueller")
-    st.write("Skriv én duell eller gruppe per linje. Bruk `vs` mellom navnene.")
-    market_text = st.text_area("Dueller/grupper", value="", height=240)
-
-    if st.button("Lag duellodds"):
-        ensure_history_loaded(DEFAULT_LEAGUE_ID)
-        summary_df = st.session_state["summary_df"]
-
-        market_df, missing_df = analyze_markets(summary_df, market_text)
-
-        if not market_df.empty:
-            st.dataframe(market_df, use_container_width=True, hide_index=True)
-        else:
-            st.warning("Fant ingen markeder å vise.")
-
-        if not missing_df.empty:
-            with st.expander("Navn appen ikke fant sikkert treff på"):
-                st.dataframe(missing_df, use_container_width=True, hide_index=True)
-
-
-elif main_page == "Hall of Fame og historikk":
-    st.header("Hall of Fame og historikk")
-    lro_note(
-        "Historieboka",
-        "Her ligger Lofthus Road Open-meritter og FPL-historikk samlet. Velg manager for profil, eller gå til pokalskap/månedskonger for å se historikk på ligaen.<br><br>Hvis du ble nummer tre sammenlagt i 24/25, eventuelt vet hvem som ble det, og har informasjon om hvem som mangler på de ulike månedene - vennligst meld deg",
-        "gold",
+    # Folkelig konsekvensforklaring. Ikke 'relative exposure'.
+    ordinary = max(own - cap - bench, 0)
+    st.markdown(
+        f"**Hvis {row.get('player','spilleren')} leverer:** "
+        + (f"{tc} får trippel uttelling, " if tc else "")
+        + (f"{max(cap-tc,0)} får dobbel, " if cap else "")
+        + f"{ordinary} får vanlige poeng, {bench} har spilleren på benken og {not_owned} har spilleren ikke."
     )
 
-    hof_df = build_hof_people()
-    summary_df = st.session_state.get("summary_df", pd.DataFrame())
-    seasons_df = st.session_state.get("seasons_df", pd.DataFrame())
-    errors_df = st.session_state.get("errors_df", pd.DataFrame())
+    if not picks.empty:
+        ep = picks[picks["element"] == element].copy()
+        owners = ep["manager"].dropna().astype(str).map(canonical_hof_name).drop_duplicates().sort_values().tolist()
+        benchers = ep[ep["on_bench"]]["manager"].dropna().astype(str).map(canonical_hof_name).drop_duplicates().sort_values().tolist()
+        if owners:
+            preview = ", ".join(owners[:5]) + (f" +{len(owners)-5}" if len(owners) > 5 else "")
+            st.caption(f"Eiere: {preview}")
+            if len(owners) > 5:
+                with st.expander(f"Se alle {len(owners)} eiere"):
+                    st.write(" · ".join(owners))
+        if benchers:
+            st.caption("På benken hos: " + ", ".join(benchers[:8]) + (f" +{len(benchers)-8}" if len(benchers)>8 else ""))
 
-    hof_section = nav_choice("", ["Pokalskap", "Managerprofiler", "Månedskonger", "Resultatarkiv"], "hof_section_v36", default="Pokalskap")
 
-    if hof_section == "Managerprofiler":
-        ensure_history_for_page()
-        summary_df = st.session_state.get("summary_df", pd.DataFrame())
-        seasons_df = st.session_state.get("seasons_df", pd.DataFrame())
-        errors_df = st.session_state.get("errors_df", pd.DataFrame())
-        if not summary_df.empty:
-            summary = summary_df.copy().sort_values(["hof_score", "manager"], ascending=[False, True], na_position="last").reset_index(drop=True)
-            summary["merit_rank"] = range(1, len(summary) + 1)
-            summary["merits"] = summary["merits"].fillna("")
+def v200_player_search(ownership: dict, key: str = "v200_player_search"):
+    players = ownership.get("players", pd.DataFrame()).copy() if ownership else pd.DataFrame()
+    if players.empty:
+        st.caption("Spillerdata er ikke tilgjengelig ennå.")
+        return
+    query = st.text_input("Finn spiller", placeholder="Skriv for eksempel Tzolis, Haaland eller Bruno", key=key)
+    if not query.strip():
+        st.caption("Skriv et navn. Du får eiere, kapteiner, TC og benk med én gang.")
+        return
+    q = normalize_text(query)
+    players["_match"] = players.apply(lambda r: q in normalize_text(f"{r.get('player','')} {r.get('full_name','')} {r.get('club','')}"), axis=1)
+    hits = players[players["_match"]].copy()
+    if hits.empty:
+        st.warning("Fant ingen spiller med det navnet i Lofthus-lagene denne runden.")
+        return
+    hits = hits.sort_values(["captain_count","ownership_count","player"], ascending=[False,False,True])
+    if len(hits) == 1:
+        chosen = hits.iloc[0]
+    else:
+        ids = hits["element"].astype(int).tolist()
+        label = {int(r.element): f"{r.player} · {r.club} · {int(r.ownership_count)} eiere" for r in hits.head(20).itertuples()}
+        selected = st.selectbox("Treff", ids[:20], format_func=lambda e: label.get(int(e), str(e)), key=key+"_hit", label_visibility="collapsed")
+        chosen = hits[hits["element"] == int(selected)].iloc[0]
+    v200_player_detail(chosen, ownership)
 
-            lro_note(
-                "Managerprofiler",
-                "Trykk på et managernavn i tabellen for å åpne full FPL-historikk. Tabellen er sortert på merittpoeng som standard.",
-            )
-            render_history_table_component(summary, seasons_df)
 
-            with st.expander("Utvikling siste tre sesonger"):
-                trend_columns = ["manager", "team", "trend"]
-                display_table(summary, trend_columns, HISTORY_LABELS)
+def v200_popular_players(ownership: dict, limit: int = 10):
+    players = ownership.get("players", pd.DataFrame()).copy() if ownership else pd.DataFrame()
+    if players.empty:
+        st.caption("Ingen spillerdata ennå.")
+        return
+    players = players.sort_values(["ownership_count","captain_count","player"], ascending=[False,False,True]).head(limit)
+    rows = []
+    for pos, (_, r) in enumerate(players.iterrows(),1):
+        c = v200_num(r.get("captain_count")); cap = f" · {c} C" if c else ""
+        rows.append(f"<div class='v200-row'><div class='rank'>{pos}</div><div class='who'>{html.escape(str(r.get('player','')))}<span class='meta'>{html.escape(str(r.get('club','')))}{cap}</span></div><div class='num'>{v200_num(r.get('ownership_count'))}/{v200_num(ownership.get('loaded_managers'))}</div></div>")
+    st.markdown("<div class='v200-list'>"+"".join(rows)+"</div>", unsafe_allow_html=True)
 
-            if not errors_df.empty:
-                st.warning("Noen feilet ved historikkhenting.")
-                display_table(errors_df, ["manager", "team", "entry", "error"], ERROR_LABELS)
+
+def v200_differentials(ownership: dict, max_owners: int = 3, limit: int = 8):
+    players = ownership.get("players", pd.DataFrame()).copy() if ownership else pd.DataFrame()
+    if players.empty:
+        return
+    diff = players[(players["ownership_count"] >= 1) & (players["ownership_count"] <= max_owners)].copy()
+    diff = diff.sort_values(["event_points","season_points","ownership_count"], ascending=[False,False,True]).head(limit)
+    if diff.empty:
+        st.caption("Ingen tydelige differensialer akkurat nå.")
+        return
+    rows=[]
+    for _,r in diff.iterrows():
+        rows.append(f"<div class='v200-row'><div class='rank'>•</div><div class='who'>{html.escape(str(r.get('player','')))}<span class='meta'>{html.escape(v200_short_names(str(r.get('owners_text') or ''),3))}</span></div><div class='num'>{v200_num(r.get('ownership_count'))} eiere · {v200_num(r.get('event_points'))} p</div></div>")
+    st.markdown("<div class='v200-list'>"+"".join(rows)+"</div>", unsafe_allow_html=True)
+
+
+def v200_month_race(compact: bool = False):
+    phase, month_df = get_current_month_table(DEFAULT_LEAGUE_ID)
+    if not phase:
+        st.caption("Månedstabellen er ikke tilgjengelig akkurat nå.")
+        return
+    month = str(phase.get("name") or "Måneden")
+    season = _season_label_from_bootstrap()
+    finished = set(_finished_event_ids())
+    gws = set(range(v200_num(phase.get("start_event")), v200_num(phase.get("stop_event"))+1))
+    done = bool(gws) and gws.issubset(finished)
+    v200_section(f"{month} · {'ferdig' if done else 'live'}", "MÅNEDSKAMPEN")
+    if done:
+        podium = build_monthly_podium_df()
+        podium = podium[(podium["season"] == season) & (podium["month"] == month)].sort_values("place")
+        if not podium.empty:
+            rows=[]
+            medals={1:"🥇",2:"🥈",3:"🥉"}
+            for r in podium.head(3).itertuples():
+                rows.append(f"<div class='v200-row'><div class='rank'>{medals.get(int(r.place),r.place)}</div><div class='who'>{html.escape(str(r.manager))}</div><div class='num'></div></div>")
+            st.markdown("<div class='v200-list'>"+"".join(rows)+"</div>", unsafe_allow_html=True)
+            return
+    max_points = v200_num(pd.to_numeric(month_df.get("points"), errors="coerce").fillna(0).max()) if not month_df.empty else 0
+    if max_points <= 0:
+        if month_df.empty:
+            try:
+                _, managers, _ = get_league_managers(DEFAULT_LEAGUE_ID)
+                names = sorted({canonical_hof_name(str(m.get("player_name") or "")) for m in managers if m.get("player_name")})
+            except Exception:
+                names=[]
         else:
-            lro_note("Ikke hentet ennå", "FPL-data hentes automatisk. Bruk Oppdater fra FPL nå i venstremenyen hvis noe mangler.", "gold")
+            names=sorted({canonical_hof_name(str(x)) for x in month_df["manager"].tolist() if str(x).strip()})
+        rows=[]
+        for pos,name in enumerate(names[:3],1):
+            rows.append(f"<div class='v200-row'><div class='rank'>{pos}</div><div class='who'>{html.escape(name)}</div><div class='num'>0 p</div></div>")
+        st.markdown("<div class='v200-list'>"+"".join(rows)+"</div>", unsafe_allow_html=True)
+        st.caption(f"Ingen {month.lower()}poeng ennå. Alfabetisk fram til første tellende poeng.")
+        return
+    rows=[]
+    for _,r in month_df.head(3).iterrows():
+        rows.append(f"<div class='v200-row'><div class='rank'>{v200_num(r.get('rank'))}</div><div class='who'>{html.escape(str(r.get('manager','')))}</div><div class='num'>{v200_num(r.get('points'))} p</div></div>")
+    st.markdown("<div class='v200-list'>"+"".join(rows)+"</div>", unsafe_allow_html=True)
 
-    elif hof_section == "Pokalskap":
-        if hof_df.empty:
-            st.warning("Fant ingen Hall of Fame-data.")
-        else:
-            hof_df = hof_df.sort_values(["hof_score", "display_name"], ascending=[False, True]).reset_index(drop=True)
-            hof_df["rank_display"] = [f"{medal_for_position(i + 1)} {i + 1}".strip() for i in range(len(hof_df))]
 
-            most_decorated = hof_df.iloc[0]
-            overall_king = hof_df.sort_values(["overall_count", "hof_score"], ascending=[False, False]).iloc[0]
-            cup_king = hof_df.sort_values(["cup_count", "hof_score"], ascending=[False, False]).iloc[0]
-            monthly_king = hof_df.sort_values(["monthly_titles", "hof_score"], ascending=[False, False]).iloc[0]
+def v200_round_movement(managers: list[dict]):
+    df=v200_manager_df(managers)
+    if df.empty:
+        return
+    usable=df[df["rank_num"].notna()].copy()
+    if usable.empty:
+        return
+    best_gw=usable.sort_values(["event_total_num","rank_num"], ascending=[False,True], na_position="last").iloc[0]
+    movers=usable[usable["movement"].notna()].copy()
+    up=movers.sort_values(["movement","rank_num"], ascending=[False,True]).iloc[0] if not movers.empty else None
+    down=movers.sort_values(["movement","rank_num"], ascending=[True,True]).iloc[0] if not movers.empty else None
+    cards=[{"label":"Rundens beste","value":best_gw["player_name"],"caption":f"{v200_num(best_gw['event_total_num'])} poeng"}]
+    if up is not None and v200_num(up["movement"])>0: cards.append({"label":"Mest opp","value":up["player_name"],"caption":f"+{v200_num(up['movement'])} plasser"})
+    if down is not None and v200_num(down["movement"])<0: cards.append({"label":"Mest ned","value":down["player_name"],"caption":f"{v200_num(down['movement'])} plasser"})
+    v200_cards(cards)
 
-            lro_cards([
-                {"label": "Mest merittert", "value": most_decorated["display_name"], "caption": f"{int(most_decorated['hof_score'])} poeng"},
-                {"label": "Flest sammenlagtseiere", "value": overall_king["display_name"], "caption": f"{int(overall_king['overall_count'])} seier(e)"},
-                {"label": "Flest cupgull", "value": cup_king["display_name"], "caption": f"{int(cup_king['cup_count'])} cupgull"},
-                {"label": "Flest månedsseiere", "value": monthly_king["display_name"], "caption": f"{int(monthly_king['monthly_titles'])} månedsseiere"},
+
+def v200_story_engine(managers: list[dict], ownership: dict | None = None, max_items: int = 4) -> list[str]:
+    stories=[]
+    df=v200_manager_df(managers)
+    if not df.empty:
+        movers=df[df["movement"].notna()].copy()
+        if not movers.empty:
+            up=movers.sort_values("movement", ascending=False).iloc[0]
+            down=movers.sort_values("movement", ascending=True).iloc[0]
+            if v200_num(up["movement"]) >= 8: stories.append(f"**{up['player_name']}** klatret {v200_num(up['movement'])} plasser.")
+            if v200_num(down["movement"]) <= -8: stories.append(f"**{down['player_name']}** falt {abs(v200_num(down['movement']))} plasser.")
+    if ownership:
+        players=ownership.get("players",pd.DataFrame()).copy()
+        loaded=v200_num(ownership.get("loaded_managers"))
+        if not players.empty:
+            tc=players[players["triple_captain_count"]>0]
+            for r in tc.head(2).itertuples():
+                names=v200_short_names(getattr(r,"triple_captains_text",""),3)
+                stories.insert(0,f"**{names}** har Triple Captain på **{r.player}**.")
+            top=players.sort_values("ownership_count",ascending=False).iloc[0]
+            missing=max(loaded-v200_num(top["ownership_count"]),0)
+            if loaded and missing <= max(12, int(loaded*.2)):
+                stories.append(f"Bare **{missing} av {loaded}** går uten {top['player']}.")
+            events=ownership.get("manager_events",pd.DataFrame())
+            if not events.empty and "points_on_bench" in events.columns:
+                pain=events.sort_values("points_on_bench",ascending=False).iloc[0]
+                if v200_num(pain.get("points_on_bench")) >= 10:
+                    stories.append(f"**{pain['manager']}** har {v200_num(pain['points_on_bench'])} poeng på benken.")
+    return stories[:max_items]
+
+
+def v200_top5(managers: list[dict]):
+    df=v200_manager_df(managers)
+    df=df[df["rank_num"].notna()].sort_values(["rank_num","total_num","player_name"], ascending=[True,False,True]).head(5)
+    if df.empty:
+        st.caption("Tabellen våkner når første runde er registrert.")
+        return
+    medals={1:"🥇",2:"🥈",3:"🥉"}
+    rows=[]
+    for _,r in df.iterrows():
+        rank=v200_num(r["rank_num"])
+        rows.append(f"<div class='v200-row'><div class='rank'>{medals.get(rank,rank)}</div><div class='who'>{html.escape(str(r['player_name']))}<span class='meta'>{html.escape(str(r['entry_name']))}</span></div><div class='num'>{v200_num(r['total_num'])} p</div></div>")
+    st.markdown("<div class='v200-list'>"+"".join(rows)+"</div>",unsafe_allow_html=True)
+
+
+def v200_home(managers: list[dict]):
+    df=v200_manager_df(managers)
+    ownership=None
+    event_id=current_fpl_event_id()
+    # Livefelt først. Det laster spillerpicks bare når det trengs.
+    try:
+        context=build_live_fixture_context(int(event_id)) if event_id else {"active":[]}
+        if context.get("active"):
+            ownership=v200_get_ownership(managers,event_id)
+    except Exception:
+        pass
+    v200_live_centre(managers,ownership,compact=True)
+
+    live=df[df["rank_num"].notna()].sort_values(["rank_num","total_num"],ascending=[True,False]) if not df.empty else pd.DataFrame()
+    leader=live.iloc[0] if not live.empty else None
+    gw=live.sort_values(["event_total_num","rank_num"],ascending=[False,True]).iloc[0] if not live.empty else None
+    phase,month_df=get_current_month_table(DEFAULT_LEAGUE_ID)
+    month_leader=None
+    if phase is not None and not month_df.empty and pd.to_numeric(month_df["points"],errors="coerce").fillna(0).max()>0:
+        month_leader=month_df.sort_values(["rank","manager"]).iloc[0]
+    if ownership is None and event_id:
+        try:
+            ownership=v200_get_ownership(managers,event_id)
+        except Exception:
+            ownership=None
+    most_capped=None
+    if ownership:
+        p=ownership.get("players",pd.DataFrame())
+        c=p[p["captain_count"]>0].sort_values(["captain_count","triple_captain_count","player"],ascending=[False,False,True]) if not p.empty else pd.DataFrame()
+        if not c.empty: most_capped=c.iloc[0]
+    cards=[
+        {"label":"Ligaleder","value":leader["player_name"] if leader is not None else "–","caption":f"{v200_num(leader['total_num'])} poeng" if leader is not None else ""},
+        {"label":"Runden","value":gw["player_name"] if gw is not None else "–","caption":f"{v200_num(gw['event_total_num'])} poeng" if gw is not None else ""},
+        {"label":f"{phase['name']}" if phase else "Måneden","value":str(month_leader.get('manager')) if month_leader is not None else "0–0","caption":f"{v200_num(month_leader.get('points'))} poeng" if month_leader is not None else "ingen månedspoeng ennå"},
+        {"label":"Mest cappet","value":str(most_capped.get('player')) if most_capped is not None else "–","caption":f"{v200_num(most_capped.get('captain_count'))} kapteiner" if most_capped is not None else ""},
+    ]
+    v200_cards(cards)
+    left,right=st.columns([1.15,.85],gap="large")
+    with left:
+        v200_section("Topp 5", "LIGAEN")
+        v200_top5(managers)
+    with right:
+        v200_month_race(compact=True)
+    stories=v200_story_engine(managers,ownership)
+    if stories:
+        v200_section("Det snakkes om", "AKKURAT NÅ")
+        st.markdown("<div class='v200-list'>"+"".join(f"<div class='v200-story'>{s}</div>" for s in stories)+"</div>",unsafe_allow_html=True)
+
+
+def v200_season(managers: list[dict]):
+    event_id=current_fpl_event_id()
+    v200_section("Sesongen akkurat nå", "2026/27", "Livekamper, kapteiner og spillerne som faktisk betyr noe.")
+    ownership=None
+    if event_id:
+        with st.spinner("Leser Lofthus-lag …"):
+            ownership=v200_get_ownership(managers,event_id)
+    v200_live_centre(managers,ownership,compact=False)
+
+    v200_section("Hvem har cappet hvem?", "KAPTEINER")
+    captained=v200_captain_table(ownership,8) if ownership else pd.DataFrame()
+
+    v200_section("Finn en spiller", "SPILLERE", "Eiere, kapteiner, Triple Captain og benk. Ingen navnesuppe før du ber om den.")
+    if ownership:
+        v200_player_search(ownership,"v200_season_player")
+
+    col1,col2=st.columns(2,gap="large")
+    with col1:
+        v200_section("Mest eide", "SPILLERPOPULARITET")
+        if ownership: v200_popular_players(ownership,10)
+    with col2:
+        v200_section("Differensialer", "1–3 EIERE")
+        if ownership: v200_differentials(ownership,3,8)
+
+    v200_month_race()
+    v200_section("Runden som var", "BEVEGELSER")
+    v200_round_movement(managers)
+
+    with st.expander("Mer sesongstatistikk"):
+        st.markdown("### Sesongutvikling")
+        st.caption("Grafen er her når du vil ha den. Den får bare ikke eie hele sida lenger.")
+        try:
+            render_round_by_round_league_history(managers)
+        except Exception as error:
+            st.caption(f"Sesonggrafen kunne ikke lastes akkurat nå: {error}")
+        st.markdown("### Slik går det mot forventningene")
+        try:
+            radar=build_season_radar_tables(managers, st.session_state.get("summary_df",pd.DataFrame()))
+            perf=radar.get("performance",pd.DataFrame()) if isinstance(radar,dict) else pd.DataFrame()
+            if not perf.empty:
+                display_table(perf.head(12), [c for c in ["player_name","rank_num","odds_rank","performance_vs_odds"] if c in perf.columns], RADAR_LABELS)
+            else:
+                st.caption("Ikke nok data ennå.")
+        except Exception:
+            st.caption("Ikke nok data ennå.")
+
+
+def v200_clean_league_table(managers: list[dict]):
+    df=v200_manager_df(managers)
+    df=df[df["rank_num"].notna()].sort_values(["rank_num","total_num","player_name"],ascending=[True,False,True]).copy()
+    if df.empty:
+        st.caption("Ingen ligatabell ennå.")
+        return
+    df["Plass"] = df["rank_num"].map(lambda x: f"🥇 1" if v200_num(x)==1 else f"🥈 2" if v200_num(x)==2 else f"🥉 3" if v200_num(x)==3 else str(v200_num(x)))
+    df["Manager"] = df["player_name"]
+    df["Lag"] = df["entry_name"]
+    df["GW"] = df["event_total_num"].map(lambda x: v200_num(x))
+    df["Poeng"] = df["total_num"].map(lambda x: v200_num(x))
+    df["Endring"] = df["movement"].map(lambda x: (f"↑ {v200_num(x)}" if v200_num(x)>0 else f"↓ {abs(v200_num(x))}" if v200_num(x)<0 else "–") if not pd.isna(x) else "–")
+    st.dataframe(df[["Plass","Manager","Lag","GW","Poeng","Endring"]],use_container_width=True,hide_index=True,height=min(1850,80+35*len(df)))
+
+
+def v200_manager_month_rank(manager_name: str) -> tuple[str,str]:
+    phase, month_df=get_current_month_table(DEFAULT_LEAGUE_ID)
+    if not phase or month_df.empty:
+        return (phase.get("name") if phase else "Måned", "–")
+    key=hof_key(manager_name)
+    hit=month_df[month_df["manager"].map(hof_key)==key]
+    if hit.empty:
+        return (phase["name"], "–")
+    r=hit.iloc[0]
+    return (phase["name"], f"{v200_num(r.get('rank'))}. · {v200_num(r.get('points'))} p")
+
+
+def v200_manager_history_merits(manager_name: str) -> dict:
+    hof=build_hof_people()
+    if hof.empty:
+        return {}
+    hit=hof[hof["display_name"].map(hof_key)==hof_key(manager_name)]
+    return hit.iloc[0].to_dict() if not hit.empty else {}
+
+
+def v200_fear_block(entry: int, ownership: dict, managers: list[dict]):
+    picks=ownership.get("picks",pd.DataFrame()).copy() if ownership else pd.DataFrame()
+    events=ownership.get("manager_events",pd.DataFrame()).copy() if ownership else pd.DataFrame()
+    if picks.empty or events.empty:
+        return
+    my_event=events[events["entry"]==int(entry)]
+    if my_event.empty or pd.isna(my_event.iloc[0].get("rank")):
+        return
+    my_rank=v200_num(my_event.iloc[0]["rank"])
+    rivals=events[events["entry"]!=int(entry)].copy()
+    rivals["dist"]=(pd.to_numeric(rivals["rank"],errors="coerce")-my_rank).abs()
+    rivals=rivals.sort_values(["dist","rank"]).head(3)
+    rival_ids=set(rivals["entry"].astype(int).tolist())
+    mine=set(picks[picks["entry"]==int(entry)]["element"].astype(int).tolist())
+    rp=picks[picks["entry"].isin(rival_ids) & ~picks["element"].isin(mine)].copy()
+    st.markdown("#### Hvem må du passe på?")
+    if rivals.empty:
+        st.caption("Ingen nære rivaler å sammenligne med ennå.")
+        return
+    st.caption("Nærmest i tabellen: " + " · ".join(f"{v200_num(r['rank'])}. {r['manager']}" for _,r in rivals.iterrows()))
+    if rp.empty:
+        st.caption("Dere har uvanlig like tropper akkurat nå.")
+        return
+    threat=rp.groupby(["element","player"],as_index=False).agg(rivaler=("entry","nunique"),kapteiner=("is_captain","sum"),tc=("multiplier",lambda s:int((s>=3).sum())))
+    threat=threat.sort_values(["kapteiner","rivaler","player"],ascending=[False,False,True]).head(6)
+    rows=[]
+    for _,r in threat.iterrows():
+        meta=f"{v200_num(r['rivaler'])} av 3 rivaler"
+        if v200_num(r['kapteiner']): meta+=f" · {v200_num(r['kapteiner'])} C"
+        if v200_num(r['tc']): meta+=f" · {v200_num(r['tc'])} TC"
+        rows.append(f"<div class='v200-row'><div class='rank'>⚠</div><div class='who'>{html.escape(str(r['player']))}<span class='meta'>{html.escape(meta)}</span></div><div class='num'></div></div>")
+    st.markdown("<div class='v200-list'>"+"".join(rows)+"</div>",unsafe_allow_html=True)
+
+
+def v200_manager_profile(entry: int, managers: list[dict], ownership: dict | None):
+    manager=next((m for m in managers if v200_num(m.get("entry"))==int(entry)),None)
+    if not manager:
+        return
+    name=canonical_hof_name(str(manager.get("player_name") or "Ukjent manager")); team=str(manager.get("entry_name") or "")
+    month,month_value=v200_manager_month_rank(name)
+    st.markdown(f"<div class='v200-profile'><div class='name'>{html.escape(name)}</div><div class='team'>{html.escape(team)}</div></div>",unsafe_allow_html=True)
+    v200_cards([
+        {"label":"Plass","value":f"{v200_num(manager.get('rank'))}." if manager.get('rank') else "–","caption":f"{v200_num(manager.get('total'))} poeng"},
+        {"label":"Denne GW","value":v200_num(manager.get('event_total')),"caption":"poeng"},
+        {"label":month,"value":month_value,"caption":"månedskampen"},
+    ])
+    if ownership:
+        picks=ownership.get("picks",pd.DataFrame()).copy(); events=ownership.get("manager_events",pd.DataFrame()).copy()
+        mine=picks[picks["entry"]==int(entry)].copy() if not picks.empty else pd.DataFrame()
+        event=events[events["entry"]==int(entry)].iloc[0] if not events.empty and not events[events["entry"]==int(entry)].empty else None
+        if not mine.empty:
+            cap=mine[mine["is_captain"]]
+            vice=mine[mine["is_vice_captain"]]
+            cap_text=cap.iloc[0]["player"] if not cap.empty else "–"; vice_text=vice.iloc[0]["player"] if not vice.empty else "–"
+            chip=str(event.get("active_chip") or "Ingen") if event is not None else "Ingen"
+            v200_cards([
+                {"label":"Kaptein","value":cap_text,"caption":"TC" if not cap.empty and v200_num(cap.iloc[0]["multiplier"])>=3 else ""},
+                {"label":"Vice","value":vice_text,"caption":""},
+                {"label":"Chip","value":chip if chip else "Ingen","caption":"denne runden"},
             ])
+            starters=mine[~mine["on_bench"]].sort_values(["position_id","squad_position"])
+            bench=mine[mine["on_bench"]].sort_values("squad_position")
+            st.markdown("#### Troppen")
+            for label,group in [("Starter",starters),("Benk",bench)]:
+                if group.empty: continue
+                text=[]
+                for r in group.itertuples():
+                    tag=" ©" if r.is_captain else ""
+                    if r.is_captain and int(r.multiplier)>=3: tag=" ©©©"
+                    text.append(f"{r.player}{tag}")
+                st.markdown(f"**{label}:** " + " · ".join(text))
+            v200_fear_block(int(entry),ownership,managers)
+    merits=v200_manager_history_merits(name)
+    if merits:
+        parts=[]
+        if v200_num(merits.get("overall_count")): parts.append(f"{v200_num(merits.get('overall_count'))} ligagull")
+        if v200_num(merits.get("cup_count")): parts.append(f"{v200_num(merits.get('cup_count'))} cupgull")
+        if v200_num(merits.get("monthly_titles")): parts.append(f"{v200_num(merits.get('monthly_titles'))} månedsseire")
+        if parts:
+            st.markdown("#### I historieboka")
+            st.write(" · ".join(parts))
+    try:
+        hist=get_entry_history(int(entry)); current=pd.DataFrame(hist.get("current",[]) or [])
+        if not current.empty:
+            current=current.tail(5).copy()
+            st.markdown("#### Siste fem runder")
+            st.caption(" · ".join(f"GW{v200_num(r.event)}: {v200_num(r.points)} p" for r in current.itertuples()))
+    except Exception:
+        pass
 
-            st.subheader("Pokalskap")
-            render_hof_table_component(hof_df[hof_df["overall_count"].gt(0) | hof_df["overall_runner_up_count"].gt(0) | hof_df["overall_third_count"].gt(0) | hof_df["cup_count"].gt(0) | hof_df["cup_runner_up_count"].gt(0)].reset_index(drop=True))
 
-            st.markdown('<div class="lro-section-title"><span>Detaljer</span>Detaljert meritt-tabell</div>', unsafe_allow_html=True)
-            detailed_hof = hof_df[[
-                "rank_display",
-                "display_name",
-                "hof_score",
-                "overall_count",
-                "overall_runner_up_count",
-                "overall_third_count",
-                "cup_count",
-                "cup_runner_up_count",
-                "monthly_titles",
-                "monthly_silver",
-                "monthly_bronze",
-                "monthly_podiums",
-                "random_count",
-                "merits",
-            ]].rename(columns={
-                "rank_display": "Rangering",
-                "display_name": "Manager",
-                "hof_score": "Merittpoeng",
-                "overall_count": "Sammenlagt-seiere",
-                "overall_runner_up_count": "Sammenlagt-sølv",
-                "overall_third_count": "Sammenlagt-bronse",
-                "cup_count": "Cupgull",
-                "cup_runner_up_count": "Cupsølv",
-                "monthly_titles": "Månedsseiere",
-                "monthly_silver": "Månedssølv",
-                "monthly_bronze": "Månedsbronse",
-                "monthly_podiums": "Månedspodier",
-                "random_count": "Random",
-                "merits": "Meritter",
-            })
-            st.dataframe(detailed_hof, use_container_width=True, hide_index=True)
+def v200_head_to_head(ownership: dict):
+    picks=ownership.get("picks",pd.DataFrame()).copy() if ownership else pd.DataFrame()
+    events=ownership.get("manager_events",pd.DataFrame()).copy() if ownership else pd.DataFrame()
+    if picks.empty:
+        st.caption("Lagene kan sammenlignes når picks er tilgjengelige.")
+        return
+    managers=picks[["entry","manager"]].drop_duplicates().sort_values("manager")
+    ids=managers["entry"].astype(int).tolist(); labels=dict(zip(ids,managers["manager"].astype(str)))
+    if len(ids)<2: return
+    c1,c2=st.columns(2)
+    with c1: a=st.selectbox("Manager A",ids,format_func=lambda e:labels.get(int(e),str(e)),key="v200_h2h_a")
+    with c2:
+        default=1 if len(ids)>1 else 0
+        b=st.selectbox("Manager B",ids,index=default,format_func=lambda e:labels.get(int(e),str(e)),key="v200_h2h_b")
+    if int(a)==int(b):
+        st.caption("Velg to forskjellige managere."); return
+    pa=picks[picks["entry"]==int(a)].copy(); pb=picks[picks["entry"]==int(b)].copy()
+    sa=set(pa["element"].astype(int)); sb=set(pb["element"].astype(int))
+    common=len(sa&sb); different=len(sa^sb)
+    v200_cards([{"label":"Like spillere","value":common,"caption":"i begge tropper"},{"label":"Forskjeller","value":different,"caption":"det som kan avgjøre"}])
+    def side(df,other,name):
+        unique=df[~df["element"].isin(other)].copy().sort_values(["is_captain","event_points"],ascending=[False,False])
+        st.markdown(f"#### {name} har")
+        if unique.empty: st.caption("Ingen unike spillere."); return
+        rows=[]
+        for _,r in unique.iterrows():
+            tag=" · C" if bool(r.get("is_captain")) else ""
+            if bool(r.get("is_captain")) and v200_num(r.get("multiplier"))>=3: tag=" · TC"
+            rows.append(f"<div class='v200-row'><div class='rank'>•</div><div class='who'>{html.escape(str(r.get('player','')))}<span class='meta'>{html.escape(str(r.get('club','')))}{tag}</span></div><div class='num'>{v200_num(r.get('event_points'))} p</div></div>")
+        st.markdown("<div class='v200-list'>"+"".join(rows)+"</div>",unsafe_allow_html=True)
+    ca,cb=st.columns(2,gap="large")
+    with ca: side(pa,sb,labels[int(a)])
+    with cb: side(pb,sa,labels[int(b)])
 
-            st.markdown('<div class="lro-section-title"><span>Arkiv</span>Sesongdetaljer per manager</div>', unsafe_allow_html=True)
-            detail_columns = [
-                "display_name",
-                "overall_seasons",
-                "overall_runner_up_seasons",
-                "overall_third_seasons",
-                "cup_seasons",
-                "cup_runner_up_seasons",
-            ]
-            display_table(hof_df, detail_columns, HOF_LABELS, column_config={"display_name": st.column_config.TextColumn("Manager", width="large")})
 
-    elif hof_section == "Månedskonger":
-        st.subheader("Månedskonger")
-        st.caption("2026/27 oppdateres automatisk fra FPLs månedsfaser. Ingen ny app-versjon per måned.")
-        monthly_df = build_monthly_podium_df()
+def v200_league(managers: list[dict]):
+    v200_section("Ligaen", "63 MANAGERE", "Tabellen, folkene og duellene.")
+    view=nav_choice("",["Tabell","Manager","Duell"],"v200_league_view",default="Tabell")
+    if view=="Tabell":
+        v200_clean_league_table(managers)
+    else:
+        event_id=current_fpl_event_id(); ownership=None
+        if event_id:
+            with st.spinner("Leser lag …"):
+                ownership=v200_get_ownership(managers,event_id)
+        if view=="Manager":
+            opts=sorted([(v200_num(m.get("entry")),canonical_hof_name(str(m.get("player_name") or ""))) for m in managers if m.get("entry")], key=lambda x:normalize_text(x[1]))
+            ids=[x[0] for x in opts]; labels=dict(opts)
+            if ids:
+                selected=st.selectbox("Finn manager",ids,format_func=lambda e:labels.get(int(e),str(e)),key="v200_manager_select")
+                v200_manager_profile(int(selected),managers,ownership)
+        elif view=="Duell":
+            if ownership: v200_head_to_head(ownership)
 
-        if monthly_df.empty:
-            st.warning("Fant ingen månedspodier.")
-        else:
-            st.markdown("**Flest månedsseiere og dokumenterte pallplasser**")
-            monthly_medals = build_monthly_medal_table("Alle")
-            medal_columns = ["monthly_rank", "manager", "month_points", "gold", "silver", "bronze", "podiums"]
-            display_table(monthly_medals, medal_columns, MONTHLY_MEDAL_LABELS)
 
-            st.subheader("Måned for måned - total oversikt")
-            month_specialists = build_month_specialist_table()
-            if month_specialists.empty:
-                st.warning("Fant ingen månedskonge-data.")
-            else:
-                render_static_table_component(
-                    month_specialists,
-                    ["month", "king", "gold", "silver", "bronze", "podiums"],
-                    MONTH_SPECIALIST_LABELS,
-                    wide_columns={"king"},
-                    height=430,
-                )
+def v200_history():
+    v200_section("Historikk", "HALL OF FAME", "Pokaler, månedstitler og sesongene som bygde ligaen.")
+    view=nav_choice("",["Hall of Fame","Måneder","Sesonger","Arkiv"],"v200_history_view",default="Hall of Fame")
+    hof=build_hof_people()
+    if view=="Hall of Fame":
+        if hof.empty:
+            st.caption("Ingen historikk funnet."); return
+        hof=hof.sort_values(["hof_score","display_name"],ascending=[False,True]).reset_index(drop=True)
+        top=hof.iloc[0]
+        overall=hof.sort_values(["overall_count","hof_score"],ascending=[False,False]).iloc[0]
+        monthly=hof.sort_values(["monthly_titles","hof_score"],ascending=[False,False]).iloc[0]
+        v200_cards([
+            {"label":"Mest merittert","value":top["display_name"],"caption":f"{v200_num(top['hof_score'])} merittpoeng"},
+            {"label":"Flest ligagull","value":overall["display_name"],"caption":f"{v200_num(overall['overall_count'])} gull"},
+            {"label":"Flest månedsseire","value":monthly["display_name"],"caption":f"{v200_num(monthly['monthly_titles'])} seire"},
+        ])
+        viewdf=hof.head(20).copy(); viewdf.insert(0,"#",range(1,len(viewdf)+1))
+        display_table(viewdf,["#","display_name","overall_count","cup_count","monthly_titles","hof_score"],{"#":"#","display_name":"Manager","overall_count":"Ligagull","cup_count":"Cupgull","monthly_titles":"Måneder","hof_score":"Poeng"})
+        with st.expander("Se full Hall of Fame"):
+            display_table(hof,["display_name","overall_count","overall_runner_up_count","overall_third_count","cup_count","monthly_titles","monthly_podiums","hof_score"],HOF_LABELS)
+    elif view=="Måneder":
+        monthly=build_monthly_podium_df()
+        if monthly.empty: st.caption("Ingen månedshistorikk."); return
+        medals=build_monthly_medal_table("Alle")
+        display_table(medals.head(25),["monthly_rank","manager","gold","silver","bronze","podiums"],MONTHLY_MEDAL_LABELS)
+        with st.expander("Måned for måned"):
+            cal=build_monthly_calendar_table("Alle")
+            display_table(cal,["season","month","winner","second_place","third_place"],MONTHLY_CALENDAR_LABELS)
+    elif view=="Sesonger":
+        st.markdown("### Sammenlagt")
+        display_table(pd.DataFrame(HOF_OVERALL),["season","winner","runner_up","third_place"],OVERALL_LABELS)
+        st.markdown("### Cup")
+        display_table(pd.DataFrame(HOF_CUP),["season","winner","runner_up"],CUP_LABELS)
+    elif view=="Arkiv":
+        managers=st.session_state.get("managers",[])
+        archive=persist_season_archive(managers)
+        if archive and archive.exists():
+            st.download_button("Last ned 2026/27-arkivet",archive.read_bytes(),file_name=archive.name,mime="application/json")
+            st.caption("Streamlit Cloud har ikke varig lokal disk. Arkivet kan rekonstrueres mens FPL-dataene finnes og lagres som JSON for permanent historikk.")
+        st.markdown("#### Datakvalitet")
+        st.caption("Navnevarianter samles på én manageridentitet. Nye månedspaller hentes fra FPL-faser når de er ferdige.")
 
-            st.subheader("Pallplasser per sesong og måned")
-            calendar_df = build_monthly_calendar_table("Alle")
-            if calendar_df.empty:
-                st.caption("Fant ingen måned-for-måned-data.")
-            else:
-                render_static_table_component(
-                    calendar_df,
-                    ["season", "month", "winner", "second_place", "third_place"],
-                    MONTHLY_CALENDAR_LABELS,
-                    wide_columns={"winner", "second_place", "third_place"},
-                    height=620,
-                )
 
-            st.subheader("Månedsvinnere gjennom tidene")
-            winners_history = build_month_winner_history_table()
-            if winners_history.empty:
-                st.caption("Fant ingen månedsvinnere.")
-            else:
-                render_static_table_component(
-                    winners_history,
-                    ["month", "winners_history"],
-                    MONTH_WINNER_HISTORY_LABELS,
-                    wide_columns={"winners_history"},
-                    height=520,
-                )
+# Lett arkivering ved besøk. Feil her skal aldri velte appen.
+try:
+    if st.session_state.get("managers"):
+        persist_season_archive(st.session_state.get("managers",[]))
+except Exception:
+    pass
 
-    elif hof_section == "Resultatarkiv":
-        archive_path = persist_season_archive(st.session_state.get("managers", []))
-        if archive_path and archive_path.exists():
-            st.download_button("Last ned løpende 2026/27-arkiv", archive_path.read_bytes(), file_name=archive_path.name, mime="application/json")
-            st.caption("Arkivet oppdateres automatisk med live-tabell, månedspall og rundeminner som er tilgjengelige i inneværende sesong.")
-        st.subheader("Sammenlagtvinnere")
-        overall_df = pd.DataFrame(HOF_OVERALL)
-        display_table(overall_df, ["season", "winner", "runner_up", "third_place"], OVERALL_LABELS)
+MAIN_PAGES=["Forside","Sesong","Ligaen","Historikk"]
+main_page=nav_choice("",MAIN_PAGES,"main_page_v200",default="Forside")
+managers=st.session_state.get("managers",[])
 
-        st.subheader("Cupvinnere")
-        cup_df = pd.DataFrame(HOF_CUP)
-        display_table(cup_df, ["season", "winner", "runner_up"], CUP_LABELS)
-
-        st.subheader("Random plassering")
-        random_df = pd.DataFrame(HOF_RANDOM)
-        display_table(random_df, ["season", "winner", "placement"], RANDOM_LABELS)
-
-        with st.expander("Hvordan regnes merittpoeng?"):
-            weights = pd.DataFrame([
-                {"Meritt": "Sammenlagt-seier", "Poeng": 60},
-                {"Meritt": "Sammenlagt-sølv", "Poeng": 30},
-                {"Meritt": "Sammenlagt-bronse", "Poeng": 16},
-                {"Meritt": "Cupgull", "Poeng": 20},
-                {"Meritt": "Cupsølv", "Poeng": 8},
-                {"Meritt": "Månedsseier", "Poeng": 6},
-                {"Meritt": "Månedssølv", "Poeng": 2},
-                {"Meritt": "Månedsbronse", "Poeng": 1},
-                {"Meritt": "Random plassering", "Poeng": 4},
-            ])
-            st.dataframe(weights, use_container_width=True, hide_index=True)
+if not managers:
+    st.warning("FPL svarte ikke med ligadata akkurat nå. Trykk «Oppdater fra FPL nå» i sidefeltet og prøv igjen.")
+elif main_page=="Forside":
+    v200_home(managers)
+elif main_page=="Sesong":
+    v200_season(managers)
+elif main_page=="Ligaen":
+    v200_league(managers)
+elif main_page=="Historikk":
+    v200_history()
