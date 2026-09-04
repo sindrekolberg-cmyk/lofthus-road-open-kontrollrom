@@ -26,6 +26,13 @@ ALUMNI_SEASON_HISTORY = [
     {"manager": "Øyvind Nordmo Sivertsen", "season": "2025/26", "total_points": 2244, "overall_rank": 496413, "source": "FPL Previous Seasons"},
 ]
 
+# Source-backed correction supplied by the league administrator. 2024/25 was
+# the one historical league season where the bronze medalist was previously
+# missing from the local archive. Never overwrite an explicit non-empty value.
+OVERALL_RESULT_CORRECTIONS = {
+    "2024/25": {"third_place": "Rasmus Grytvik-Skoglund", "source": "LRO administrator, 4 September 2026"},
+}
+
 CURRENT_SEASON_FALLBACK_PODIUMS = [
     {"season": "2026/27", "month": "August", "place": 1, "manager": "Vegard Røstby", "status": "Bekreftet", "source": "LRO"},
     {"season": "2026/27", "month": "August", "place": 2, "manager": "Edward Stenlund", "status": "Bekreftet", "source": "LRO"},
@@ -147,8 +154,26 @@ class HistoryStore:
 
     def overall_results(self) -> pd.DataFrame:
         df = self._read("overall_results.csv", ["season", "winner", "runner_up", "third_place", "note", "status", "source"])
-        if not df.empty:
-            df = df[df["winner"] != ""].copy()
+        if df.empty:
+            return df
+        df = df[df["winner"] != ""].copy()
+        # Apply only missing source-backed fields. Explicit archive values always
+        # win, so a future CSV correction is never silently overwritten here.
+        for season, correction in OVERALL_RESULT_CORRECTIONS.items():
+            mask = df["season"].eq(season)
+            if not mask.any():
+                continue
+            for field, value in correction.items():
+                if field not in df.columns or field == "source":
+                    continue
+                empty = mask & df[field].map(clean_cell).eq("")
+                if empty.any():
+                    df.loc[empty, field] = value
+                    if "status" in df.columns:
+                        df.loc[empty, "status"] = df.loc[empty, "status"].replace("", "Bekreftet")
+                    if "source" in df.columns and correction.get("source"):
+                        src_empty = empty & df["source"].map(clean_cell).eq("")
+                        df.loc[src_empty, "source"] = str(correction["source"])
         return df
 
     def cup_results(self) -> pd.DataFrame:

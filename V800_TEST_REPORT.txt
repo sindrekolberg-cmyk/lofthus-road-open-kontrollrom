@@ -1,0 +1,39 @@
+Lofthus Road Open V800 test report
+===================================
+
+PASS: Python compileall — app.py, alle lro_*.py, lro_pages/*.py, tests og archive script
+PASS: 9/9 V800 core unit/integration tests
+PASS: LiveState captain multiplier test
+PASS: Triple Captain multiplier test
+PASS: Transfer hits deducted from live GW score
+PASS: Live total and live league rank test
+PASS: Competition/min-rank tie rule test
+PASS: Same live GW/total reaches Form and Rivalradar integration path
+PASS: Unplayed 0-point player is not generated as failure story
+PASS: Live movement wording remains provisional
+PASS: Newsroom persistence keeps a stronger existing story over weaker churn
+PASS: Manager/deep-link route parsing and URL generation
+PASS: 2024/25 missing third place is filled as Rasmus Grytvik-Skoglund
+PASS: Historical correction does not overwrite an explicit archive value
+PASS: app.py reduced to thin router (108 lines in build)
+PASS: Render blueprint retained
+PASS: Existing GitHub archive workflow retained
+
+NOT RUN: Real Streamlit process/browser smoke test
+Reason: Streamlit is not installed in this build container, and package installation failed because external package-network access is disabled.
+
+NOT RUN: Live FPL HTTP smoke test
+Reason: external network access is unavailable in the build container.
+
+NOT RUN: Render Blueprint API validation
+Reason: requires Render/network access.
+
+NOT RUN: Visual browser tests at 1440 / 1024 / 768 / 390 / 320 px
+Reason: no browser/Streamlit runtime available in the build container.
+
+Commands actually run:
+- python -m compileall -q .
+- PYTHONPATH=. python -m unittest discover -s tests -v
+
+Unit result:
+Ran 9 tests — OK

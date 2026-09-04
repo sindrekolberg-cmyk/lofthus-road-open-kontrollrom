@@ -11,7 +11,7 @@ import requests
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open V401"}
+HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open V800"}
 POSITION_LABELS = {1: "Keeper", 2: "Forsvar", 3: "Midtbane", 4: "Angrep"}
 
 
@@ -21,6 +21,7 @@ class FPLError(RuntimeError):
 
 @dataclass
 class CacheItem:
+    fetched_at: float
     expires_at: float
     value: Any
 
@@ -40,6 +41,10 @@ class FPLClient:
         self.session.headers.update(HEADERS)
         self._cache: dict[str, CacheItem] = {}
         self._lock = threading.RLock()
+        self.request_count = 0
+        self.cache_hits = 0
+        self.stale_fallbacks = 0
+        self.last_errors: list[str] = []
 
     def clear_cache(self) -> None:
         with self._lock:
@@ -50,16 +55,24 @@ class FPLClient:
         with self._lock:
             item = self._cache.get(key)
             if item and item.expires_at > now:
+                self.cache_hits += 1
                 return copy.deepcopy(item.value)
-            if item:
-                self._cache.pop(key, None)
+        return None
+
+    def _get_stale(self, key: str, max_stale: int = 1800) -> Any | None:
+        now = time.time()
+        with self._lock:
+            item = self._cache.get(key)
+            if item and now - item.expires_at <= max(0, int(max_stale)):
+                return copy.deepcopy(item.value)
         return None
 
     def _set_cached(self, key: str, value: Any, ttl: int) -> None:
+        now = time.time()
         with self._lock:
-            self._cache[key] = CacheItem(time.time() + max(1, int(ttl)), copy.deepcopy(value))
+            self._cache[key] = CacheItem(now, now + max(1, int(ttl)), copy.deepcopy(value))
 
-    def get_json(self, path: str, ttl: int = 300) -> Any:
+    def get_json(self, path: str, ttl: int = 300, stale_if_error: int = 1800) -> Any:
         path = path if path.startswith("/") else f"/{path}"
         key = f"GET:{path}"
         cached = self._get_cached(key)
@@ -67,33 +80,57 @@ class FPLClient:
             return cached
         url = f"{self.base_url}{path}"
         try:
+            self.request_count += 1
             response = self.session.get(url, timeout=self.timeout)
             response.raise_for_status()
             value = response.json()
         except Exception as exc:
-            raise FPLError(f"FPL-kall feilet: {path}: {exc}") from exc
+            message = f"FPL-kall feilet: {path}: {exc}"
+            with self._lock:
+                self.last_errors = (self.last_errors + [message])[-20:]
+            stale = self._get_stale(key, stale_if_error)
+            if stale is not None:
+                self.stale_fallbacks += 1
+                return stale
+            raise FPLError(message) from exc
         self._set_cached(key, value, ttl)
         return copy.deepcopy(value)
 
+    def diagnostics(self) -> dict[str, Any]:
+        with self._lock:
+            now = time.time()
+            ages = [max(0.0, now - item.fetched_at) for item in self._cache.values()]
+            return {
+                "request_count": int(self.request_count),
+                "cache_hits": int(self.cache_hits),
+                "stale_fallbacks": int(self.stale_fallbacks),
+                "cache_items": len(self._cache),
+                "oldest_cache_age_seconds": round(max(ages), 1) if ages else 0.0,
+                "last_errors": list(self.last_errors[-5:]),
+            }
+
     def bootstrap(self) -> dict:
-        data = self.get_json("/bootstrap-static/", ttl=600)
+        # Event flags matter during matchday, so bootstrap cannot sit stale for ten minutes.
+        data = self.get_json("/bootstrap-static/", ttl=90, stale_if_error=1800)
         return data if isinstance(data, dict) else {}
 
     def fixtures(self, event_id: int | None = None) -> list[dict]:
         path = "/fixtures/" if event_id is None else f"/fixtures/?event={int(event_id)}"
-        data = self.get_json(path, ttl=25 if event_id else 300)
+        data = self.get_json(path, ttl=25 if event_id else 300, stale_if_error=900)
         return data if isinstance(data, list) else []
 
     def event_live(self, event_id: int) -> dict:
-        data = self.get_json(f"/event/{int(event_id)}/live/", ttl=25)
+        data = self.get_json(f"/event/{int(event_id)}/live/", ttl=22, stale_if_error=300)
         return data if isinstance(data, dict) else {}
 
     def entry_picks(self, entry_id: int, event_id: int) -> dict:
-        data = self.get_json(f"/entry/{int(entry_id)}/event/{int(event_id)}/picks/", ttl=240)
+        # Picks are effectively frozen after deadline. A long TTL prevents navigation
+        # between local pages from creating a 63-request storm.
+        data = self.get_json(f"/entry/{int(entry_id)}/event/{int(event_id)}/picks/", ttl=900, stale_if_error=7200)
         return data if isinstance(data, dict) else {}
 
     def entry_history(self, entry_id: int) -> dict:
-        data = self.get_json(f"/entry/{int(entry_id)}/history/", ttl=1800)
+        data = self.get_json(f"/entry/{int(entry_id)}/history/", ttl=900, stale_if_error=21600)
         return data if isinstance(data, dict) else {}
 
     def league_phase_standings(self, league_id: int, phase_id: int) -> list[dict]:
@@ -103,7 +140,7 @@ class FPLClient:
             payload = self.get_json(
                 f"/leagues-classic/{int(league_id)}/standings/"
                 f"?page_standings={page}&page_new_entries=1&phase={int(phase_id)}",
-                ttl=600,
+                ttl=180,
             )
             standings = (payload or {}).get("standings", {}) or {}
             rows.extend(standings.get("results", []) or [])
@@ -142,7 +179,7 @@ class FPLClient:
                 payload = self.get_json(
                     f"/leagues-classic/{int(league_id)}/standings/"
                     f"?page_standings={page}&page_new_entries=1",
-                    ttl=240,
+                    ttl=120,
                 )
             except FPLError as exc:
                 debug["errors"].append(str(exc))
@@ -164,7 +201,7 @@ class FPLClient:
                 payload = self.get_json(
                     f"/leagues-classic/{int(league_id)}/standings/"
                     f"?page_standings=1&page_new_entries={page}",
-                    ttl=240,
+                    ttl=120,
                 )
             except FPLError as exc:
                 debug["errors"].append(str(exc))
