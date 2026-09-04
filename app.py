@@ -61,7 +61,7 @@ from lro_archive import SnapshotStore
 from lro_odds import build_live_market, build_preseason_odds, compare_group_odds, decimal_odds_from_pct, simulate_group
 import lro_ui as ui
 
-APP_VERSION = "lofthus-road-open-v703-connected-league"
+APP_VERSION = "lofthus-road-open-v704-manager-menu"
 DATA_DIR = Path(__file__).resolve().parent / "data"
 PRESEASON_ODDS_FILE = DATA_DIR / "preseason_odds_2026_27.csv"
 
@@ -200,7 +200,7 @@ def manager_options(managers: list[dict]) -> list[tuple[int, str]]:
 
 
 def manager_href(entry: int) -> str:
-    return f"?page=Ligaen&manager={int(entry)}"
+    return f"?page=Ligaen&league_view=Manager&manager={int(entry)}"
 
 
 def owner_links(names: list[str], managers: list[dict], limit: int = 3) -> list[dict]:
@@ -953,22 +953,21 @@ def render_home_scoreline_fragment(managers: list[dict], bootstrap: dict) -> Non
 
 @st.fragment(run_every="30s")
 def render_home_tables_fragment(managers: list[dict], bootstrap: dict) -> None:
-    """The newspaper's two main tables, with the new month turning live immediately."""
-    ownership = _fresh_home_ownership(managers, bootstrap)
-    left, right = st.columns(2, gap="large")
-    with left:
-        ui.front_section("Topp 5", "Sammenlagt")
-        top = sorted(managers, key=lambda m: (nint(m.get("rank"), 10**9), -nint(m.get("total"))))[:5]
-        ui.rows([{
-            "rank": nint(m.get("rank")),
-            "rank_class": "gold" if i == 0 else "silver" if i == 1 else "bronze" if i == 2 else "",
-            "who": manager_name(m),
-            "meta": str(m.get("entry_name") or ""),
-            "num": f"{nint(m.get('total'))} poeng",
-            "href": manager_href(nint(m.get("entry"))) if nint(m.get("entry")) else "",
-        } for i, m in enumerate(top)])
-    with right:
-        render_month(managers, bootstrap, top=5, front=True, ownership=ownership, prefer_live=True)
+    """Keep the front page lean: one league table, not another two-column dashboard.
+
+    The current-month leader still lives in the headline/status layer above, so the
+    September race remains visible without burning an entire front-page column.
+    """
+    ui.front_section("Topp 5", "Sammenlagt")
+    top = sorted(managers, key=lambda m: (nint(m.get("rank"), 10**9), -nint(m.get("total"))))[:5]
+    ui.rows([{
+        "rank": nint(m.get("rank")),
+        "rank_class": "gold" if i == 0 else "silver" if i == 1 else "bronze" if i == 2 else "",
+        "who": manager_name(m),
+        "meta": str(m.get("entry_name") or ""),
+        "num": f"{nint(m.get('total'))} poeng",
+        "href": manager_href(nint(m.get("entry"))) if nint(m.get("entry")) else "",
+    } for i, m in enumerate(top)])
 
 
 def render_month(
@@ -997,7 +996,7 @@ def render_month(
             "who": r.get("manager"),
             "meta": r.get("team"),
             "num": f"{nint(r.get('points'))} poeng",
-            "href": manager_href(nint(r.get("entry"))) if nint(r.get("entry")) else "",
+            "href": f"?page=Ligaen&league_view=Manager&manager={nint(r.get('entry'))}" if nint(r.get('entry')) else "",
         }
         for i, r in enumerate(df.head(top).to_dict("records"))
     ])
@@ -1341,21 +1340,18 @@ def render_season(managers: list[dict], bootstrap: dict, embedded: bool = False)
         ui.captain_board(cap_rows)
     st.caption("Månedstabell og rundebevegelser ligger på forsiden og i Ligaen. Spilleroversikt holder seg til spillerne.")
 
-def current_round_pick_map(managers: list[dict], bootstrap: dict) -> dict[int, dict]:
-    """Captain + chip summary for every manager in the current GW.
+def current_league_table_meta(managers: list[dict], bootstrap: dict) -> dict[int, dict]:
+    """Fetch captain + chip once for the league table and cache the result.
 
-    One league-wide picks sweep powers both columns, so the table does not make
-    a separate request for captaincy and chip use. The FPL client still caches
-    each entry payload, which makes later profile clicks cheap.
+    This deliberately shares one picks_many sweep. Previously the table only knew
+    about chips, even though the same FPL payload already contained captaincy.
     """
     event_id = current_event_id(bootstrap)
     if not event_id:
         return {}
     entries = tuple(sorted(nint(m.get("entry")) for m in managers if nint(m.get("entry"))))
-    cache_key = f"v703_pick_map_{event_id}_{','.join(map(str, entries))}"
-    stamp_key = f"{cache_key}_built_at"
-    stale = time.time() - float(st.session_state.get(stamp_key, 0.0)) > 240
-    if cache_key in st.session_state and not stale:
+    cache_key = f"v704_league_meta_{event_id}_{','.join(map(str, entries))}"
+    if cache_key in st.session_state:
         return st.session_state[cache_key]
 
     payloads, _ = client.picks_many(entries, int(event_id), max_workers=10)
@@ -1364,77 +1360,138 @@ def current_round_pick_map(managers: list[dict], bootstrap: dict) -> dict[int, d
     for entry, payload in payloads.items():
         picks = payload.get("picks", []) or []
         active_chip = chip_label(payload.get("active_chip"))
-        captain = next((p for p in picks if p.get("is_captain")), None)
-        vice = next((p for p in picks if p.get("is_vice_captain")), None)
-
-        captain_name = "–"
-        captain_role = ""
-        if captain:
-            pid = nint(captain.get("element"))
-            captain_name = str(catalog.get(pid, {}).get("web_name") or f"Spiller {pid}")
-            captain_role = "TC" if active_chip == "Triple Captain" or nint(captain.get("multiplier")) >= 3 else "C"
-
-        vice_name = ""
-        if vice:
-            pid = nint(vice.get("element"))
-            vice_name = str(catalog.get(pid, {}).get("web_name") or f"Spiller {pid}")
-
+        captain_pick = next((p for p in picks if p.get("is_captain")), None)
+        captain = "–"
+        captain_short = ""
+        if captain_pick:
+            player = catalog.get(nint(captain_pick.get("element")), {}).get("web_name")
+            if player:
+                is_tc = active_chip == "Triple Captain" or nint(captain_pick.get("multiplier")) >= 3
+                captain_short = str(player)
+                captain = f"{player} ({'TC' if is_tc else 'C'})"
         out[int(entry)] = {
-            "captain": captain_name,
-            "captain_role": captain_role,
-            "captain_label": f"{captain_name} ({captain_role})" if captain_role else captain_name,
-            "vice": vice_name,
+            "captain": captain,
+            "captain_name": captain_short,
             "chip": active_chip,
         }
-
     st.session_state[cache_key] = out
-    st.session_state[stamp_key] = time.time()
     return out
 
 
-def render_league_table(managers: list[dict], bootstrap: dict) -> None:
-    """Render the live league table with captaincy visible in every row.
+def _league_open_manager(entry: int) -> None:
+    entry = int(entry)
+    st.session_state["v405_league_view"] = "Manager"
+    st.session_state["v400_manager_select"] = entry
+    try:
+        st.query_params["page"] = "Ligaen"
+        st.query_params["league_view"] = "Manager"
+        st.query_params["manager"] = str(entry)
+    except Exception:
+        pass
 
-    Every row opens the manager profile. The displayed # remains the real league
-    position even when the user sorts another column.
+
+def _league_compare_manager(entry: int) -> None:
+    entry = int(entry)
+    selected = [nint(x) for x in (st.session_state.get("v400_compare_entries") or []) if nint(x)]
+    if entry not in selected:
+        selected.insert(0, entry)
+    st.session_state["v400_compare_entries"] = selected[:8]
+    st.session_state["v405_league_view"] = "Sammenlign"
+    try:
+        st.query_params["page"] = "Ligaen"
+        st.query_params["league_view"] = "Sammenlign"
+        st.query_params.pop("manager", None)
+    except Exception:
+        pass
+
+
+def render_league_table(managers: list[dict], bootstrap: dict) -> None:
+    """Native Streamlit league table with a real click menu on every manager.
+
+    The old iframe table looked clickable, but its cross-frame URL navigation was
+    brittle. A native popover makes the manager name itself the menu trigger and
+    guarantees that "Se laget" actually reaches the manager profile.
     """
-    pick_by_entry: dict[int, dict] = {}
     try:
         with st.spinner("Henter kapteiner …"):
-            pick_by_entry = current_round_pick_map(managers, bootstrap)
+            meta_by_entry = current_league_table_meta(managers, bootstrap)
     except Exception:
-        pick_by_entry = {}
+        meta_by_entry = {}
 
     event_id = current_event_id(bootstrap) or 0
     if event_id and not current_event_finished(bootstrap):
-        st.caption(f"GW{event_id} pågår · poeng og tabellendringer er live. Klikk på en manager for å åpne laget.")
-    else:
-        st.caption("Klikk på en manager for å åpne laget.")
+        st.caption(f"GW{event_id} pågår · poeng og tabellendringer er live.")
 
-    data = []
-    for m in managers:
+    st.markdown(
+        """
+        <style>
+        div[data-testid="stPopover"] > div > button {
+            background: transparent !important;
+            border: 0 !important;
+            box-shadow: none !important;
+            padding: 0 !important;
+            min-height: 1.7rem !important;
+            color: #005aa6 !important;
+            font-weight: 900 !important;
+            justify-content: flex-start !important;
+            text-decoration: underline !important;
+            text-underline-offset: 3px !important;
+        }
+        div[data-testid="stPopover"] > div > button:hover {
+            color: #003f76 !important;
+            background: transparent !important;
+        }
+        .v704-lh {color:#687386;font-size:.69rem;text-transform:uppercase;letter-spacing:.075em;font-weight:900;padding:.25rem 0 .45rem}
+        .v704-cell {font-size:.91rem;font-weight:750;padding:.18rem 0;line-height:1.25}
+        .v704-team {font-size:.91rem;font-weight:800;line-height:1.2}
+        .v704-sub {color:#687386;font-size:.76rem;font-weight:700;line-height:1.2;margin-top:.12rem}
+        .v704-num {font-size:.91rem;font-weight:900;text-align:right;padding:.18rem 0;white-space:nowrap}
+        .v704-rank {font-size:.91rem;font-weight:900;color:#687386;padding:.18rem 0}
+        .v704-up {color:#167a52}.v704-down {color:#b63a34}
+        .v704-divider {border-top:1px solid #d6d9de;margin:.42rem 0 .34rem}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # # / manager / team / captain / GW / points / movement
+    widths = [0.55, 2.35, 2.65, 1.75, 0.75, 0.9, 0.7]
+    headers = ["#", "Manager", "Lag", "Kaptein", "GW", "Poeng", "+/-"]
+    hcols = st.columns(widths, gap="small")
+    for i, (col, label) in enumerate(zip(hcols, headers)):
+        align = "text-align:right" if i >= 4 else ""
+        col.markdown(f"<div class='v704-lh' style='{align}'>{label}</div>", unsafe_allow_html=True)
+    st.markdown("<div class='v704-divider'></div>", unsafe_allow_html=True)
+
+    ordered = sorted(managers, key=lambda m: (nint(m.get("rank"), 10**9), -nint(m.get("total")), normalize_text(manager_name(m))))
+    for m in ordered:
         rank = nint(m.get("rank"), 10**9)
         last = nint(m.get("last_rank"), rank)
         move = last - rank if rank < 10**9 else 0
         entry = nint(m.get("entry"))
         team_name = str(m.get("entry_name") or "").strip()
-        picks = pick_by_entry.get(entry, {}) or {}
-        data.append({
-            "entry": entry,
-            "rank": rank if rank < 10**9 else None,
-            "manager": manager_name(m),
-            "team": team_name,
-            "captain": str(picks.get("captain_label") or "–"),
-            "vice": str(picks.get("vice") or ""),
-            "chip": str(picks.get("chip") or ""),
-            "gw": nint(m.get("event_total")),
-            "points": nint(m.get("total")),
-            "move": int(move),
-        })
+        meta = meta_by_entry.get(entry, {})
+        captain = str(meta.get("captain") or "–")
+        chip = str(meta.get("chip") or "").strip()
 
-    data.sort(key=lambda r: ((r["rank"] if r["rank"] is not None else 10**9), -r["points"]))
-    ui.sortable_league_table(data)
-
+        cols = st.columns(widths, gap="small")
+        cols[0].markdown(f"<div class='v704-rank'>{rank if rank < 10**9 else '–'}</div>", unsafe_allow_html=True)
+        with cols[1]:
+            with st.popover(manager_name(m)):
+                st.markdown(f"**{manager_name(m)}**")
+                st.caption(team_name or "Uten lagnavn")
+                st.caption(f"{rank if rank < 10**9 else '–'}. plass · {nint(m.get('total'))} poeng · Kaptein: {captain}")
+                st.button("Se laget", key=f"v704_open_{entry}", use_container_width=True, on_click=_league_open_manager, args=(entry,))
+                st.button("Sammenlign", key=f"v704_compare_{entry}", use_container_width=True, on_click=_league_compare_manager, args=(entry,))
+        team_sub = f"<div class='v704-sub'>{chip}</div>" if chip else ""
+        cols[2].markdown(f"<div class='v704-team'>{ui.esc(team_name)}</div>{team_sub}", unsafe_allow_html=True)
+        cols[3].markdown(f"<div class='v704-cell'>{ui.esc(captain)}</div>", unsafe_allow_html=True)
+        cols[4].markdown(f"<div class='v704-num'>{nint(m.get('event_total'))}</div>", unsafe_allow_html=True)
+        cols[5].markdown(f"<div class='v704-num'>{nint(m.get('total'))}</div>", unsafe_allow_html=True)
+        move_text = f"↑{move}" if move > 0 else f"↓{abs(move)}" if move < 0 else "–"
+        move_cls = "v704-up" if move > 0 else "v704-down" if move < 0 else ""
+        cols[6].markdown(f"<div class='v704-num {move_cls}'>{move_text}</div>", unsafe_allow_html=True)
+        st.markdown("<div class='v704-divider'></div>", unsafe_allow_html=True)
 
 def render_form(managers: list[dict], entry: int) -> tuple[dict, dict[int, dict]]:
     with st.spinner("Henter form …"):
@@ -1570,8 +1627,8 @@ def live_odds_for_manager(managers: list[dict], histories: dict[int, dict], boot
     pct = nfloat(r.get("win_pct"))
     return f"{nfloat(r.get('winner_odds')):.2f}", f"{pct:.1f}%", str(r.get("note") or "")
 
-def render_squad(entry: int, managers: list[dict], bootstrap: dict, ownership: dict | None = None) -> tuple[dict, pd.DataFrame]:
-    ownership = ownership or selected_ownership(managers, [entry])
+def render_squad(entry: int, managers: list[dict], bootstrap: dict) -> tuple[dict, pd.DataFrame]:
+    ownership = selected_ownership(managers, [entry])
     squad = manager_squad(ownership, entry)
     if squad.empty:
         st.caption("Troppen kunne ikke lastes.")
@@ -1589,18 +1646,6 @@ def render_manager_profile(entry: int, managers: list[dict], bootstrap: dict, au
     if not m:
         return
     name = manager_name(m)
-
-    ownership = selected_ownership(managers, [entry])
-    squad = manager_squad(ownership, entry)
-    events = ownership.get("manager_events", pd.DataFrame())
-    live_gw = nint(m.get("event_total"))
-    if squad is not None and not squad.empty:
-        gross = int(pd.to_numeric(squad.get("gw_contribution", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
-        hit = 0
-        if events is not None and not events.empty:
-            hit = nint(events.iloc[0].get("event_transfers_cost"))
-        live_gw = gross - hit
-
     phase, month_df, month_live = display_month_table(managers, bootstrap)
     month_row = month_df[month_df["entry"] == int(entry)] if not month_df.empty else pd.DataFrame()
     month_rank = nint(month_row.iloc[0].get("rank")) if not month_row.empty else 0
@@ -1611,27 +1656,20 @@ def render_manager_profile(entry: int, managers: list[dict], bootstrap: dict, au
         [
             (f"{nint(m.get('rank'))}.", "Plass"),
             (nint(m.get("total")), "Poeng"),
-            (live_gw, "Denne GW · live" if not current_event_finished(bootstrap) else "Denne GW"),
+            (nint(m.get("event_total")), "Denne GW"),
             (f"{month_rank}." if month_rank else "–", phase["name"] if phase else "Måneden"),
         ],
     )
 
-    if squad is not None and not squad.empty:
-        cap = squad[squad["is_captain"]]
-        if not cap.empty:
-            crow = cap.iloc[0]
-            role = "TC" if bool(crow.get("is_triple_captain")) else "C"
-            chip = str(crow.get("active_chip") or "")
-            extra = f" · {chip}" if chip and chip != "Triple Captain" else ""
-            ui.inline_note("Kaptein", f"{crow.get('player')} ({role}){extra}")
-
+    # Magazine layout: the pitch starts under form in the main column while
+    # career/odds lives in the sidebar. No giant dead zone between form and squad.
     left, right = st.columns([2.15, 0.85], gap="large")
     with left:
         render_merits(name, auto_rows)
         ui.section("Form")
         entry_history, histories = render_form(managers, entry)
         render_chip_history(entry_history)
-        render_squad(entry, managers, bootstrap, ownership=ownership)
+        render_squad(entry, managers, bootstrap)
     with right:
         stats, season_rows = career_summary(entry_history)
         pre_win, pre_top3 = preseason_odds_for_manager(managers, histories, entry)
@@ -1646,7 +1684,6 @@ def render_manager_profile(entry: int, managers: list[dict], bootstrap: dict, au
                 pass
             st.session_state["v400_main_page"] = "Rivalradar"
             st.rerun()
-
 
 def render_compare(managers: list[dict], bootstrap: dict) -> None:
     opts = manager_options(managers)
@@ -1723,33 +1760,16 @@ def render_compare(managers: list[dict], bootstrap: dict) -> None:
 
 
 def render_league(managers: list[dict], bootstrap: dict, auto_rows: list[dict]) -> None:
-    # Manager profiles are sub-pages reached by clicking a person anywhere in the
-    # product. They are deliberately not a redundant top-level tab.
-    requested_manager = 0
-    try:
-        requested_manager = nint(st.query_params.get("manager"))
-    except Exception:
-        requested_manager = 0
-    valid_entries = {nint(m.get("entry")) for m in managers if nint(m.get("entry"))}
-    if requested_manager in valid_entries:
-        if st.button("← Tilbake til tabellen", key=f"back_from_manager_{requested_manager}"):
-            try:
-                if "manager" in st.query_params:
-                    del st.query_params["manager"]
-                if "league_view" in st.query_params:
-                    del st.query_params["league_view"]
-            except Exception:
-                pass
-            st.session_state["v405_league_view"] = "Tabell"
-            st.session_state.pop("v400_manager_select", None)
-            st.rerun()
-        render_manager_profile(requested_manager, managers, bootstrap, auto_rows)
-        return
-
-    ui.page_title("Ligaen", "Tabellen, sammenligningene og oddsen som lå der før sesongstart.")
-    view = ui.nav(["Tabell", "Sammenlign", "Odds før sesongstart"], "v405_league_view", "Tabell")
+    ui.page_title("Ligaen", "Tabellen, managerne og oddsen som lå der før sesongstart.")
+    view = ui.nav(["Tabell", "Manager", "Sammenlign", "Odds før sesongstart"], "v405_league_view", "Tabell")
     if view == "Tabell":
         render_league_table(managers, bootstrap)
+    elif view == "Manager":
+        opts = manager_options(managers); ids = [x[0] for x in opts]; labels = dict(opts)
+        if st.session_state.get("v400_manager_select") not in ids:
+            st.session_state.pop("v400_manager_select", None)
+        entry = st.selectbox("Finn manager", ids, format_func=lambda x: labels.get(int(x), str(x)), key="v400_manager_select")
+        render_manager_profile(int(entry), managers, bootstrap, auto_rows)
     elif view == "Sammenlign":
         render_compare(managers, bootstrap)
     else:
@@ -2157,7 +2177,7 @@ try:
     if st.session_state.get("_v600_consumed_deeplink") != deep_link_signature:
         if requested_page in {"Forside", "Ligaen", "Rivalradar", "Hall of Fame"}:
             st.session_state["v400_main_page"] = requested_page
-        if requested_view in {"Tabell", "Sammenlign", "Odds før sesongstart"}:
+        if requested_view in {"Tabell", "Manager", "Sammenlign", "Odds før sesongstart"}:
             st.session_state["v405_league_view"] = requested_view
         if requested_manager and str(requested_manager).isdigit():
             st.session_state["v400_manager_select"] = int(requested_manager)
@@ -2190,7 +2210,7 @@ else:
 
 # Hidden developer health data: no sidebar, no normal UI noise.
 if st.query_params.get("debug") == "1" and bootstrap:
-    with st.expander("V703 debug"):
+    with st.expander("V704 debug"):
         st.code(APP_VERSION)
         issues = health_check(managers, bootstrap)
         st.write(issues or ["Ingen kjente health-check-avvik."])

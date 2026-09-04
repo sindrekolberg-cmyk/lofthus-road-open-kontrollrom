@@ -1,0 +1,13 @@
+LOFTHUS ROAD OPEN V704 – TEST REPORT
+====================================
+
+PASS: Python compile: app.py, lro_*.py, scripts/archive_gw.py
+PASS: V704 is based on the real LRO_V702 package, not Bodøradar/AN-radaren files
+PASS: Front-page monthly table column removed from render_home_tables_fragment
+PASS: Month leader remains available in the home headline/status logic
+PASS: League-table captain metadata is derived from the same FPL picks payload as chip metadata
+PASS: Triple Captain is rendered as (TC), normal captain as (C)
+PASS: Manager name uses native st.popover menu
+PASS: "Se laget" callback selects the clicked manager and switches to Manager view
+PASS: "Sammenlign" callback preselects the clicked manager and switches to comparison view
+PASS: No iframe parent.location navigation remains in the active league table path
