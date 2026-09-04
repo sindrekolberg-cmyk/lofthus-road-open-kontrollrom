@@ -164,6 +164,9 @@ def build_ownership(
                 "event_points": nint(live_meta.get("points")),
                 "live_minutes": nint(live_meta.get("minutes")),
                 "season_points": nint(meta.get("total_points")),
+                "form": nfloat(meta.get("form")),
+                "status": str(meta.get("status") or "a"),
+                "news": str(meta.get("news") or ""),
                 "gw_contribution": nint(live_meta.get("points")) * max(multiplier, 0),
             })
 
@@ -208,6 +211,9 @@ def build_ownership(
             "event_points": nint(first.get("event_points")),
             "live_minutes": nint(first.get("live_minutes")),
             "season_points": nint(first.get("season_points")),
+            "form": nfloat(first.get("form")),
+            "status": str(first.get("status") or "a"),
+            "news": str(first.get("news") or ""),
             "owners": owners,
             "captains": captain_names,
             "triple_captains": tc_names,
@@ -225,6 +231,68 @@ def build_ownership(
         "league_size": len(entries),
         "errors": errors,
     }
+
+
+def refresh_ownership_live(ownership: dict, live_payload: dict) -> dict:
+    """Refresh live FPL points without refetching every manager's picks.
+
+    Picks are effectively frozen after the deadline, while `/event/{gw}/live/`
+    changes throughout matches. This keeps the live centre cheap enough to
+    refresh every ~30 seconds.
+    """
+    if not ownership:
+        return ownership or {}
+    live = live_stats_map(live_payload or {})
+    if not live:
+        return ownership
+
+    out = dict(ownership)
+    picks = ownership.get("picks", pd.DataFrame())
+    players = ownership.get("players", pd.DataFrame())
+    manager_events = ownership.get("manager_events", pd.DataFrame())
+
+    if picks is not None and not picks.empty:
+        picks = picks.copy()
+        picks["event_points"] = picks["element"].map(lambda pid: nint(live.get(nint(pid), {}).get("points")))
+        picks["live_minutes"] = picks["element"].map(lambda pid: nint(live.get(nint(pid), {}).get("minutes")))
+        picks["live_goals"] = picks["element"].map(lambda pid: nint(live.get(nint(pid), {}).get("goals")))
+        picks["live_assists"] = picks["element"].map(lambda pid: nint(live.get(nint(pid), {}).get("assists")))
+        picks["live_bonus"] = picks["element"].map(lambda pid: nint(live.get(nint(pid), {}).get("bonus")))
+        # FPL's multiplier already captures captaincy, Triple Captain and Bench
+        # Boost. Defensively keep BB bench players at x1 if an old payload says 0.
+        mult = pd.to_numeric(picks.get("multiplier", 0), errors="coerce").fillna(0).astype(int)
+        bb = picks.get("active_chip", pd.Series(index=picks.index, dtype=object)).astype(str).eq("Bench Boost")
+        bench = picks.get("on_bench", pd.Series(False, index=picks.index)).astype(bool)
+        mult = mult.where(~(bb & bench & (mult <= 0)), 1)
+        picks["gw_contribution"] = pd.to_numeric(picks["event_points"], errors="coerce").fillna(0).astype(int) * mult.clip(lower=0)
+        out["picks"] = picks
+
+    if players is not None and not players.empty:
+        players = players.copy()
+        for col, key in [
+            ("event_points", "points"),
+            ("live_minutes", "minutes"),
+            ("live_goals", "goals"),
+            ("live_assists", "assists"),
+            ("live_bonus", "bonus"),
+        ]:
+            players[col] = players["element"].map(lambda pid, k=key: nint(live.get(nint(pid), {}).get(k)))
+        out["players"] = players
+
+    if picks is not None and not picks.empty:
+        live_by_entry = picks.groupby("entry", as_index=False)["gw_contribution"].sum().rename(columns={"gw_contribution": "live_gw_gross"})
+        if manager_events is None or manager_events.empty:
+            manager_events = live_by_entry.copy()
+            manager_events["event_transfers_cost"] = 0
+        else:
+            manager_events = manager_events.copy().drop(columns=[c for c in ["live_gw_gross", "live_gw_points"] if c in manager_events.columns])
+            manager_events = manager_events.merge(live_by_entry, on="entry", how="left")
+        manager_events["live_gw_gross"] = pd.to_numeric(manager_events.get("live_gw_gross", 0), errors="coerce").fillna(0).astype(int)
+        costs = pd.to_numeric(manager_events.get("event_transfers_cost", 0), errors="coerce").fillna(0).astype(int)
+        manager_events["live_gw_points"] = manager_events["live_gw_gross"] - costs
+        out["manager_events"] = manager_events
+
+    return out
 
 
 def manager_squad(ownership: dict, entry: int) -> pd.DataFrame:
@@ -674,35 +742,60 @@ def captain_recommendations(
 
 
 def stories(managers: list[dict], ownership: dict | None, history: HistoryStore) -> list[str]:
+    """Four genuinely different front-page stories, ordered by news value."""
     move = round_movements(managers, history)
-    out: list[str] = []
+    categories: list[tuple[str, str]] = []
+
+    # 1) Chips. One extreme chip story is enough; no four-card TC convention.
     if ownership and not ownership.get("picks", pd.DataFrame()).empty:
         picks = ownership["picks"]
         tc = picks[picks["is_triple_captain"]].copy()
         if not tc.empty:
-            # A failed Triple Captain is exactly the sort of thing Snakkiser exists for.
             tc = tc.sort_values(["event_points", "manager"], ascending=[True, True])
-        for row in tc.head(2).to_dict("records"):
+            row = tc.iloc[0].to_dict()
             points = nint(row.get("event_points"))
             if points == 0:
-                out.append(f"{row['manager']} brukte Triple Captain på {row['player']} – og fikk 0 poeng.")
+                categories.append(("chip", f"{row['manager']} brukte Triple Captain på {row['player']} – og fikk 0 poeng."))
             else:
-                out.append(f"{row['manager']} brukte Triple Captain på {row['player']} – {points} poeng.")
-    if move.get("best_climber") and move["best_climber"]["move"] >= 8:
-        r = move["best_climber"]
-        out.append(f"{r['manager']} klatret {r['move']} plasser forrige runde.")
-    if move.get("biggest_fall") and move["biggest_fall"]["move"] <= -8:
-        r = move["biggest_fall"]
-        out.append(f"{r['manager']} falt {abs(r['move'])} plasser forrige runde.")
+                categories.append(("chip", f"{row['manager']} brukte Triple Captain på {row['player']} – {points} poeng."))
+
+    # 2) Movement. Choose the single most dramatic direction, not two near-identical headlines.
+    climber = move.get("best_climber") or {}
+    faller = move.get("biggest_fall") or {}
+    c_move = nint(climber.get("move"))
+    f_move = nint(faller.get("move"))
+    if max(c_move, abs(f_move)) >= 8:
+        if abs(f_move) > c_move:
+            categories.append(("movement", f"{faller['manager']} falt {abs(f_move)} plasser forrige runde."))
+        else:
+            categories.append(("movement", f"{climber['manager']} klatret {c_move} plasser forrige runde."))
+
+    # 3) Round performance gives the desk a different type of headline.
+    gw_winner = move.get("gw_winner") or {}
+    if gw_winner and nint(gw_winner.get("gw")):
+        categories.append(("round", f"{gw_winner['manager']} var best forrige runde med {nint(gw_winner['gw'])} poeng."))
+
+    # 4) Ownership / differential signal.
     if ownership and not ownership.get("players", pd.DataFrame()).empty:
-        top = ownership["players"].sort_values("ownership_count", ascending=False).iloc[0]
-        without = max(0, int(ownership.get("loaded_managers", 0)) - nint(top.get("ownership_count")))
-        if ownership.get("loaded_managers", 0):
-            out.append(f"Bare {without} av {ownership['loaded_managers']} går uten {top['player']}.")
-    if move.get("leader"):
-        out.append(f"{move['leader']['manager']} leder ligaen.")
-    unique = []
-    for text in out:
-        if text not in unique:
-            unique.append(text)
-    return unique[:4]
+        top = ownership["players"].sort_values(["ownership_count", "player"], ascending=[False, True]).iloc[0]
+        loaded = nint(ownership.get("loaded_managers"))
+        without = max(0, loaded - nint(top.get("ownership_count")))
+        if loaded:
+            categories.append(("ownership", f"Bare {without} av {loaded} går uten {top['player']}."))
+
+    # 5) Leader only fills a hole; the top table already makes this obvious.
+    leader = move.get("leader") or {}
+    if leader:
+        categories.append(("leader", f"{leader['manager']} leder ligaen med {nint(leader.get('total'))} poeng."))
+
+    unique: list[str] = []
+    seen_categories: set[str] = set()
+    for category, text in categories:
+        if category in seen_categories or text in unique:
+            continue
+        seen_categories.add(category)
+        unique.append(text)
+        if len(unique) == 4:
+            break
+    return unique
+

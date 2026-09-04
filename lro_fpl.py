@@ -81,11 +81,11 @@ class FPLClient:
 
     def fixtures(self, event_id: int | None = None) -> list[dict]:
         path = "/fixtures/" if event_id is None else f"/fixtures/?event={int(event_id)}"
-        data = self.get_json(path, ttl=60 if event_id else 300)
+        data = self.get_json(path, ttl=25 if event_id else 300)
         return data if isinstance(data, list) else []
 
     def event_live(self, event_id: int) -> dict:
-        data = self.get_json(f"/event/{int(event_id)}/live/", ttl=60)
+        data = self.get_json(f"/event/{int(event_id)}/live/", ttl=25)
         return data if isinstance(data, dict) else {}
 
     def entry_picks(self, entry_id: int, event_id: int) -> dict:

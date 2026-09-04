@@ -369,3 +369,125 @@ def build_preseason_odds(
     df["top3_odds"] = top3
     df.insert(0, "preseason_rank", range(1, len(df) + 1))
     return df
+
+
+def build_live_market(
+    managers: list[dict],
+    histories: dict[int, dict],
+    current_event: int,
+    history_store: HistoryStore,
+    preseason: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Update the frozen pre-season market with current LRO performance.
+
+    The old live model rebuilt manager strength from scratch, which could make a
+    manager's odds drift the wrong way after a strong start. This market treats
+    the pre-season odds as the prior, then lets current points/rank gradually
+    matter more as the season matures. At GW1/2 the prior still dominates; by
+    spring the live table has earned the right to dominate.
+    """
+    if not managers:
+        return pd.DataFrame()
+    current_event = max(0, int(current_event or 0))
+    pre = preseason.copy() if isinstance(preseason, pd.DataFrame) else pd.DataFrame()
+    if pre.empty:
+        pre = build_preseason_odds(managers, histories, history_store)
+    if pre.empty:
+        return pd.DataFrame()
+
+    by_entry = {nint(m.get('entry')): m for m in managers if nint(m.get('entry'))}
+    pre = pre.copy()
+    if 'entry' not in pre.columns:
+        pre['entry'] = 0
+    if 'preseason_rank' not in pre.columns:
+        pre = pre.sort_values(['winner_odds', 'manager'], ascending=[True, True]).reset_index(drop=True)
+        pre.insert(0, 'preseason_rank', range(1, len(pre) + 1))
+
+    # Robustly recover entry ids by canonical manager name when an old frozen CSV
+    # predates the entry column.
+    name_to_entry = {
+        history_store.key(str(m.get('player_name') or '')): nint(m.get('entry'))
+        for m in managers if nint(m.get('entry'))
+    }
+    for idx, row in pre.iterrows():
+        if nint(row.get('entry')) <= 0:
+            key = history_store.key(str(row.get('manager') or ''))
+            if key in name_to_entry:
+                pre.at[idx, 'entry'] = name_to_entry[key]
+
+    rows = []
+    n = max(1, len(managers))
+    totals = [nfloat(m.get('total')) for m in managers]
+    mean_total = sum(totals) / len(totals) if totals else 0.0
+    variance = sum((x - mean_total) ** 2 for x in totals) / max(1, len(totals) - 1) if len(totals) > 1 else 1.0
+    sd_total = max(8.0, math.sqrt(variance))
+
+    for _, p in pre.iterrows():
+        entry = nint(p.get('entry'))
+        manager = by_entry.get(entry)
+        if not manager:
+            continue
+        pre_odds = max(1.01, nfloat(p.get('winner_odds'), 251.0))
+        prior = 1.0 / pre_odds
+        current_rank = max(1, nint(manager.get('rank'), n))
+        pre_rank = max(1, nint(p.get('preseason_rank'), n))
+        total = nfloat(manager.get('total'))
+        z_points = max(-3.0, min(3.0, (total - mean_total) / sd_total))
+        # Positive means the manager is outperforming their pre-season ranking.
+        rank_delta = max(-1.0, min(1.0, (pre_rank - current_rank) / max(1.0, n - 1.0)))
+        current_percentile = 1.0 - (current_rank - 1.0) / max(1.0, n - 1.0)
+        centered_rank = (current_percentile - 0.5) * 2.0
+        evidence = 0.85 * z_points + 1.80 * rank_delta + 0.28 * centered_rank
+        rows.append({
+            'entry': entry,
+            'manager': history_store.canonical(str(manager.get('player_name') or p.get('manager') or '')),
+            'preseason_rank': pre_rank,
+            'current_rank': current_rank,
+            'current_points': total,
+            'preseason_odds': pre_odds,
+            'prior_weight': prior,
+            'evidence': evidence,
+        })
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(rows)
+    # The live evidence fades in smoothly. GW2 is still mostly the pre-season
+    # opinion, GW20 is roughly a 50/50 world, late spring is mostly the table.
+    progress = min(1.0, max(0.0, current_event / 38.0))
+    live_weight = min(0.92, 0.06 + 0.86 * (progress ** 0.72)) if current_event > 0 else 0.0
+    # Log-space updates preserve the prior ordering without hard caps on PPG.
+    df['market_log_weight'] = df['prior_weight'].map(lambda p: math.log(max(p, 1e-9))) + live_weight * df['evidence']
+    peak = float(df['market_log_weight'].max())
+    raw = (df['market_log_weight'] - peak).map(math.exp)
+    total_raw = float(raw.sum()) or 1.0
+    # Keep the same total implied market percentage (overround) as the frozen
+    # pre-season market. This has two useful properties: at GW0 the live odds are
+    # exactly the published pre-season odds, and displayed odds always remain the
+    # exact inverse of the displayed implied chance.
+    prior_market_sum = float(df['prior_weight'].sum()) or 1.0
+    implied = raw / total_raw * prior_market_sum
+    df['win_pct'] = implied * 100.0
+    df['winner_odds'] = implied.map(lambda p: min(501.0, max(1.01, 1.0 / max(0.002, float(p)))))
+    df['preseason_pct'] = df['preseason_odds'].map(lambda o: 100.0 / max(1.01, float(o)))
+    df['odds_change'] = df['winner_odds'] - df['preseason_odds']
+    df['live_weight'] = live_weight
+
+    def note(row):
+        pre_rank = int(row['preseason_rank'])
+        cur_rank = int(row['current_rank'])
+        if cur_rank < pre_rank:
+            base = f"Bedre enn før-sesongplasseringen ({pre_rank}. → {cur_rank}.)"
+        elif cur_rank > pre_rank:
+            base = f"Svakere enn før-sesongplasseringen ({pre_rank}. → {cur_rank}.)"
+        else:
+            base = f"På nivå med før-sesongplasseringen ({pre_rank}.)"
+        if row['winner_odds'] < row['preseason_odds'] - 0.05:
+            return base + " · oddsen har falt"
+        if row['winner_odds'] > row['preseason_odds'] + 0.05:
+            return base + " · konkurrentenes utvikling trekker oddsen opp"
+        return base + " · omtrent uendret odds"
+
+    df['note'] = df.apply(note, axis=1)
+    return df.sort_values(['win_pct', 'current_points'], ascending=[False, False]).reset_index(drop=True)
+

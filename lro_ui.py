@@ -168,9 +168,18 @@ label, .stSelectbox label, .stMultiSelect label {font-weight:800 !important; col
 /* live */
 .v500-live {position:relative;overflow:hidden;background:linear-gradient(120deg,#07151d,#0b1d29 60%,#132538); color:#fff; border-radius:15px; padding:1rem 1.15rem; margin:1rem 0 1.2rem;box-shadow:0 14px 32px rgba(8,17,31,.12)}
 .v500-live::after{content:"";position:absolute;right:-60px;top:-100px;width:260px;height:260px;border-radius:50%;background:radial-gradient(circle,rgba(73,196,134,.12),transparent 65%)}
-.v500-live-kicker {font-size:.7rem; font-weight:950; letter-spacing:.09em; text-transform:uppercase; color:#8cd6b4; display:flex; gap:.5rem; align-items:center;}
-.v500-live-dot {width:7px;height:7px;border-radius:50%;background:#49c486;box-shadow:0 0 0 4px rgba(73,196,134,.12);}
+.v500-live-kicker {font-size:.7rem; font-weight:950; letter-spacing:.09em; text-transform:uppercase; color:#ffb6ba; display:flex; gap:.5rem; align-items:center;}
+.v500-live-dot {width:8px;height:8px;border-radius:50%;background:#ef3f4c;box-shadow:0 0 0 4px rgba(239,63,76,.14);animation:lro-live-blink 1.15s ease-in-out infinite;}
 .v500-live-score {font-size:1.25rem; font-weight:950; margin:.45rem 0 .2rem;}.v500-live-sub {color:#b8c3d4;font-size:.8rem;}
+@keyframes lro-live-blink{0%,100%{opacity:1;box-shadow:0 0 0 4px rgba(239,63,76,.13),0 0 0 0 rgba(239,63,76,.28)}50%{opacity:.45;box-shadow:0 0 0 4px rgba(239,63,76,.06),0 0 0 8px rgba(239,63,76,0)}}
+@media (prefers-reduced-motion: reduce){.v500-live-dot{animation:none}}
+
+/* V701 live centre: compact sports ticker, not another dashboard card */
+.v701-livebar{position:relative;overflow:hidden;margin:.8rem 0 1.15rem;padding:.75rem 0 .68rem;border-top:1px solid rgba(239,63,76,.32);border-bottom:1px solid var(--line);}
+.v701-livebar-head{display:flex;align-items:center;gap:.55rem;margin-bottom:.5rem}.v701-livebar-title{font-size:.72rem;font-weight:950;letter-spacing:.095em;text-transform:uppercase;color:#ef3f4c !important}.v701-livebar .v500-live-dot{background:#ef3f4c !important;box-shadow:0 0 0 4px rgba(239,63,76,.14),0 0 12px rgba(239,63,76,.35) !important;animation:lro-live-blink 1.05s ease-in-out infinite !important}.v701-livebar-gw{font-size:.7rem;color:var(--muted);font-weight:800;margin-left:auto}
+.v701-fixtures{display:flex;gap:.7rem 1.25rem;flex-wrap:wrap;align-items:baseline}.v701-fixture{font-size:1.03rem;font-weight:950;letter-spacing:-.018em}.v701-fixture span{color:var(--red);font-size:.72rem;margin-left:.28rem;letter-spacing:0;font-weight:900}
+.v701-live-label{font-size:.68rem;text-transform:uppercase;letter-spacing:.085em;color:var(--muted);font-weight:950;margin:.45rem 0 .1rem}
+@media(max-width:700px){.v701-fixture{font-size:.94rem}.v701-livebar{margin-top:.6rem}}
 
 /* callouts */
 .v500-callout {border-left:3px solid var(--gold); padding:.72rem .9rem; background:rgba(255,255,255,.48); margin:.7rem 0;border-radius:0 10px 10px 0;}
@@ -243,6 +252,20 @@ label, .stSelectbox label, .stMultiSelect label {font-weight:800 !important; col
 @media(max-width:760px){
  .block-container{padding:.7rem .72rem 3rem !important}.v500-header{border-radius:14px;padding:1.1rem 1.05rem 1rem}.v500-brand{font-size:2.2rem}.v500-page-title{font-size:2.15rem}.v500-section{margin-top:1.55rem}.v603-scoreline{grid-template-columns:1fr;margin-top:.4rem}.v603-score-item,.v603-score-item + .v603-score-item{padding:.6rem .05rem;border-left:0;border-bottom:1px solid var(--line)}.v603-score-item:last-child{border-bottom:0}.v603-score-item.lead{grid-column:auto}.v603-score-item.lead .v603-score-name{font-size:1.3rem}.v603-score-name{font-size:1.05rem}.v500-story-list{display:block}.v500-my-metrics{grid-template-columns:1fr}.v500-stats{grid-template-columns:repeat(2,1fr)}.v500-stat:nth-child(3){border-left:0;padding-left:0;border-top:1px solid var(--line)}.v500-stat:nth-child(4){border-top:1px solid var(--line)}.v500-row{grid-template-columns:38px minmax(0,1fr) auto}.v500-table{min-width:520px}.v500-hide-mobile{display:none !important}.stButton > button{font-size:.77rem !important;padding:.45rem .15rem !important}.v500-my-top{align-items:flex-start}.v500-my-rank{font-size:1.8rem}.v605-profile-top{align-items:flex-start}.v605-profile-stats{grid-template-columns:repeat(2,1fr)}.v605-profile-stat{padding:.5rem .45rem}.v605-profile-stat:nth-child(3){border-left:0}.v605-profile-stat:nth-child(n+3){border-top:1px solid var(--line)}.v605-sidegrid,.v605-oddsgrid{grid-template-columns:1fr 1fr}
 }
+
+/* V700: personal newspaper front page + tighter profile/rival surfaces */
+.v700-personal{margin:.55rem 0 .75rem;border-top:3px solid var(--ink);border-bottom:1px solid var(--line);padding:.78rem 0 .72rem;display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:1.3rem;align-items:end}
+.v700-personal-kicker{font-size:.63rem;text-transform:uppercase;letter-spacing:.11em;color:var(--gold);font-weight:950}.v700-personal-name{font-size:clamp(1.6rem,3vw,2.5rem);font-weight:950;letter-spacing:-.055em;line-height:.98;margin:.24rem 0 .26rem}.v700-personal-sub{color:var(--muted);font-size:.79rem;font-weight:750}
+.v700-personal-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-left:1px solid var(--line)}.v700-personal-metric{padding:.18rem .8rem}.v700-personal-metric+.v700-personal-metric{border-left:1px solid var(--line)}.v700-personal-metric strong{display:block;font-size:1.12rem;font-weight:950}.v700-personal-metric span{display:block;color:var(--muted);font-size:.66rem;font-weight:800;margin-top:.12rem;line-height:1.25}.v700-personal-insight{grid-column:1/-1;border-top:1px solid var(--line);padding-top:.55rem;margin-top:.2rem;color:#4e5969;font-size:.78rem;font-weight:720}
+.v700-identity-picker{margin:.5rem 0 .65rem;padding:.58rem 0;border-top:2px solid var(--ink);border-bottom:1px solid var(--line)}
+.v700-career{border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.46);padding:.9rem 1rem;margin:.15rem 0 1rem}.v700-career-head{display:flex;justify-content:space-between;gap:.8rem;align-items:baseline;margin-bottom:.55rem}.v700-career-title{font-size:.72rem;text-transform:uppercase;letter-spacing:.085em;color:var(--muted);font-weight:950}.v700-live-badge{font-size:.64rem;color:var(--green);font-weight:950;text-transform:uppercase;letter-spacing:.065em}.v700-odds-note{font-size:.66rem;color:var(--muted);font-weight:750;line-height:1.35;margin-top:.4rem;padding-top:.4rem;border-top:1px solid var(--line)}
+.v700-merits{display:flex;flex-wrap:wrap;gap:.4rem .8rem;border-top:2px solid var(--gold);border-bottom:1px solid var(--line);padding:.62rem 0 .66rem;margin:.15rem 0 .8rem}.v700-merit{font-size:.91rem;font-weight:900}.v700-merit strong{color:var(--gold);font-size:1.02rem;margin-right:.18rem}.v700-merit-empty{color:var(--muted);font-size:.78rem}
+.v700-meta-links a{color:inherit;text-decoration:none;font-weight:800}.v700-meta-links a:hover{text-decoration:underline;text-decoration-color:var(--gold);text-underline-offset:2px}
+.v700-rival-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1rem;margin:.2rem 0 .6rem}.v700-rival-col{min-width:0}.v700-rival-title{font-size:.72rem;text-transform:uppercase;letter-spacing:.075em;color:var(--muted);font-weight:950;border-bottom:1px solid var(--line);padding-bottom:.35rem;margin-bottom:.05rem}
+.v700-status{display:inline-block;margin-left:.25rem;font-size:.58rem;font-weight:950;color:var(--red);text-transform:uppercase;letter-spacing:.04em}
+@media(max-width:900px){.v700-personal{grid-template-columns:1fr}.v700-personal-metrics{border-left:0;border-top:1px solid var(--line);padding-top:.55rem}.v700-rival-summary{grid-template-columns:1fr}}
+@media(max-width:760px){.v700-personal-metrics{grid-template-columns:1fr}.v700-personal-metric,.v700-personal-metric+.v700-personal-metric{border-left:0;padding:.35rem 0;border-bottom:1px solid var(--line)}.v700-personal-metric:last-child{border-bottom:0}}
+
 </style>
 """
 
@@ -306,7 +329,7 @@ def home_scoreline(leader: str, leader_points: int, round_winner: str, round_poi
             <div class='v603-score-meta'>{esc(leader_points)} poeng · leder Lofthus Road Open</div>
           </div>
           <div class='v603-score-item'>
-            <div class='v603-score-kicker'>Siste runde</div>
+            <div class='v603-score-kicker'>Forrige runde</div>
             <div class='v603-score-name'>{esc(round_winner)}</div>
             <div class='v603-score-meta'>{esc(round_points)} poeng</div>
           </div>
@@ -359,6 +382,46 @@ def my_lofthus_panel(name: str, rank: int, metrics: list[tuple[str, str]], insig
     )
 
 
+
+def personal_home_lead(name: str, team: str, rank: int, points: int, metrics: list[tuple[Any, str]], insight: str = "") -> None:
+    metric_html = "".join(
+        f"<div class='v700-personal-metric'><strong>{esc(v)}</strong><span>{esc(l)}</span></div>" for v, l in metrics[:3]
+    )
+    insight_html = f"<div class='v700-personal-insight'>{esc(insight)}</div>" if insight else ""
+    st.markdown(
+        f"<div class='v700-personal'><div><div class='v700-personal-kicker'>Mitt Lofthus</div>"
+        f"<div class='v700-personal-name'>{esc(name)}</div><div class='v700-personal-sub'>{esc(team)} · {esc(rank)}. plass · {esc(points)} poeng</div></div>"
+        f"<div class='v700-personal-metrics'>{metric_html}</div>{insight_html}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def career_odds_panel(stats: list[tuple[Any, str]], seasons: list[dict], pre_win: str, pre_top3: str, live_win: str, live_pct: str = "", live_note: str = "") -> None:
+    stat_html = "".join(
+        f"<div class='v605-side-stat'><strong>{esc(value)}</strong><span>{esc(label)}</span></div>" for value, label in stats[:4]
+    )
+    hist = []
+    for r in seasons[:5]:
+        hist.append(
+            f"<div class='v605-history-row'><span class='v605-history-season'>{esc(r.get('season'))}</span>"
+            f"<span class='v605-history-points'>{esc(r.get('points'))} poeng</span><span class='v605-history-rank'>{esc(r.get('rank'))}</span></div>"
+        )
+    history_html = "<div class='v605-history-list'>" + "".join(hist) + "</div>" if hist else ""
+    odds = (
+        "<div class='v605-oddsgrid'>"
+        f"<div class='v605-oddsitem'><strong>{esc(pre_win)}</strong><span>Vinner · før sesongstart</span></div>"
+        f"<div class='v605-oddsitem'><strong>{esc(pre_top3)}</strong><span>Topp 3 · før sesongstart</span></div>"
+        f"<div class='v605-oddsitem'><strong>{esc(live_win)}</strong><span>Vinner · akkurat nå</span></div>"
+        + (f"<div class='v605-oddsitem'><strong>{esc(live_pct)}</strong><span>Vinnersjanse akkurat nå</span></div>" if live_pct else "")
+        + "</div>"
+    )
+    note = f"<div class='v700-odds-note'>{esc(live_note)}</div>" if live_note else ""
+    st.markdown(
+        "<div class='v700-career'><div class='v700-career-head'><div class='v700-career-title'>Karriere & odds</div><div class='v700-live-badge'>Live</div></div>"
+        f"<div class='v605-sidegrid'>{stat_html}</div>{history_html}{odds}{note}</div>",
+        unsafe_allow_html=True,
+    )
+
 def stat_strip(items: list[tuple[Any, str]]) -> None:
     bits = [f"<div class='v500-stat'><div class='v500-stat-value'>{esc(value)}</div><div class='v500-stat-label'>{esc(label)}</div></div>" for value, label in items]
     if bits:
@@ -368,10 +431,23 @@ def stat_strip(items: list[tuple[Any, str]]) -> None:
 def rows(items: list[dict]) -> None:
     bits = []
     for item in items:
-        rank = esc(item.get("rank", "")); who = esc(item.get("who", "")); meta = esc(item.get("meta", "")); num = esc(item.get("num", ""))
+        rank = esc(item.get("rank", "")); who = esc(item.get("who", "")); num = esc(item.get("num", ""))
         rank_class = esc(item.get("rank_class", "")); num_class = esc(item.get("num_class", ""))
         href = str(item.get("href") or "").strip()
         who_html = f"<a href='{esc(href)}' class='v500-row-link'>{who}</a>" if href else who
+        meta = esc(item.get("meta", ""))
+        links = item.get("meta_links") or []
+        if links:
+            link_bits = []
+            for link in links:
+                label = esc(link.get("label", ""))
+                url = esc(link.get("href", ""))
+                link_bits.append(f"<a href='{url}'>{label}</a>" if url else label)
+            prefix = esc(item.get("meta_prefix", ""))
+            meta = (prefix + (" " if prefix else "") + ", ".join(link_bits)).strip()
+            meta = f"<span class='v700-meta-links'>{meta}</span>"
+        else:
+            meta = esc(item.get("meta", ""))
         bits.append(
             f"<div class='v500-row'><div class='v500-rank {rank_class}'>{rank}</div>"
             f"<div class='v500-who'>{who_html}<span class='v500-meta'>{meta}</span></div>"
@@ -380,28 +456,24 @@ def rows(items: list[dict]) -> None:
     if bits:
         st.markdown("<div class='v500-list'>" + "".join(bits) + "</div>", unsafe_allow_html=True)
 
-
 def squad_formation(starters: pd.DataFrame, bench: pd.DataFrame, price_formatter) -> None:
-    """Render the XI as the formation the manager actually fields in FPL."""
+    """Compact tactical pitch with XI and bench in the same visual surface."""
     if starters is None or starters.empty:
         st.caption("Startelleveren kunne ikke lastes.")
         return
-
     data = starters.copy()
     if "position_id" not in data.columns:
         data["position_id"] = 0
     if "squad_position" in data.columns:
         data = data.sort_values("squad_position")
-
     groups = {pid: data[data["position_id"] == pid].to_dict("records") for pid in (1, 2, 3, 4)}
-    # Fallback for older payloads that may only contain the Norwegian position label.
     if sum(len(v) for v in groups.values()) != len(data):
         label_map = {"Keeper": 1, "Forsvar": 2, "Midtbane": 3, "Angrep": 4}
         groups = {pid: [] for pid in (1, 2, 3, 4)}
         for row in data.to_dict("records"):
             groups[label_map.get(str(row.get("position") or ""), 0) or 3].append(row)
-
     formation = f"{len(groups[2])}-{len(groups[3])}-{len(groups[4])}"
+    active_chip = str(data.iloc[0].get("active_chip") or "") if not data.empty else ""
 
     def player_card(row: dict) -> str:
         badge = ""
@@ -411,28 +483,25 @@ def squad_formation(starters: pd.DataFrame, bench: pd.DataFrame, price_formatter
             badge = f"<span class='v604-badge{cls}'>{esc(label)}</span>"
         elif row.get("is_vice_captain"):
             badge = "<span class='v604-badge vc'>VC</span>"
+        status = str(row.get("status") or "a")
+        status_html = "<span class='v700-status'>status</span>" if status not in {"a", ""} else ""
         price = price_formatter(row.get("current_price"))
         points = int(row.get("event_points") or 0)
         return (
             "<div class='v604-player'>" + badge +
-            f"<div class='v604-player-name'>{esc(row.get('player') or '')}</div>"
+            f"<div class='v604-player-name'>{esc(row.get('player') or '')}{status_html}</div>"
             f"<div class='v604-player-meta'>{esc(price)} · {points} poeng</div></div>"
         )
 
-    # Traditional football orientation: forwards at the top, goalkeeper at the bottom.
     lines = []
     for pid in (4, 3, 2, 1):
         cards = "".join(player_card(r) for r in groups.get(pid, []))
         if cards:
             lines.append(f"<div class='v604-line'>{cards}</div>")
-
     pitch_open = (
-        "<div class='v604-squad-wrap'><div class='v604-pitch'>"
-        "<div class='v604-center-circle'></div>"
-        f"<div class='v604-formation'>Formasjon {esc(formation)}</div>"
-        + "".join(lines)
+        "<div class='v604-squad-wrap'><div class='v604-pitch'><div class='v604-center-circle'></div>"
+        f"<div class='v604-formation'>Formasjon {esc(formation)}</div>" + "".join(lines)
     )
-
     bench_html = ""
     if bench is not None and not bench.empty:
         b = bench.sort_values("squad_position") if "squad_position" in bench.columns else bench
@@ -448,10 +517,9 @@ def squad_formation(starters: pd.DataFrame, bench: pd.DataFrame, price_formatter
                 f"<div class='v604-bench-meta'>{esc(price_formatter(row.get('current_price')))} · {int(row.get('event_points') or 0)} poeng{esc(label)}</div></div>"
             )
         bench_total = int(pd.to_numeric(b.get("event_points", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()) if "event_points" in b.columns else 0
-        bench_html = f"<div class='v604-bench-shell'><div class='v604-bench-label'>Benk · {bench_total} poeng</div><div class='v604-bench'>" + "".join(items) + "</div></div>"
-
+        chip_text = " · Bench Boost" if active_chip == "Bench Boost" else ""
+        bench_html = f"<div class='v604-bench-shell'><div class='v604-bench-label'>Benk · {bench_total} poeng{chip_text}</div><div class='v604-bench'>" + "".join(items) + "</div></div>"
     st.markdown(pitch_open + bench_html + "</div></div>", unsafe_allow_html=True)
-
 
 def inline_note(label: str, text: str) -> None:
     if not str(text or "").strip():
@@ -478,6 +546,31 @@ def html_table(headers: list[tuple[str, str]], data: list[dict], right: set[str]
             cells.append(f"<td class='{' '.join(classes)}'>{rendered}</td>")
         trs.append("<tr>" + "".join(cells) + "</tr>")
     st.markdown("<div class='v500-table-wrap'><table class='v500-table'><thead><tr>" + "".join(th) + "</tr></thead><tbody>" + "".join(trs) + "</tbody></table></div>", unsafe_allow_html=True)
+
+
+def live_scoreboard(scores: list[str], event_label: str = "") -> None:
+    if not scores:
+        return
+    fixture_bits = []
+    for score in scores:
+        # A trailing minute marker is visually separated when present.
+        text = str(score or "")
+        if " · " in text:
+            main, status = text.rsplit(" · ", 1)
+            fixture_bits.append(f"<div class='v701-fixture'>{esc(main)} <span>{esc(status)}</span></div>")
+        else:
+            fixture_bits.append(f"<div class='v701-fixture'>{esc(text)}</div>")
+    st.markdown(
+        "<div class='v701-livebar'><div class='v701-livebar-head'>"
+        "<span class='v500-live-dot'></span><div class='v701-livebar-title'>Live</div>"
+        + (f"<div class='v701-livebar-gw'>{esc(event_label)}</div>" if event_label else "")
+        + "</div><div class='v701-fixtures'>" + "".join(fixture_bits) + "</div></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def live_label(text: str) -> None:
+    st.markdown(f"<div class='v701-live-label'>{esc(text)}</div>", unsafe_allow_html=True)
 
 
 def live_panel(score: str, sub: str = "") -> None:
@@ -518,13 +611,11 @@ def honours_panel(items: list[tuple[Any, str]]) -> None:
             numeric = 0
         if numeric <= 0:
             continue
-        parts.append(f"{numeric} {label}")
-    body = " · ".join(parts)
-    if body:
-        st.markdown(f"<div class='v605-honours'><div class='v605-honours-title'>Lofthus-meritter</div><div class='v605-honours-line'>{esc(body)}</div></div>", unsafe_allow_html=True)
+        parts.append(f"<span class='v700-merit'><strong>{numeric}×</strong>{esc(label)}</span>")
+    if parts:
+        st.markdown("<div class='v700-merits'>" + "".join(parts) + "</div>", unsafe_allow_html=True)
     else:
-        st.markdown("<div class='v605-honours'><div class='v605-honours-title'>Lofthus-meritter</div><div class='v605-honours-empty'>Ingen registrerte meritter ennå.</div></div>", unsafe_allow_html=True)
-
+        st.markdown("<div class='v700-merits'><span class='v700-merit-empty'>Ingen registrerte Lofthus-meritter ennå.</span></div>", unsafe_allow_html=True)
 
 def career_panel(stats: list[tuple[Any, str]], seasons: list[dict]) -> None:
     stat_html = "".join(
@@ -577,13 +668,15 @@ def sortable_league_table(rows: list[dict]) -> None:
 <!doctype html><html><head><meta charset="utf-8"><style>
 :root{--line:#d6d9de;--text:#121824;--muted:#687386;--gold:#b88920;--green:#167a52;--red:#b63a34}
 *{box-sizing:border-box}body{margin:0;background:transparent;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text)}
-.wrap{width:100%;overflow-x:auto;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:transparent}table{border-collapse:collapse;width:100%;min-width:720px}th{text-align:left;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.075em;font-weight:900;padding:12px 10px;border-bottom:1px solid var(--line);cursor:pointer;user-select:none;background:transparent}td{padding:13px 10px;border-bottom:1px solid var(--line);vertical-align:middle;font-size:13.5px}tbody tr:last-child td{border-bottom:0}tr:hover td{background:rgba(255,255,255,.58)}.right{text-align:right;white-space:nowrap}.manager{font-weight:900}.manager-link{cursor:pointer;text-decoration:none;color:inherit}.manager-link:hover{text-decoration:underline;text-decoration-color:var(--gold);text-underline-offset:3px}.team{font-weight:700}.chip{display:block;color:var(--muted);font-size:11.5px;font-weight:700;margin-top:2px}.rank{font-weight:900;color:var(--muted)}.rank.gold{color:#977013}.rank.silver{color:#657080}.rank.bronze{color:#925f3a}.up{color:var(--green);font-weight:900}.down{color:var(--red);font-weight:900}.sort{margin-left:5px;color:var(--gold)}
-@media(max-width:760px){table{min-width:560px}th,td{padding:10px 7px}}
-</style></head><body><div class="wrap"><table><thead><tr><th data-k="rank" data-type="n">#</th><th data-k="manager">Manager</th><th data-k="team">Lag</th><th class="right" data-k="gw" data-type="n">GW</th><th class="right" data-k="points" data-type="n">Poeng</th><th class="right" data-k="move" data-type="n">+/-</th></tr></thead><tbody id="body"></tbody></table></div><script>
+.wrap{width:100%;overflow-x:auto;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:transparent}table{border-collapse:collapse;width:100%;min-width:900px}th{text-align:left;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.075em;font-weight:900;padding:12px 10px;border-bottom:1px solid var(--line);cursor:pointer;user-select:none;background:transparent}td{padding:13px 10px;border-bottom:1px solid var(--line);vertical-align:middle;font-size:13.5px}tbody tr:last-child td{border-bottom:0}tbody tr{cursor:pointer}tbody tr:hover td,tbody tr:focus td{background:rgba(184,137,32,.055)}tbody tr:focus{outline:2px solid rgba(184,137,32,.45);outline-offset:-2px}.right{text-align:right;white-space:nowrap}.manager{font-weight:900}.manager-link{text-decoration:underline;text-decoration-color:transparent;text-underline-offset:3px}.team{font-weight:700}.chip{display:block;color:var(--muted);font-size:11.5px;font-weight:700;margin-top:2px}.captain{font-weight:900;white-space:nowrap}.vice{display:block;color:var(--muted);font-size:10.5px;font-weight:700;margin-top:2px}.rank{font-weight:900;color:var(--muted)}.rank.gold{color:#977013}.rank.silver{color:#657080}.rank.bronze{color:#925f3a}.up{color:var(--green);font-weight:900}.down{color:var(--red);font-weight:900}.sort{margin-left:5px;color:var(--gold)}
+@media(hover:hover) and (pointer:fine){tbody tr:hover .manager-link{text-decoration-color:var(--gold)}}
+@media(max-width:760px){table{min-width:760px}th,td{padding:10px 7px}.vice{display:none}}
+</style></head><body><div class="wrap"><table><thead><tr><th data-k="rank" data-type="n">#</th><th data-k="manager">Manager</th><th data-k="team">Lag</th><th data-k="captain">Kaptein</th><th class="right" data-k="gw" data-type="n">GW</th><th class="right" data-k="points" data-type="n">Poeng</th><th class="right" data-k="move" data-type="n">+/-</th></tr></thead><tbody id="body"></tbody></table></div><script>
 const rows=__ROWS__; let key='rank', dir=1; const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 function cmp(a,b){let av=a[key],bv=b[key];if(typeof av==='number'||typeof bv==='number'){av=(av===null||av===undefined)?1e15:Number(av);bv=(bv===null||bv===undefined)?1e15:Number(bv);return(av-bv)*dir}return String(av||'').localeCompare(String(bv||''),'nb')*dir}
-function render(){const body=document.getElementById('body');body.innerHTML='';[...rows].sort(cmp).forEach(r=>{const tr=document.createElement('tr');const rc=r.rank===1?'gold':r.rank===2?'silver':r.rank===3?'bronze':'';const mv=Number(r.move||0);const move=mv>0?'↑'+mv:mv<0?'↓'+Math.abs(mv):'–';const mc=mv>0?'up':mv<0?'down':'';tr.innerHTML=`<td><span class="rank ${rc}">${esc(r.rank??'')}</span></td><td class="manager"><span class="manager-link" data-entry="${esc(r.entry)}">${esc(r.manager)}</span></td><td><span class="team">${esc(r.team)}</span>${r.chip?`<span class="chip">${esc(r.chip)}</span>`:''}</td><td class="right">${esc(r.gw)}</td><td class="right"><strong>${esc(r.points)}</strong></td><td class="right ${mc}">${move}</td>`;body.appendChild(tr)});document.querySelectorAll('th').forEach(th=>{th.querySelectorAll('.sort').forEach(x=>x.remove());if(th.dataset.k===key){const x=document.createElement('span');x.className='sort';x.textContent=dir===1?'▲':'▼';th.appendChild(x)}})}
-document.querySelectorAll('th').forEach(th=>th.onclick=()=>{const k=th.dataset.k;if(key===k)dir*=-1;else{key=k;dir=(k==='manager'||k==='team')?1:(k==='move'?-1:1)}render()});document.addEventListener('click',e=>{const link=e.target.closest('.manager-link');if(!link)return;const entry=link.dataset.entry;if(!entry)return;const url=new URL(window.parent.location.href);url.searchParams.set('page','Ligaen');url.searchParams.set('league_view','Manager');url.searchParams.set('manager',entry);window.parent.location.href=url.toString();});render();
+function openManager(entry){if(!entry)return;const url=new URL(window.parent.location.href);url.searchParams.set('page','Ligaen');url.searchParams.set('manager',entry);url.searchParams.delete('league_view');window.parent.location.href=url.toString()}
+function render(){const body=document.getElementById('body');body.innerHTML='';[...rows].sort(cmp).forEach(r=>{const tr=document.createElement('tr');tr.tabIndex=0;tr.dataset.entry=String(r.entry||'');tr.setAttribute('role','link');tr.setAttribute('aria-label','Åpne laget til '+String(r.manager||''));const rc=r.rank===1?'gold':r.rank===2?'silver':r.rank===3?'bronze':'';const mv=Number(r.move||0);const move=mv>0?'↑'+mv:mv<0?'↓'+Math.abs(mv):'–';const mc=mv>0?'up':mv<0?'down':'';const vice=r.vice?`<span class="vice">VC: ${esc(r.vice)}</span>`:'';tr.innerHTML=`<td><span class="rank ${rc}">${esc(r.rank??'')}</span></td><td class="manager"><span class="manager-link">${esc(r.manager)}</span></td><td><span class="team">${esc(r.team)}</span>${r.chip?`<span class="chip">${esc(r.chip)}</span>`:''}</td><td><span class="captain">${esc(r.captain||'–')}</span>${vice}</td><td class="right">${esc(r.gw)}</td><td class="right"><strong>${esc(r.points)}</strong></td><td class="right ${mc}">${move}</td>`;body.appendChild(tr)});document.querySelectorAll('th').forEach(th=>{th.querySelectorAll('.sort').forEach(x=>x.remove());if(th.dataset.k===key){const x=document.createElement('span');x.className='sort';x.textContent=dir===1?'▲':'▼';th.appendChild(x)}})}
+document.querySelectorAll('th').forEach(th=>th.onclick=()=>{const k=th.dataset.k;if(key===k)dir*=-1;else{key=k;dir=(k==='manager'||k==='team'||k==='captain')?1:(k==='move'?-1:1)}render()});const body=document.getElementById('body');body.addEventListener('click',e=>{const tr=e.target.closest('tr[data-entry]');if(tr)openManager(tr.dataset.entry)});body.addEventListener('keydown',e=>{if(e.key!=='Enter'&&e.key!==' ')return;const tr=e.target.closest('tr[data-entry]');if(!tr)return;e.preventDefault();openManager(tr.dataset.entry)});render();
 </script></body></html>
 """.replace("__ROWS__", payload)
     height = min(3400, max(420, 58 + 48 * len(rows or [])))

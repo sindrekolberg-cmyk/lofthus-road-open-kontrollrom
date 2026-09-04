@@ -18,8 +18,8 @@ from lro_analysis import (
     nfloat,
     nint,
     rival_analysis,
+    refresh_ownership_live,
     round_movements,
-    stories,
 )
 from lro_fpl import (
     DEFAULT_LEAGUE_ID,
@@ -58,10 +58,10 @@ except ImportError:
             normalize_text(row.get("display_name") or ""),
         )
 from lro_archive import SnapshotStore
-from lro_odds import build_preseason_odds, compare_group_odds, decimal_odds_from_pct, simulate_group
+from lro_odds import build_live_market, build_preseason_odds, compare_group_odds, decimal_odds_from_pct, simulate_group
 import lro_ui as ui
 
-APP_VERSION = "lofthus-road-open-v605-compact-manager-player-overview"
+APP_VERSION = "lofthus-road-open-v703-connected-league"
 DATA_DIR = Path(__file__).resolve().parent / "data"
 PRESEASON_ODDS_FILE = DATA_DIR / "preseason_odds_2026_27.csv"
 
@@ -88,7 +88,7 @@ snapshot_store = SnapshotStore(DATA_DIR / "snapshots")
 @st.cache_resource
 def get_home_background_pool() -> ThreadPoolExecutor:
     # One coordinator job is enough. build_ownership itself fans out the FPL calls.
-    return ThreadPoolExecutor(max_workers=1, thread_name_prefix="lro-home")
+    return ThreadPoolExecutor(max_workers=2, thread_name_prefix="lro-home")
 
 
 @st.cache_resource
@@ -117,7 +117,7 @@ def home_ownership_async(managers: list[dict], bootstrap: dict) -> dict | None:
     if not event_id:
         return None
     entries = tuple(sorted(nint(m.get("entry")) for m in managers if nint(m.get("entry"))))
-    key = (int(event_id), entries)
+    key = ("ownership", int(event_id), entries)
     state = get_home_background_jobs()
     with state["lock"]:
         future = state["jobs"].get(key)
@@ -131,6 +131,39 @@ def home_ownership_async(managers: list[dict], bootstrap: dict) -> dict | None:
     except Exception:
         # Drop a failed job so a later rerun can try again, while the page itself
         # remains fully usable.
+        with state["lock"]:
+            state["jobs"].pop(key, None)
+        return None
+
+
+def _build_home_histories_background(managers: list[dict]) -> dict[int, dict]:
+    """Fetch current-season histories without blocking the front page.
+
+    This lets the newsroom reconstruct the *previous completed* Lofthus round
+    instead of mistaking live table movement for a finished result.
+    """
+    bg_client = FPLClient(timeout=9)
+    entries = [nint(m.get("entry")) for m in managers if nint(m.get("entry"))]
+    values, _ = bg_client.histories_many(entries, max_workers=10)
+    return values
+
+
+def home_histories_async(managers: list[dict]) -> dict[int, dict] | None:
+    entries = tuple(sorted(nint(m.get("entry")) for m in managers if nint(m.get("entry"))))
+    if not entries:
+        return None
+    key = ("histories", entries)
+    state = get_home_background_jobs()
+    with state["lock"]:
+        future = state["jobs"].get(key)
+        if future is None:
+            future = get_home_background_pool().submit(_build_home_histories_background, [dict(m) for m in managers])
+            state["jobs"][key] = future
+    if not future.done():
+        return None
+    try:
+        return future.result()
+    except Exception:
         with state["lock"]:
             state["jobs"].pop(key, None)
         return None
@@ -164,6 +197,50 @@ def manager_options(managers: list[dict]) -> list[tuple[int, str]]:
     out = [(nint(m.get("entry")), manager_name(m)) for m in managers if nint(m.get("entry"))]
     return sorted(out, key=lambda x: normalize_text(x[1]))
 
+
+
+def manager_href(entry: int) -> str:
+    return f"?page=Ligaen&manager={int(entry)}"
+
+
+def owner_links(names: list[str], managers: list[dict], limit: int = 3) -> list[dict]:
+    by_key = {history_store.key(manager_name(m)): nint(m.get("entry")) for m in managers if nint(m.get("entry"))}
+    out = []
+    for name in names[:limit]:
+        entry = by_key.get(history_store.key(name), 0)
+        out.append({"label": name, "href": manager_href(entry) if entry else ""})
+    if len(names) > limit:
+        out.append({"label": f"+{len(names)-limit}", "href": ""})
+    return out
+
+
+def _preseason_market(managers: list[dict], histories: dict[int, dict]) -> pd.DataFrame:
+    odds = pd.DataFrame()
+    if PRESEASON_ODDS_FILE.exists():
+        try:
+            odds = pd.read_csv(PRESEASON_ODDS_FILE)
+        except Exception:
+            odds = pd.DataFrame()
+    if odds.empty:
+        try:
+            odds = build_preseason_odds(managers, histories, history_store)
+        except Exception:
+            odds = pd.DataFrame()
+    return odds
+
+
+def my_manager_id(managers: list[dict]) -> int:
+    ids = {nint(m.get("entry")) for m in managers if nint(m.get("entry"))}
+    candidates = [st.session_state.get("v500_my_manager"), st.session_state.get("v400_my_manager")]
+    try:
+        candidates.insert(0, st.query_params.get("me"))
+    except Exception:
+        pass
+    for value in candidates:
+        entry = nint(value)
+        if entry in ids:
+            return entry
+    return 0
 
 def selected_ownership(managers: list[dict], entries: list[int] | None = None) -> dict:
     bootstrap = client.bootstrap()
@@ -318,6 +395,231 @@ def current_month_points_map(managers: list[dict], bootstrap: dict) -> dict[int,
     return {nint(r.get("entry")): nfloat(r.get("points")) for r in df.to_dict("records") if nint(r.get("entry"))}
 
 
+def current_month_live_table(managers: list[dict], bootstrap: dict, ownership: dict | None) -> tuple[dict | None, pd.DataFrame, bool]:
+    """Return the current calendar-month table including an unfinished GW live.
+
+    FPL's league phase table commonly stays at the last completed round while the
+    normal league table moves live. We therefore add the current event's *live*
+    manager points only while that event is unfinished. This is what lets the
+    September race appear immediately on the first September matchday.
+    """
+    phase, base = current_month_table(managers, bootstrap)
+    if phase is None:
+        return None, pd.DataFrame(), False
+    event = current_event_id(bootstrap) or 0
+    if not event or current_event_finished(bootstrap):
+        return phase, base, False
+    if not (nint(phase.get("start_event")) <= int(event) <= nint(phase.get("stop_event"))):
+        return phase, base, False
+    ownership = ownership or {}
+    if nint(ownership.get("loaded_managers")) < len(managers):
+        return phase, base, False
+    events = ownership.get("manager_events", pd.DataFrame())
+    if events is None or events.empty or "live_gw_points" not in events.columns:
+        return phase, base, False
+
+    base_points = {nint(r.get("entry")): nint(r.get("points")) for r in base.to_dict("records")} if not base.empty else {}
+    live_points = {nint(r.get("entry")): nint(r.get("live_gw_points")) for r in events.to_dict("records") if nint(r.get("entry"))}
+    rows = []
+    for m in managers:
+        entry = nint(m.get("entry"))
+        if not entry:
+            continue
+        rows.append({
+            "entry": entry,
+            "manager": manager_name(m),
+            "team": str(m.get("entry_name") or ""),
+            "points": nint(base_points.get(entry)) + nint(live_points.get(entry)),
+        })
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return phase, base, False
+    df["rank"] = df["points"].rank(method="min", ascending=False).astype(int)
+    df = df.sort_values(["rank", "manager"], ascending=[True, True]).reset_index(drop=True)
+    return phase, df, bool(int(pd.to_numeric(df["points"], errors="coerce").fillna(0).sum()) > 0)
+
+
+def _previous_completed_event(bootstrap: dict) -> int:
+    finished = sorted(finished_event_ids(bootstrap))
+    if not finished:
+        return 0
+    current = current_event_id(bootstrap) or 0
+    if current and not current_event_finished(bootstrap):
+        older = [e for e in finished if e < current]
+        return max(older or [0])
+    return max(finished)
+
+
+def _completed_round_from_snapshot(bootstrap: dict, event: int) -> dict:
+    if not event:
+        return {}
+    payload = snapshot_store.read(season_label(bootstrap), int(event))
+    table = payload.get("table", []) if isinstance(payload, dict) else []
+    rows = []
+    for r in table or []:
+        rank = nint(r.get("rank"), 999999); last = nint(r.get("last_rank"), rank)
+        if rank >= 999999:
+            continue
+        rows.append({
+            "entry": nint(r.get("entry")), "manager": str(r.get("manager") or ""),
+            "rank": rank, "last_rank": last, "move": last - rank,
+            "gw": nint(r.get("gw_points")), "total": nint(r.get("total_points")),
+        })
+    if not rows:
+        return {}
+    return {
+        "best_climber": max(rows, key=lambda x: (x["move"], x["gw"])),
+        "biggest_fall": min(rows, key=lambda x: (x["move"], -x["gw"])),
+        "gw_winner": max(rows, key=lambda x: (x["gw"], -x["rank"])),
+        "rows": rows,
+    }
+
+
+def _completed_round_from_histories(managers: list[dict], histories: dict[int, dict] | None, event: int) -> dict:
+    if not histories or event <= 0:
+        return {}
+    names = {nint(m.get("entry")): manager_name(m) for m in managers}
+    totals_now: dict[int, int] = {}; totals_prev: dict[int, int] = {}; gw_points: dict[int, int] = {}
+    for entry, payload in histories.items():
+        by_event = {nint(r.get("event")): r for r in (payload.get("current", []) or []) if nint(r.get("event"))}
+        now = by_event.get(int(event)); prev = by_event.get(int(event) - 1)
+        if not now:
+            continue
+        totals_now[int(entry)] = nint(now.get("total_points"))
+        totals_prev[int(entry)] = nint(prev.get("total_points")) if prev else 0
+        gw_points[int(entry)] = nint(now.get("points"))
+    if not totals_now:
+        return {}
+    now_df = pd.DataFrame([{"entry": e, "total": t} for e, t in totals_now.items()])
+    prev_df = pd.DataFrame([{"entry": e, "total": totals_prev.get(e, 0)} for e in totals_now])
+    now_df["rank"] = now_df["total"].rank(method="min", ascending=False).astype(int)
+    prev_df["last_rank"] = prev_df["total"].rank(method="min", ascending=False).astype(int)
+    ranks = now_df.merge(prev_df[["entry", "last_rank"]], on="entry", how="left")
+    rows = []
+    for r in ranks.to_dict("records"):
+        entry = nint(r.get("entry")); rank = nint(r.get("rank")); last = nint(r.get("last_rank"), rank)
+        rows.append({"entry": entry, "manager": names.get(entry, str(entry)), "rank": rank, "last_rank": last, "move": last-rank, "gw": gw_points.get(entry, 0), "total": totals_now.get(entry, 0)})
+    return {
+        "best_climber": max(rows, key=lambda x: (x["move"], x["gw"])),
+        "biggest_fall": min(rows, key=lambda x: (x["move"], -x["gw"])),
+        "gw_winner": max(rows, key=lambda x: (x["gw"], -x["rank"])),
+        "rows": rows,
+    }
+
+
+def previous_completed_round(managers: list[dict], bootstrap: dict, histories: dict[int, dict] | None = None) -> dict:
+    event = _previous_completed_event(bootstrap)
+    snap = _completed_round_from_snapshot(bootstrap, event)
+    if snap:
+        return {**snap, "event": event}
+    hist = _completed_round_from_histories(managers, histories, event)
+    return {**hist, "event": event} if hist else {}
+
+
+def _team_fixture_states(bootstrap: dict) -> dict[int, dict]:
+    event = current_event_id(bootstrap) or 0
+    if not event:
+        return {}
+    try:
+        fixtures = client.fixtures(int(event))
+    except Exception:
+        fixtures = []
+    out: dict[int, dict] = {}
+    for f in fixtures:
+        state = {"started": bool(f.get("started")), "finished": bool(f.get("finished")), "minutes": nint(f.get("minutes"))}
+        for key in ("team_h", "team_a"):
+            tid = nint(f.get(key))
+            if tid:
+                out[tid] = state
+    return out
+
+
+def front_stories(managers: list[dict], bootstrap: dict, ownership: dict | None, histories: dict[int, dict] | None) -> list[str]:
+    """Act like a sports desk: publish the strongest four *valid* stories.
+
+    Unplayed captain chips are not failures, and live table movement is not a
+    completed-round fact. When a headline is suppressed, the next-best candidate
+    takes its place rather than leaving a hole.
+    """
+    candidates: list[tuple[int, str, str]] = []
+    ownership = ownership or {}
+    team_state = _team_fixture_states(bootstrap)
+
+    # Settled chip outcome only. Zero before kickoff is not news.
+    picks = ownership.get("picks", pd.DataFrame())
+    if picks is not None and not picks.empty:
+        tc = picks[picks.get("is_triple_captain", False).astype(bool)].copy() if "is_triple_captain" in picks.columns else pd.DataFrame()
+        settled = []
+        for row in tc.to_dict("records") if not tc.empty else []:
+            state = team_state.get(nint(row.get("team_id")), {})
+            if not state.get("finished"):
+                continue
+            settled.append(row)
+        if settled:
+            settled.sort(key=lambda r: (nint(r.get("event_points")), normalize_text(str(r.get("manager") or ""))))
+            row = settled[0]; pts = nint(row.get("event_points"))
+            text = f"{row.get('manager')} brukte Triple Captain på {row.get('player')} – og fikk {pts} poeng."
+            score = 100 if pts == 0 else 88 if pts >= 15 else 72
+            candidates.append((score, "chip", text))
+
+    # The previous *completed* GW movement stays news until something genuinely bigger replaces it.
+    previous = previous_completed_round(managers, bootstrap, histories)
+    climber = previous.get("best_climber") or {}; faller = previous.get("biggest_fall") or {}
+    c_move = nint(climber.get("move")); f_move = nint(faller.get("move"))
+    if max(c_move, abs(f_move)) >= 8:
+        if abs(f_move) >= c_move:
+            mag = abs(f_move); text = f"{faller.get('manager')} falt {mag} plasser forrige runde."
+        else:
+            mag = c_move; text = f"{climber.get('manager')} klatret {mag} plasser forrige runde."
+        candidates.append((min(98, 68 + mag), "movement", text))
+
+    # Previous round winner, never a live half-round winner.
+    gw_winner = previous.get("gw_winner") or {}
+    if gw_winner and nint(gw_winner.get("gw")):
+        candidates.append((66, "round", f"{gw_winner.get('manager')} var best forrige runde med {nint(gw_winner.get('gw'))} poeng."))
+
+    players = ownership.get("players", pd.DataFrame())
+    active, _ = active_fixtures(bootstrap)
+    active_teams = {nint(f.get(k)) for f in active for k in ("team_h", "team_a")}
+    if players is not None and not players.empty:
+        # A genuine live explosion can be front-page news, unlike an unplayed zero.
+        if active_teams:
+            live = players[players["team_id"].isin(active_teams)].copy()
+            if not live.empty:
+                live["event_points"] = pd.to_numeric(live.get("event_points", 0), errors="coerce").fillna(0)
+                best = live.sort_values(["event_points", "ownership_count"], ascending=[False, False]).iloc[0].to_dict()
+                if nint(best.get("event_points")) >= 10:
+                    candidates.append((92, "live", f"{best.get('player')} herjer: {nint(best.get('event_points'))} poeng live – {nint(best.get('ownership_count'))} Lofthus-eiere profiterer."))
+
+        top = players.sort_values(["ownership_count", "player"], ascending=[False, True]).iloc[0]
+        loaded = nint(ownership.get("loaded_managers")); without = max(0, loaded - nint(top.get("ownership_count")))
+        if loaded:
+            pct = nint(top.get("ownership_count")) / max(1, loaded)
+            score = 74 if pct >= .85 else 58
+            candidates.append((score, "ownership", f"Bare {without} av {loaded} går uten {top.get('player')}."))
+
+    # Live monthly race is more interesting than an old August winner once the new month has points.
+    phase, month_live, is_live = current_month_live_table(managers, bootstrap, ownership)
+    if phase and is_live and not month_live.empty:
+        lead = month_live.iloc[0].to_dict()
+        candidates.append((78, "month", f"{lead.get('manager')} leder {str(phase.get('name') or 'måned').lower()} live med {nint(lead.get('points'))} poeng."))
+
+    move_now = round_movements(managers, history_store)
+    leader = move_now.get("leader") or {}
+    if leader:
+        candidates.append((48, "leader", f"{leader.get('manager')} leder ligaen med {nint(leader.get('total'))} poeng."))
+
+    candidates.sort(key=lambda x: (-x[0], x[1], x[2]))
+    out: list[str] = []; seen: set[str] = set()
+    for _, category, text in candidates:
+        if category in seen or not text or text in out:
+            continue
+        seen.add(category); out.append(text)
+        if len(out) >= 4:
+            break
+    return out
+
+
 def data_quality_note(ownership: dict) -> None:
     loaded = nint(ownership.get("loaded_managers"))
     total = nint(ownership.get("league_size"))
@@ -329,7 +631,10 @@ def active_fixtures(bootstrap: dict) -> tuple[list[dict], dict[int, str]]:
     event = current_event_id(bootstrap)
     if not event:
         return [], {}
-    fixtures = client.fixtures(event)
+    try:
+        fixtures = client.fixtures(event)
+    except Exception:
+        return [], {}
     teams = {nint(t.get("id")): str(t.get("short_name") or t.get("name") or "?") for t in bootstrap.get("teams", []) or []}
     active = [f for f in fixtures if f.get("started") and not f.get("finished")]
     return active, teams
@@ -376,54 +681,310 @@ def fixture_score(f: dict, teams: dict[int, str]) -> str:
     aas = f.get("team_a_score")
     minute = nint(f.get("minutes"))
     base = f"{home} {nint(hs)}–{nint(aas)} {away}"
-    return f"{base} · {minute}'" if minute else base
+    return f"{base} · {minute}'" if minute else f"{base} · LIVE"
 
 
-def render_live(managers: list[dict], bootstrap: dict, compact: bool = False) -> bool:
+def _live_player_meta(row: dict, ownership: dict) -> str:
+    bits = []
+    goals = nint(row.get("live_goals"))
+    assists = nint(row.get("live_assists"))
+    bonus = nint(row.get("live_bonus"))
+    if goals:
+        bits.append(f"{goals} mål")
+    if assists:
+        bits.append(f"{assists} assist" if assists == 1 else f"{assists} assists")
+    if bonus:
+        bits.append(f"{bonus} bonus")
+    owners = list(row.get("owners") or [])
+    if owners:
+        shown = ", ".join(owners[:3])
+        if len(owners) > 3:
+            shown += f" +{len(owners) - 3}"
+        bits.append(f"Eies av {shown}")
+    captain_count = nint(row.get("captain_count"))
+    tc_names = list(row.get("triple_captains") or [])
+    if captain_count:
+        bits.append(f"{captain_count} kaptein" if captain_count == 1 else f"{captain_count} kapteiner")
+    if tc_names:
+        bits.append("TC: " + ", ".join(tc_names[:2]) + (f" +{len(tc_names)-2}" if len(tc_names) > 2 else ""))
+    return " · ".join(bits)
+
+
+def _live_manager_rows(ownership: dict, managers: list[dict], top: int = 5) -> list[dict]:
+    events = ownership.get("manager_events", pd.DataFrame())
+    if events is None or events.empty or "live_gw_points" not in events.columns:
+        return []
+    table = events.copy()
+    table["live_gw_points"] = pd.to_numeric(table["live_gw_points"], errors="coerce").fillna(0).astype(int)
+    table = table.sort_values(["live_gw_points", "manager"], ascending=[False, True]).reset_index(drop=True)
+    table["live_rank"] = range(1, len(table) + 1)
+    chosen = table.head(top).copy()
+    me = my_manager_id(managers)
+    if me and me not in set(chosen["entry"].astype(int).tolist()):
+        mine = table[table["entry"].astype(int) == int(me)]
+        if not mine.empty:
+            chosen = pd.concat([chosen.head(max(0, top - 1)), mine.head(1)], ignore_index=True)
+    rows = []
+    for r in chosen.to_dict("records"):
+        chip = str(r.get("active_chip") or "").strip()
+        meta = str(r.get("team") or "")
+        if chip:
+            meta += (" · " if meta else "") + chip
+        rows.append({
+            "rank": nint(r.get("live_rank")),
+            "who": str(r.get("manager") or ""),
+            "meta": meta,
+            "num": f"{nint(r.get('live_gw_points'))} poeng",
+            "href": manager_href(nint(r.get("entry"))) if nint(r.get("entry")) else "",
+        })
+    return rows
+
+
+def _live_beneficiary_rows(ownership: dict, player_row: dict, top: int = 5) -> list[dict]:
+    """Managers receiving actual live points from the standout player."""
+    picks = ownership.get("picks", pd.DataFrame())
+    events = ownership.get("manager_events", pd.DataFrame())
+    if picks is None or picks.empty:
+        return []
+    element = nint(player_row.get("element"))
+    if not element:
+        return []
+    block = picks[picks["element"].astype(int) == int(element)].copy()
+    if block.empty:
+        return []
+    # multiplier=0 means the player is stranded on the bench and is not currently
+    # helping that manager. Bench Boost has already been normalised to x1.
+    block["gw_contribution"] = pd.to_numeric(block.get("gw_contribution", 0), errors="coerce").fillna(0).astype(int)
+    block = block[block["gw_contribution"] > 0].copy()
+    if block.empty:
+        return []
+    live_totals = {}
+    if events is not None and not events.empty and "live_gw_points" in events.columns:
+        live_totals = {nint(r.get("entry")): nint(r.get("live_gw_points")) for r in events.to_dict("records")}
+    block["live_total"] = block["entry"].map(lambda x: live_totals.get(nint(x), 0))
+    block = block.sort_values(["gw_contribution", "live_total", "manager"], ascending=[False, False, True]).head(top)
+    rows = []
+    for r in block.to_dict("records"):
+        role = "TC" if bool(r.get("is_triple_captain")) else "C" if bool(r.get("is_captain")) else ""
+        meta = str(r.get("team") or "")
+        if role:
+            meta += (" · " if meta else "") + role
+        rows.append({
+            "rank": role,
+            "who": str(r.get("manager") or ""),
+            "meta": meta,
+            "num": f"+{nint(r.get('gw_contribution'))} fra {player_row.get('player')}",
+            "href": manager_href(nint(r.get("entry"))) if nint(r.get("entry")) else "",
+        })
+    return rows
+
+
+def render_live(
+    managers: list[dict],
+    bootstrap: dict,
+    compact: bool = False,
+    ownership: dict | None = None,
+    allow_blocking_ownership: bool = True,
+) -> bool:
+    """Render a compact live newsroom: score, impact, month race and GW race."""
     active, teams = active_fixtures(bootstrap)
     if not active:
         return False
     event = current_event_id(bootstrap)
-    ui.live_panel("  |  ".join(fixture_score(f, teams) for f in active), f"GW{event}")
-    ownership = selected_ownership(managers)
-    players = ownership.get("players", pd.DataFrame())
-    if players.empty:
+    ui.live_scoreboard([fixture_score(f, teams) for f in active], f"GW{event}")
+
+    base = ownership
+    if base is None and allow_blocking_ownership:
+        base = selected_ownership(managers)
+    if not base:
+        st.caption("Henter Lofthus-poengene i bakgrunnen …")
         return True
+
+    try:
+        fresh = refresh_ownership_live(base, client.event_live(int(event))) if event else base
+    except Exception:
+        fresh = base
+
+    players = fresh.get("players", pd.DataFrame())
     active_teams = {nint(f.get(k)) for f in active for k in ("team_h", "team_a")}
-    live = players[players["team_id"].isin(active_teams)].copy()
-    if live.empty:
-        return True
-    live["importance"] = (
-        pd.to_numeric(live["triple_captain_count"], errors="coerce").fillna(0) * 100
-        + pd.to_numeric(live["captain_count"], errors="coerce").fillna(0) * 8
-        + pd.to_numeric(live["ownership_count"], errors="coerce").fillna(0)
-        + pd.to_numeric(live["event_points"], errors="coerce").fillna(0) * 2
-    )
-    live = live.sort_values("importance", ascending=False).head(5 if compact else 10)
-    live_rows = []
-    for r in live.to_dict("records"):
-        tc_names = list(r.get("triple_captains") or [])
-        meta = f"{nint(r.get('ownership_count'))}/{nint(ownership.get('loaded_managers'))} eiere"
-        if nint(r.get("captain_count")):
-            meta += f" · {nint(r.get('captain_count'))} C"
-        if tc_names:
-            shown_tc = ", ".join(tc_names[:2])
-            if len(tc_names) > 2:
-                shown_tc += f" +{len(tc_names) - 2}"
-            meta += f" · TC: {shown_tc}"
-        live_rows.append({
-            "rank": "TC" if tc_names else "C" if nint(r.get("captain_count")) else "",
-            "who": r.get("player"),
-            "meta": meta,
+    live_players = players[players["team_id"].isin(active_teams)].copy() if players is not None and not players.empty else pd.DataFrame()
+    if not live_players.empty:
+        for col in ["event_points", "captain_count", "triple_captain_count", "ownership_count", "live_goals", "live_assists", "live_bonus"]:
+            if col not in live_players.columns:
+                live_players[col] = 0
+        live_players["importance"] = (
+            pd.to_numeric(live_players["event_points"], errors="coerce").fillna(0) * 7
+            + pd.to_numeric(live_players["live_goals"], errors="coerce").fillna(0) * 6
+            + pd.to_numeric(live_players["live_assists"], errors="coerce").fillna(0) * 4
+            + pd.to_numeric(live_players["triple_captain_count"], errors="coerce").fillna(0) * 12
+            + pd.to_numeric(live_players["captain_count"], errors="coerce").fillna(0) * 4
+            + pd.to_numeric(live_players["ownership_count"], errors="coerce").fillna(0)
+        )
+        live_players = live_players.sort_values(["importance", "event_points", "player"], ascending=[False, False, True]).reset_index(drop=True)
+
+    standout = live_players.iloc[0].to_dict() if not live_players.empty else {}
+    beneficiary_rows = _live_beneficiary_rows(fresh, standout, top=5 if compact else 8) if standout else []
+    manager_rows = _live_manager_rows(fresh, managers, top=5 if compact else 8)
+    phase, month_df, month_live = current_month_live_table(managers, bootstrap, fresh)
+
+    # Newspaper logic: one live strip, then three small columns. The point is to
+    # answer 'what is happening and who benefits?' without creating another long page.
+    c1, c2, c3 = st.columns([1.2, 1, 1], gap="large")
+    with c1:
+        title = f"Hvem profiterer på {standout.get('player')}?" if standout else "Hvem profiterer?"
+        ui.live_label(title)
+        if standout:
+            owners = nint(standout.get("ownership_count")); caps = nint(standout.get("captain_count")); pts = nint(standout.get("event_points"))
+            st.caption(f"{pts} poeng live · {owners} eiere" + (f" · {caps} kaptein" if caps == 1 else f" · {caps} kapteiner" if caps > 1 else ""))
+        if beneficiary_rows:
+            ui.rows(beneficiary_rows)
+        elif standout:
+            st.caption("Ingen får tellende poeng fra spilleren akkurat nå.")
+        else:
+            st.caption("Ingen Lofthus-spiller har rukket å gjøre utslag ennå.")
+    with c2:
+        month_title = f"{phase.get('name')} · live" if phase and month_live else "Månedskampen"
+        ui.live_label(month_title)
+        if phase and month_live and not month_df.empty:
+            ui.rows([{
+                "rank": nint(r.get("rank")), "who": str(r.get("manager") or ""), "meta": str(r.get("team") or ""),
+                "num": f"{nint(r.get('points'))} poeng",
+                "href": manager_href(nint(r.get("entry"))) if nint(r.get("entry")) else "",
+            } for r in month_df.head(5 if compact else 8).to_dict("records")])
+        else:
+            st.caption("Live månedstabell kommer når hele ligaens lagdata er klare.")
+    with c3:
+        ui.live_label(f"GW{event} · live")
+        if manager_rows:
+            ui.rows(manager_rows)
+        else:
+            st.caption("Live managerpoeng kommer så snart lagdataene er klare.")
+
+    if not compact and not live_players.empty:
+        ui.live_label("Andre spillere på banen")
+        ui.rows([{
+            "rank": "TC" if nint(r.get("triple_captain_count")) else "C" if nint(r.get("captain_count")) else "",
+            "who": str(r.get("player") or ""), "meta": _live_player_meta(r, fresh),
             "num": f"{nint(r.get('event_points'))} poeng",
-        })
-    ui.rows(live_rows)
-    data_quality_note(ownership)
+        } for r in live_players.head(8).to_dict("records")])
+    data_quality_note(fresh)
     return True
 
 
-def render_month(managers: list[dict], bootstrap: dict, top: int = 5, front: bool = False) -> None:
-    phase, df, is_current_live = display_month_table(managers, bootstrap)
+@st.fragment(run_every="30s")
+def render_home_live_fragment(managers: list[dict], bootstrap: dict) -> None:
+    """Auto-updating live strip without rerunning the rest of the front page."""
+    ownership = home_ownership_async(managers, bootstrap)
+    render_live(
+        managers,
+        bootstrap,
+        compact=True,
+        ownership=ownership,
+        allow_blocking_ownership=False,
+    )
+
+
+@st.fragment(run_every="60s")
+def render_home_news_fragment(managers: list[dict], bootstrap: dict) -> None:
+    """Refresh the newspaper desk without moving the rest of the page."""
+    ownership = home_ownership_async(managers, bootstrap)
+    histories = home_histories_async(managers)
+    if ownership and current_event_id(bootstrap) and not current_event_finished(bootstrap):
+        try:
+            ownership = refresh_ownership_live(ownership, client.event_live(int(current_event_id(bootstrap))))
+        except Exception:
+            pass
+    news, popular = st.columns([1.7, 0.8], gap="large")
+    with news:
+        ui.front_section("Snakkiser", "De største sakene akkurat nå")
+        story_items = front_stories(managers, bootstrap, ownership, histories)
+        if not story_items:
+            story_items = ["Ligaen er i gang. Vi publiserer først når det faktisk har skjedd noe."]
+        ui.editorial_stories(story_items[:4])
+    with popular:
+        ui.front_section("Mest populære", "Topp 3 i Lofthus")
+        if ownership is None:
+            st.caption("Henter eierskap i bakgrunnen …")
+        else:
+            render_popular(ownership, top=3)
+
+
+def _fresh_home_ownership(managers: list[dict], bootstrap: dict) -> dict | None:
+    ownership = home_ownership_async(managers, bootstrap)
+    event = current_event_id(bootstrap) or 0
+    if ownership and event and not current_event_finished(bootstrap):
+        try:
+            return refresh_ownership_live(ownership, client.event_live(int(event)))
+        except Exception:
+            return ownership
+    return ownership
+
+
+@st.fragment(run_every="30s")
+def render_home_scoreline_fragment(managers: list[dict], bootstrap: dict) -> None:
+    """Keep the compact headline strip honest during a live round."""
+    ownership = _fresh_home_ownership(managers, bootstrap)
+    histories = home_histories_async(managers)
+    move = round_movements(managers, history_store)
+    leader = move.get("leader", {})
+    previous = previous_completed_round(managers, bootstrap, histories)
+    winner = previous.get("gw_winner") or (move.get("gw_winner", {}) if current_event_finished(bootstrap) else {})
+
+    live_phase, live_month_df, live_month = current_month_live_table(managers, bootstrap, ownership)
+    if live_phase and live_month:
+        display_phase, month_df, month_is_live = live_phase, live_month_df, True
+    else:
+        display_phase, month_df, month_is_live = display_month_table(managers, bootstrap)
+    month_leader = month_df.iloc[0].to_dict() if not month_df.empty else {}
+    if display_phase:
+        month_name = str(display_phase.get("name") or "måneden").lower()
+        month_label = f"Leder {month_name} måned" if month_is_live else f"Vinner av {month_name} måned"
+    else:
+        month_label = "Månedskampen"
+    ui.home_scoreline(
+        str(leader.get("manager") or "–"),
+        nint(leader.get("points"), nint(leader.get("total"))),
+        str(winner.get("manager") or "–"),
+        nint(winner.get("gw")),
+        str(month_leader.get("manager") or "–"),
+        month_label,
+    )
+
+
+@st.fragment(run_every="30s")
+def render_home_tables_fragment(managers: list[dict], bootstrap: dict) -> None:
+    """The newspaper's two main tables, with the new month turning live immediately."""
+    ownership = _fresh_home_ownership(managers, bootstrap)
+    left, right = st.columns(2, gap="large")
+    with left:
+        ui.front_section("Topp 5", "Sammenlagt")
+        top = sorted(managers, key=lambda m: (nint(m.get("rank"), 10**9), -nint(m.get("total"))))[:5]
+        ui.rows([{
+            "rank": nint(m.get("rank")),
+            "rank_class": "gold" if i == 0 else "silver" if i == 1 else "bronze" if i == 2 else "",
+            "who": manager_name(m),
+            "meta": str(m.get("entry_name") or ""),
+            "num": f"{nint(m.get('total'))} poeng",
+            "href": manager_href(nint(m.get("entry"))) if nint(m.get("entry")) else "",
+        } for i, m in enumerate(top)])
+    with right:
+        render_month(managers, bootstrap, top=5, front=True, ownership=ownership, prefer_live=True)
+
+
+def render_month(
+    managers: list[dict],
+    bootstrap: dict,
+    top: int = 5,
+    front: bool = False,
+    ownership: dict | None = None,
+    prefer_live: bool = False,
+) -> None:
+    if prefer_live and ownership:
+        phase, df, is_current_live = current_month_live_table(managers, bootstrap, ownership)
+        if not is_current_live:
+            phase, df, is_current_live = display_month_table(managers, bootstrap)
+    else:
+        phase, df, is_current_live = display_month_table(managers, bootstrap)
     if phase is None:
         st.caption("Månedstabellen er ikke tilgjengelig akkurat nå.")
         return
@@ -436,7 +997,7 @@ def render_month(managers: list[dict], bootstrap: dict, top: int = 5, front: boo
             "who": r.get("manager"),
             "meta": r.get("team"),
             "num": f"{nint(r.get('points'))} poeng",
-            "href": f"?page=Ligaen&league_view=Manager&manager={nint(r.get('entry'))}" if nint(r.get('entry')) else "",
+            "href": manager_href(nint(r.get("entry"))) if nint(r.get("entry")) else "",
         }
         for i, r in enumerate(df.head(top).to_dict("records"))
     ])
@@ -484,191 +1045,145 @@ def suggested_rival_entries(managers: list[dict], bootstrap: dict, entry: int, l
     return picks[:limit]
 
 
-def render_my_lofthus(managers: list[dict], bootstrap: dict, ownership: dict) -> None:
-    ui.section("Mitt Lofthus")
+def render_my_lofthus(managers: list[dict], bootstrap: dict, ownership: dict) -> int:
     opts = manager_options(managers)
     ids = [x[0] for x in opts]
     labels = dict(opts)
     if not ids:
-        return
-
+        return 0
     if st.session_state.get("v500_my_manager") is not None and nint(st.session_state.get("v500_my_manager")) not in ids:
         st.session_state.pop("v500_my_manager", None)
-    remembered = st.session_state.get("v500_my_manager") or st.session_state.get("v400_my_manager")
-    remembered_id = nint(remembered) if remembered is not None else 0
-    index = ids.index(remembered_id) if remembered_id in ids else None
-    selected = st.selectbox(
-        "Min manager",
-        ids,
-        index=index,
-        placeholder="Velg manager …",
-        format_func=lambda x: labels.get(int(x), str(x)),
-        key="v500_my_manager",
-        label_visibility="collapsed",
-    )
-    if selected is None:
-        st.caption("Velg deg selv for å få avstander, rivaler og de viktigste forskjellene samlet her.")
-        return
+    remembered = my_manager_id(managers)
+    index = ids.index(remembered) if remembered in ids else None
+    if not remembered:
+        st.markdown("<div class='v700-identity-picker'>", unsafe_allow_html=True)
+        selected = st.selectbox(
+            "Gjør forsiden personlig",
+            ids,
+            index=index,
+            placeholder="Hvem er du i Lofthus?",
+            format_func=lambda x: labels.get(int(x), str(x)),
+            key="v500_my_manager",
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+        if selected is None:
+            return 0
+        remembered = int(selected)
+    else:
+        st.session_state["v500_my_manager"] = int(remembered)
 
-    selected = int(selected)
+    selected = int(remembered)
     st.session_state["v400_my_manager"] = selected
-    mmap = manager_map(managers)
-    me = mmap.get(selected)
+    try:
+        st.query_params["me"] = str(selected)
+    except Exception:
+        pass
+    me = manager_map(managers).get(selected)
     if not me:
-        return
+        return 0
 
     ordered = sorted(managers, key=lambda m: (nint(m.get("rank"), 10**9), -nint(m.get("total"))))
-    my_rank = nint(me.get("rank"))
-    my_points = nint(me.get("total"))
+    my_rank = nint(me.get("rank")); my_points = nint(me.get("total"))
+    above = next((m for m in ordered if nint(m.get("rank")) == my_rank - 1), None)
+    below = next((m for m in ordered if nint(m.get("rank")) == my_rank + 1), None)
     fifth = next((m for m in ordered if nint(m.get("rank")) == 5), ordered[min(4, len(ordered)-1)] if ordered else None)
     gap_top5 = max(0, nint(fifth.get("total")) - my_points + 1) if fifth and my_rank > 5 else 0
-    above = next((m for m in ordered if nint(m.get("rank")) == my_rank - 1), None)
     gap_above = max(0, nint(above.get("total")) - my_points + 1) if above else 0
+    movement = nint(me.get("last_rank"), my_rank) - my_rank
 
-    display_phase, month_df, month_live = display_month_table(managers, bootstrap)
+    live_phase, live_month_df, live_month = current_month_live_table(managers, bootstrap, ownership)
+    if live_phase and live_month:
+        phase, month_df = live_phase, live_month_df
+        month_name = f"{str(phase.get('name') or 'Måneden')} · live"
+    else:
+        phase, month_df, _ = display_month_table(managers, bootstrap)
+        month_name = str(phase.get("name") or "Måneden") if phase else "Måneden"
     month_hit = month_df[month_df["entry"] == selected] if not month_df.empty else pd.DataFrame()
     month_rank = nint(month_hit.iloc[0].get("rank")) if not month_hit.empty else 0
-    month_points = nint(month_hit.iloc[0].get("points")) if not month_hit.empty else 0
-    month_label = str(display_phase.get("name") or "Måneden") if display_phase else "Måneden"
 
-    if my_rank <= 5:
-        top5_value = "Inne"
-        top5_label = "i topp 5"
-    else:
-        top5_value = str(gap_top5)
-        top5_label = "poeng til topp 5"
     if above:
-        above_value = str(gap_above)
-        above_label = f"poeng til {manager_name(above)}"
+        gap_metric = (gap_above, f"poeng til {manager_name(above)}")
     else:
-        above_value = "–"
-        above_label = "ingen foran"
-    month_value = f"{month_rank}." if month_rank else "–"
-    month_metric_label = f"{month_label.lower()} · {month_points} poeng"
-
-    insights: list[str] = []
-    if above:
-        insights.append(f"{manager_name(above)} er nærmeste manager foran deg.")
-
-    picks = ownership.get("picks", pd.DataFrame())
-    players = ownership.get("players", pd.DataFrame())
-    if not picks.empty:
-        mine_block = picks[picks["entry"] == selected]
-        captain = mine_block[mine_block["is_captain"]]
-        if not captain.empty:
-            c = captain.iloc[0]
-            label = "Triple Captain" if bool(c.get("is_triple_captain")) else "kaptein"
-            insights.append(f"{c.get('player')} er din {label} denne runden.")
-
-        if above is not None:
+        gap_metric = ("–", "ingen foran")
+    top_metric = ("Inne", "topp 5") if my_rank <= 5 else (gap_top5, "poeng til topp 5")
+    month_metric = (f"{month_rank}." if month_rank else "–", month_name)
+    motion = f"↑ {movement} plasser forrige runde" if movement > 0 else f"↓ {abs(movement)} plasser forrige runde" if movement < 0 else "Samme plass som før forrige runde"
+    chase = f"{manager_name(above)} er nærmest foran" if above else "Du leder ligaen"
+    if below:
+        chase += f" · {manager_name(below)} følger bak"
+    player_angle = ""
+    picks = ownership.get("picks", pd.DataFrame()) if ownership else pd.DataFrame()
+    players = ownership.get("players", pd.DataFrame()) if ownership else pd.DataFrame()
+    if not picks.empty and selected in set(pd.to_numeric(picks.get("entry"), errors="coerce").dropna().astype(int).tolist()):
+        mine = picks[picks["entry"] == selected]
+        cap = mine[mine["is_captain"]]
+        if not cap.empty:
+            crow = cap.iloc[0]
+            player_angle = f"Din kaptein er {crow.get('player')}"
+        if above is not None and not players.empty:
             rival_entry = nint(above.get("entry"))
-            rival_block = picks[picks["entry"] == rival_entry]
-            mine_ids = set(mine_block[~mine_block["on_bench"]]["element"].astype(int).tolist())
-            rival_ids = set(rival_block[~rival_block["on_bench"]]["element"].astype(int).tolist())
-            player_map = {nint(r.get("element")): r for r in players.to_dict("records")} if not players.empty else {}
-            mine_only = sorted(mine_ids - rival_ids, key=lambda pid: -nint(player_map.get(pid, {}).get("season_points")))
-            rival_only = sorted(rival_ids - mine_ids, key=lambda pid: -nint(player_map.get(pid, {}).get("season_points")))
-            if mine_only:
-                pname = player_map.get(mine_only[0], {}).get("player")
-                if pname:
-                    insights.append(f"Du har {pname}; {manager_name(above)} mangler ham.")
-            if rival_only:
-                pname = player_map.get(rival_only[0], {}).get("player")
-                if pname:
-                    insights.append(f"{manager_name(above)} har {pname}; du mangler ham.")
-
-    movement = nint(me.get("last_rank"), my_rank) - my_rank
-    if movement > 0:
-        insights.insert(0, f"Du klatret {movement} plasser forrige runde.")
-    elif movement < 0:
-        insights.insert(0, f"Du falt {abs(movement)} plasser forrige runde.")
-
-    ui.my_lofthus_panel(
-        manager_name(me),
-        my_rank,
-        [(f"{my_points}", "poeng"), (above_value, above_label), (top5_value, top5_label)],
-        ([f"{month_value} i {month_label.lower()} · {month_points} poeng"] if month_rank else []) + insights,
-    )
-
-    suggested = suggested_rival_entries(managers, bootstrap, selected, limit=5)
-    if st.button("Åpne Rivalradar mot managerne rundt meg", key="v500_open_nearby_rivals", use_container_width=True):
-        st.session_state["v400_my_manager"] = selected
-        st.session_state["v400_rivals"] = suggested[:5]
-        st.session_state["v400_main_page"] = "Rivalradar"
-        st.session_state["v406_rival_view"] = "Rivaler"
-        st.rerun()
-
+            rival = picks[picks["entry"] == rival_entry]
+            if not rival.empty:
+                mine_ids = set(mine[~mine["on_bench"]]["element"].astype(int).tolist())
+                rival_ids = set(rival[~rival["on_bench"]]["element"].astype(int).tolist())
+                pmap = {nint(r.get("element")): r for r in players.to_dict("records")}
+                mine_only = sorted(mine_ids - rival_ids, key=lambda pid: -nint(pmap.get(pid, {}).get("season_points")))
+                if mine_only:
+                    pname = pmap.get(mine_only[0], {}).get("player")
+                    if pname:
+                        player_angle += (" · " if player_angle else "") + f"{pname} skiller deg fra {manager_name(above)}"
+    insight = f"{motion} · {chase}" + (f" · {player_angle}" if player_angle else "")
+    ui.personal_home_lead(manager_name(me), str(me.get("entry_name") or ""), my_rank, my_points, [gap_metric, top_metric, month_metric], insight)
+    return selected
 
 def render_home(managers: list[dict], bootstrap: dict) -> None:
-    """Front page ordered like a newspaper: standings first, stories second, tools after."""
-    move = round_movements(managers, history_store)
-    leader = move.get("leader", {})
-    winner = move.get("gw_winner", {})
-    display_phase, month_df, month_is_live = display_month_table(managers, bootstrap)
-    month_leader = month_df.iloc[0].to_dict() if not month_df.empty else {}
-    if display_phase:
-        month_name = str(display_phase.get("name") or "måneden").lower()
-        month_label = f"Leder {month_name} måned" if month_is_live else f"Vinner av {month_name} måned"
-    else:
-        month_label = "Månedskampen"
-
-    # A compact scoreline replaces the oversized hero. The actual tables are the lead story.
-    ui.home_scoreline(
-        str(leader.get("manager") or "–"),
-        nint(leader.get("points"), nint(leader.get("total"))),
-        str(winner.get("manager") or "–"),
-        nint(winner.get("gw")),
-        str(month_leader.get("manager") or "–"),
-        month_label,
-    )
-
-    # FRONT-PAGE LEAD: league and month are the two most important tables.
-    left, right = st.columns(2, gap="large")
-    with left:
-        ui.front_section("Topp 5", "Sammenlagt")
-        top = sorted(managers, key=lambda m: (nint(m.get("rank"), 10**9), -nint(m.get("total"))))[:5]
-        ui.rows([
-            {
-                "rank": nint(m.get("rank")),
-                "rank_class": "gold" if i == 0 else "silver" if i == 1 else "bronze" if i == 2 else "",
-                "who": manager_name(m),
-                "meta": str(m.get("entry_name") or ""),
-                "num": f"{nint(m.get('total'))} poeng",
-                "href": f"?page=Ligaen&league_view=Manager&manager={nint(m.get('entry'))}" if nint(m.get("entry")) else "",
-            }
-            for i, m in enumerate(top)
-        ])
-    with right:
-        render_month(managers, bootstrap, top=5, front=True)
-
-    # Start the expensive 63-manager ownership sweep in the background. The
-    # newspaper front page must render immediately instead of showing a blank
-    # Streamlit spinner while FPL answers dozens of picks requests.
+    """Personal newspaper front page: breaking live, tables, then the news desk."""
+    # Kick off both expensive league-wide jobs immediately, but never make the
+    # visible front page wait for them.
     ownership = home_ownership_async(managers, bootstrap)
+    home_histories_async(managers)
+    selected = render_my_lofthus(managers, bootstrap, ownership or {})
 
-    # EDITORIAL DESK: movement stories are available instantly. Ownership/TC
-    # stories and the popular-player list appear as soon as the background sweep
-    # is ready on a subsequent rerun.
-    news, popular = st.columns([1.7, 0.8], gap="large")
-    with news:
-        ui.front_section("Snakkiser", "Det viktigste fra forrige runde og akkurat nå")
-        story_items = stories(managers, ownership, history_store)
-        if not story_items:
-            story_items = ["Ligaen er i gang. Flere snakkiser kommer når rundene begynner å sette seg."]
-        ui.editorial_stories(story_items[:4])
-    with popular:
-        ui.front_section("Mest populære", "Topp 3 i Lofthus")
-        if ownership is None:
-            st.caption("Henter eierskap i bakgrunnen …")
-        else:
-            render_popular(ownership, top=3)
+    # Without a personal identity, the compact headline strip is itself live-aware.
+    # It therefore switches from an August winner to a September live leader as
+    # soon as the first September points exist.
+    if not selected:
+        render_home_scoreline_fragment(managers, bootstrap)
 
-    # Live is useful when there is actually a match, but must never push the front-page leads down.
-    render_live(managers, bootstrap, compact=True)
+    # LIVE is breaking news, so it belongs high on the front page. It only exists
+    # while a Premier League match is actually in progress.
+    render_home_live_fragment(managers, bootstrap)
 
-    # Personal layer works instantly with league/month data. Player-specific
-    # insights are added when the background ownership result is available.
-    render_my_lofthus(managers, bootstrap, ownership or {})
+    # The two structural lead tables refresh independently. The monthly table
+    # turns into the new month's LIVE race immediately, instead of clinging to August.
+    render_home_tables_fragment(managers, bootstrap)
+
+    render_home_news_fragment(managers, bootstrap)
+
+    # Personal rival strip: only when the owner is known, and only a few names.
+    if selected:
+        suggested = suggested_rival_entries(managers, bootstrap, selected, limit=4)
+        mmap = manager_map(managers); me = mmap.get(selected, {})
+        if suggested:
+            ui.front_section("Dine nærmeste rivaler", "Automatisk valgt fra tabellen og månedskampen")
+            rows_data = []
+            my_points = nint(me.get("total"))
+            for eid in suggested[:4]:
+                rival = mmap.get(eid)
+                if not rival:
+                    continue
+                diff = nint(rival.get("total")) - my_points
+                relation = f"{abs(diff)} poeng foran deg" if diff > 0 else f"{abs(diff)} poeng bak deg" if diff < 0 else "likt med deg"
+                rows_data.append({"rank": f"{nint(rival.get('rank'))}.", "who": manager_name(rival), "meta": str(rival.get("entry_name") or ""), "num": relation, "href": manager_href(eid)})
+            ui.rows(rows_data)
+            if st.button("Analyser disse i Rivalradar", key="v700_home_rivals", use_container_width=True):
+                st.session_state["v400_my_manager"] = selected
+                st.session_state["v400_rivals"] = suggested[:4]
+                st.session_state["v700_rivals"] = suggested[:4]
+                st.session_state["v700_rivals_owner"] = selected
+                st.session_state["v400_main_page"] = "Rivalradar"
+                st.session_state["v406_rival_view"] = "Rivaler"
+                st.rerun()
 
 
 def captain_board_rows(ownership: dict) -> list[dict]:
@@ -781,11 +1296,8 @@ def render_season(managers: list[dict], bootstrap: dict, embedded: bool = False)
     with st.spinner("Henter Lofthus-lag …"):
         ownership = selected_ownership(managers)
     data_quality_note(ownership)
-
-    # Search is the fastest route for a concrete question.
     ui.section("Finn spiller")
-    render_player_search(ownership, "v605_player_search")
-
+    render_player_search(ownership, "v700_player_search")
     players = ownership.get("players", pd.DataFrame())
     cap_rows = captain_board_rows(ownership)
     c1, c2, c3 = st.columns([1.1, 1, 1], gap="large")
@@ -794,11 +1306,10 @@ def render_season(managers: list[dict], bootstrap: dict, embedded: bool = False)
         mini = []
         for i, r in enumerate(cap_rows[:5], start=1):
             bits = []
-            if nint(r.get("regular")):
-                bits.append(f"{nint(r.get('regular'))} C")
-            if nint(r.get("tc")):
-                bits.append(f"{nint(r.get('tc'))} TC")
-            mini.append({"rank": i, "who": r.get("player"), "meta": ", ".join([p.get("name") for p in (r.get("people") or [])[:2]]) + (f" +{len(r.get('people') or [])-2}" if len(r.get('people') or []) > 2 else ""), "num": " · ".join(bits)})
+            if nint(r.get("regular")): bits.append(f"{nint(r.get('regular'))} C")
+            if nint(r.get("tc")): bits.append(f"{nint(r.get('tc'))} TC")
+            people = [p.get("name") for p in (r.get("people") or []) if p.get("name")]
+            mini.append({"rank": i, "who": r.get("player"), "meta": ", ".join(people[:2]) + (f" +{len(people)-2}" if len(people) > 2 else ""), "num": " · ".join(bits)})
         ui.rows(mini)
     with c2:
         st.markdown("<div class='v605-mini-head'><div class='v605-mini-title'>Mest eide</div><div class='v605-mini-note'>Topp 5</div></div>", unsafe_allow_html=True)
@@ -809,66 +1320,96 @@ def render_season(managers: list[dict], bootstrap: dict, embedded: bool = False)
             current = current_event_id(bootstrap) or 1
             dif = players[(players["ownership_count"].between(1, 6)) & ((players["season_points"] >= max(6, current * 3)) | (players["event_points"] >= 4))]
             dif = dif.sort_values(["event_points", "season_points", "ownership_count"], ascending=[False, False, True]).head(5)
-            ui.rows([{
-                "rank": i + 1,
-                "who": r.get("player"),
-                "meta": f"{r.get('club')} · {r.get('position')}",
-                "num": f"{nint(r.get('ownership_count'))} eiere",
-            } for i, r in enumerate(dif.to_dict("records"))])
+            rows_data = []
+            for i, r in enumerate(dif.to_dict("records"), start=1):
+                owners = [str(name) for name in (r.get("owners") or []) if str(name).strip()]
+                form = nfloat(r.get("form"))
+                why = f"{nint(r.get('event_points'))} poeng denne GW · {nint(r.get('season_points'))} totalt"
+                if form > 0:
+                    why += f" · form {form:.1f}"
+                count = nint(r.get("ownership_count"))
+                rows_data.append({
+                    "rank": i, "who": r.get("player"),
+                    "meta_prefix": f"{r.get('club')} · {r.get('position')} · {why} · Eies av:",
+                    "meta_links": owner_links(owners, managers, limit=3),
+                    "num": f"{count} eier" if count == 1 else f"{count} eiere",
+                })
+            ui.rows(rows_data)
         else:
             st.caption("Ingen spillerdata akkurat nå.")
-
-    # Keep the full side-by-side captain explorer, but off the default scroll path.
     with st.expander("Full kapteinsoversikt"):
         ui.captain_board(cap_rows)
-
     st.caption("Månedstabell og rundebevegelser ligger på forsiden og i Ligaen. Spilleroversikt holder seg til spillerne.")
 
+def current_round_pick_map(managers: list[dict], bootstrap: dict) -> dict[int, dict]:
+    """Captain + chip summary for every manager in the current GW.
 
-def current_chip_map(managers: list[dict], bootstrap: dict) -> dict[int, str]:
+    One league-wide picks sweep powers both columns, so the table does not make
+    a separate request for captaincy and chip use. The FPL client still caches
+    each entry payload, which makes later profile clicks cheap.
+    """
     event_id = current_event_id(bootstrap)
     if not event_id:
         return {}
     entries = tuple(sorted(nint(m.get("entry")) for m in managers if nint(m.get("entry"))))
-    cache_key = f"v402_chip_map_{event_id}_{','.join(map(str, entries))}"
-    if cache_key in st.session_state:
+    cache_key = f"v703_pick_map_{event_id}_{','.join(map(str, entries))}"
+    stamp_key = f"{cache_key}_built_at"
+    stale = time.time() - float(st.session_state.get(stamp_key, 0.0)) > 240
+    if cache_key in st.session_state and not stale:
         return st.session_state[cache_key]
+
     payloads, _ = client.picks_many(entries, int(event_id), max_workers=10)
     catalog = player_catalog(bootstrap)
-    out: dict[int, str] = {}
+    out: dict[int, dict] = {}
     for entry, payload in payloads.items():
-        chip = chip_label(payload.get("active_chip"))
-        if not chip:
-            continue
-        label = chip
-        if chip == "Triple Captain":
-            picks = payload.get("picks", []) or []
-            cap = next((p for p in picks if p.get("is_captain")), None)
-            if cap:
-                player = catalog.get(nint(cap.get("element")), {}).get("web_name")
-                if player:
-                    label = f"Triple Captain · {player}"
-        out[int(entry)] = label
+        picks = payload.get("picks", []) or []
+        active_chip = chip_label(payload.get("active_chip"))
+        captain = next((p for p in picks if p.get("is_captain")), None)
+        vice = next((p for p in picks if p.get("is_vice_captain")), None)
+
+        captain_name = "–"
+        captain_role = ""
+        if captain:
+            pid = nint(captain.get("element"))
+            captain_name = str(catalog.get(pid, {}).get("web_name") or f"Spiller {pid}")
+            captain_role = "TC" if active_chip == "Triple Captain" or nint(captain.get("multiplier")) >= 3 else "C"
+
+        vice_name = ""
+        if vice:
+            pid = nint(vice.get("element"))
+            vice_name = str(catalog.get(pid, {}).get("web_name") or f"Spiller {pid}")
+
+        out[int(entry)] = {
+            "captain": captain_name,
+            "captain_role": captain_role,
+            "captain_label": f"{captain_name} ({captain_role})" if captain_role else captain_name,
+            "vice": vice_name,
+            "chip": active_chip,
+        }
+
     st.session_state[cache_key] = out
+    st.session_state[stamp_key] = time.time()
     return out
 
 
 def render_league_table(managers: list[dict], bootstrap: dict) -> None:
-    """Render a compact sports table with click-to-sort headers.
+    """Render the live league table with captaincy visible in every row.
 
-    The displayed # is always the real league position. Sorting only changes row
-    order, never the underlying rank. Chip use sits quietly under the team name.
+    Every row opens the manager profile. The displayed # remains the real league
+    position even when the user sorts another column.
     """
-    chip_by_entry: dict[int, str] = {}
+    pick_by_entry: dict[int, dict] = {}
     try:
-        with st.spinner("Henter chipbruk …"):
-            chip_by_entry = current_chip_map(managers, bootstrap)
+        with st.spinner("Henter kapteiner …"):
+            pick_by_entry = current_round_pick_map(managers, bootstrap)
     except Exception:
-        chip_by_entry = {}
+        pick_by_entry = {}
 
     event_id = current_event_id(bootstrap) or 0
     if event_id and not current_event_finished(bootstrap):
-        st.caption(f"GW{event_id} pågår · poeng og tabellendringer er live.")
+        st.caption(f"GW{event_id} pågår · poeng og tabellendringer er live. Klikk på en manager for å åpne laget.")
+    else:
+        st.caption("Klikk på en manager for å åpne laget.")
 
     data = []
     for m in managers:
@@ -877,13 +1418,15 @@ def render_league_table(managers: list[dict], bootstrap: dict) -> None:
         move = last - rank if rank < 10**9 else 0
         entry = nint(m.get("entry"))
         team_name = str(m.get("entry_name") or "").strip()
-        chip = str(chip_by_entry.get(entry, "") or "").strip()
+        picks = pick_by_entry.get(entry, {}) or {}
         data.append({
             "entry": entry,
             "rank": rank if rank < 10**9 else None,
             "manager": manager_name(m),
             "team": team_name,
-            "chip": chip,
+            "captain": str(picks.get("captain_label") or "–"),
+            "vice": str(picks.get("vice") or ""),
+            "chip": str(picks.get("chip") or ""),
             "gw": nint(m.get("event_total")),
             "points": nint(m.get("total")),
             "move": int(move),
@@ -946,7 +1489,6 @@ def manager_merit_items(name: str, auto_rows: list[dict]) -> list[tuple[int, str
 def render_merits(name: str, auto_rows: list[dict]) -> None:
     ui.honours_panel(manager_merit_items(name, auto_rows))
 
-
 def _rank_text(value: Any) -> str:
     rank = nint(value)
     if rank <= 0:
@@ -1008,27 +1550,28 @@ def preseason_odds_for_manager(managers: list[dict], histories: dict[int, dict],
     return f(r.get("winner_odds")), f(r.get("top3_odds"))
 
 
-def live_odds_for_manager(managers: list[dict], histories: dict[int, dict], bootstrap: dict, entry: int) -> tuple[str, str]:
-    event = current_event_id(bootstrap) or 1
-    signature = tuple((nint(m.get("entry")), nint(m.get("total"))) for m in sorted(managers, key=lambda x: nint(x.get("entry"))))
-    key = f"v605_live_odds_{event}_{hash(signature)}"
+def live_odds_for_manager(managers: list[dict], histories: dict[int, dict], bootstrap: dict, entry: int) -> tuple[str, str, str]:
+    event = current_event_id(bootstrap) or 0
+    signature = tuple((nint(m.get("entry")), nint(m.get("rank")), nint(m.get("total"))) for m in sorted(managers, key=lambda x: nint(x.get("entry"))))
+    key = f"v700_live_market_{event}_{hash(signature)}"
     if key not in st.session_state:
         try:
-            st.session_state[key] = simulate_group(managers, histories, event, history_store, simulations=2600)
+            pre = _preseason_market(managers, histories)
+            st.session_state[key] = build_live_market(managers, histories, event, history_store, preseason=pre)
         except Exception:
             st.session_state[key] = pd.DataFrame()
     result = st.session_state.get(key, pd.DataFrame())
     if result is None or result.empty:
-        return "–", ""
+        return "–", "", ""
     row = result[result["entry"] == int(entry)]
     if row.empty:
-        return "–", ""
-    pct = nfloat(row.iloc[0].get("win_pct"))
-    return decimal_odds_from_pct(pct), fmt_pct(pct)
+        return "–", "", ""
+    r = row.iloc[0]
+    pct = nfloat(r.get("win_pct"))
+    return f"{nfloat(r.get('winner_odds')):.2f}", f"{pct:.1f}%", str(r.get("note") or "")
 
-
-def render_squad(entry: int, managers: list[dict], bootstrap: dict) -> tuple[dict, pd.DataFrame]:
-    ownership = selected_ownership(managers, [entry])
+def render_squad(entry: int, managers: list[dict], bootstrap: dict, ownership: dict | None = None) -> tuple[dict, pd.DataFrame]:
+    ownership = ownership or selected_ownership(managers, [entry])
     squad = manager_squad(ownership, entry)
     if squad.empty:
         st.caption("Troppen kunne ikke lastes.")
@@ -1046,6 +1589,18 @@ def render_manager_profile(entry: int, managers: list[dict], bootstrap: dict, au
     if not m:
         return
     name = manager_name(m)
+
+    ownership = selected_ownership(managers, [entry])
+    squad = manager_squad(ownership, entry)
+    events = ownership.get("manager_events", pd.DataFrame())
+    live_gw = nint(m.get("event_total"))
+    if squad is not None and not squad.empty:
+        gross = int(pd.to_numeric(squad.get("gw_contribution", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+        hit = 0
+        if events is not None and not events.empty:
+            hit = nint(events.iloc[0].get("event_transfers_cost"))
+        live_gw = gross - hit
+
     phase, month_df, month_live = display_month_table(managers, bootstrap)
     month_row = month_df[month_df["entry"] == int(entry)] if not month_df.empty else pd.DataFrame()
     month_rank = nint(month_row.iloc[0].get("rank")) if not month_row.empty else 0
@@ -1056,30 +1611,41 @@ def render_manager_profile(entry: int, managers: list[dict], bootstrap: dict, au
         [
             (f"{nint(m.get('rank'))}.", "Plass"),
             (nint(m.get("total")), "Poeng"),
-            (nint(m.get("event_total")), "Denne GW"),
+            (live_gw, "Denne GW · live" if not current_event_finished(bootstrap) else "Denne GW"),
             (f"{month_rank}." if month_rank else "–", phase["name"] if phase else "Måneden"),
         ],
     )
 
-    left, right = st.columns([2.05, 0.95], gap="large")
+    if squad is not None and not squad.empty:
+        cap = squad[squad["is_captain"]]
+        if not cap.empty:
+            crow = cap.iloc[0]
+            role = "TC" if bool(crow.get("is_triple_captain")) else "C"
+            chip = str(crow.get("active_chip") or "")
+            extra = f" · {chip}" if chip and chip != "Triple Captain" else ""
+            ui.inline_note("Kaptein", f"{crow.get('player')} ({role}){extra}")
+
+    left, right = st.columns([2.15, 0.85], gap="large")
     with left:
         render_merits(name, auto_rows)
         ui.section("Form")
         entry_history, histories = render_form(managers, entry)
         render_chip_history(entry_history)
+        render_squad(entry, managers, bootstrap, ownership=ownership)
     with right:
         stats, season_rows = career_summary(entry_history)
-        ui.career_panel(stats, season_rows)
         pre_win, pre_top3 = preseason_odds_for_manager(managers, histories, entry)
-        live_win, live_pct = live_odds_for_manager(managers, histories, bootstrap, entry)
-        ui.manager_odds_panel(pre_win, pre_top3, live_win, live_pct)
-
-    ownership, squad = render_squad(entry, managers, bootstrap)
-
-    if st.button("Åpne i Rivalradar", key=f"rr_from_{entry}", use_container_width=True):
-        st.session_state["v400_my_manager"] = int(entry)
-        st.session_state["v400_main_page"] = "Rivalradar"
-        st.rerun()
+        live_win, live_pct, live_note = live_odds_for_manager(managers, histories, bootstrap, entry)
+        ui.career_odds_panel(stats, season_rows, pre_win, pre_top3, live_win, live_pct, live_note)
+        if st.button("Åpne i Rivalradar", key=f"rr_from_{entry}", use_container_width=True):
+            st.session_state["v400_my_manager"] = int(entry)
+            st.session_state["v500_my_manager"] = int(entry)
+            try:
+                st.query_params["me"] = str(int(entry))
+            except Exception:
+                pass
+            st.session_state["v400_main_page"] = "Rivalradar"
+            st.rerun()
 
 
 def render_compare(managers: list[dict], bootstrap: dict) -> None:
@@ -1157,16 +1723,33 @@ def render_compare(managers: list[dict], bootstrap: dict) -> None:
 
 
 def render_league(managers: list[dict], bootstrap: dict, auto_rows: list[dict]) -> None:
-    ui.page_title("Ligaen", "Tabellen, managerne og oddsen som lå der før sesongstart.")
-    view = ui.nav(["Tabell", "Manager", "Sammenlign", "Odds før sesongstart"], "v405_league_view", "Tabell")
+    # Manager profiles are sub-pages reached by clicking a person anywhere in the
+    # product. They are deliberately not a redundant top-level tab.
+    requested_manager = 0
+    try:
+        requested_manager = nint(st.query_params.get("manager"))
+    except Exception:
+        requested_manager = 0
+    valid_entries = {nint(m.get("entry")) for m in managers if nint(m.get("entry"))}
+    if requested_manager in valid_entries:
+        if st.button("← Tilbake til tabellen", key=f"back_from_manager_{requested_manager}"):
+            try:
+                if "manager" in st.query_params:
+                    del st.query_params["manager"]
+                if "league_view" in st.query_params:
+                    del st.query_params["league_view"]
+            except Exception:
+                pass
+            st.session_state["v405_league_view"] = "Tabell"
+            st.session_state.pop("v400_manager_select", None)
+            st.rerun()
+        render_manager_profile(requested_manager, managers, bootstrap, auto_rows)
+        return
+
+    ui.page_title("Ligaen", "Tabellen, sammenligningene og oddsen som lå der før sesongstart.")
+    view = ui.nav(["Tabell", "Sammenlign", "Odds før sesongstart"], "v405_league_view", "Tabell")
     if view == "Tabell":
         render_league_table(managers, bootstrap)
-    elif view == "Manager":
-        opts = manager_options(managers); ids = [x[0] for x in opts]; labels = dict(opts)
-        if st.session_state.get("v400_manager_select") not in ids:
-            st.session_state.pop("v400_manager_select", None)
-        entry = st.selectbox("Finn manager", ids, format_func=lambda x: labels.get(int(x), str(x)), key="v400_manager_select")
-        render_manager_profile(int(entry), managers, bootstrap, auto_rows)
     elif view == "Sammenlign":
         render_compare(managers, bootstrap)
     else:
@@ -1181,157 +1764,119 @@ def render_candidate_list(df: pd.DataFrame, title: str, rival_n: int, mode: str,
         return
     items = []
     for i, r in enumerate(df.head(limit).to_dict("records")):
-        rival_count = nint(r.get("rival_count"))
+        rival_count = nint(r.get("rival_count")); owners = list(r.get("rival_owners") or []); missing = list(r.get("rival_missing") or [])
         if mode == "cover":
-            num = f"{rival_count}/{rival_n} rivaler har"
+            names = owners; prefix = "Har:"
+            num = ", ".join(names[:2]) + (f" +{len(names)-2}" if len(names) > 2 else "") if names else "Ingen"
         elif mode == "keep":
-            num = f"{max(0, rival_n - rival_count)}/{rival_n} rivaler mangler"
+            names = missing; prefix = "Mangler hos:"
+            num = ", ".join(names[:2]) + (f" +{len(names)-2}" if len(names) > 2 else "") if names else "Ingen"
         else:
-            num = "Ingen rivaler har" if rival_count == 0 else f"{rival_count}/{rival_n} rivaler har"
-        owners = list(r.get("rival_owners") or [])
-        missing = list(r.get("rival_missing") or [])
-        if mode == "cover" and owners:
-            rival_text = f" · Har: {', '.join(owners)}"
-        elif mode == "keep" and missing:
-            rival_text = f" · Mangler hos: {', '.join(missing)}"
-        elif mode == "attack" and not owners:
-            rival_text = " · Ingen av de valgte rivalene eier ham"
-        else:
-            rival_text = f" · Har: {', '.join(owners)}" if owners else ""
+            names = owners; prefix = "Har:"
+            num = "Ingen rivaler" if not names else ", ".join(names[:2]) + (f" +{len(names)-2}" if len(names) > 2 else "")
         items.append({
             "rank": i + 1,
             "who": r.get("web_name"),
-            "meta": f"{r.get('club')} · {r.get('position')} · {fmt_price(r.get('current_price'))} · {r.get('outlook_label')}{rival_text}",
+            "meta": f"{r.get('club')} · {r.get('position')} · {fmt_price(r.get('current_price'))} · {r.get('outlook_label')} · {prefix} {', '.join(names) if names else 'ingen'}",
             "num": num,
         })
     ui.rows(items)
 
-
 def render_rival_matchup(managers: list[dict], bootstrap: dict) -> None:
     opts = manager_options(managers); ids = [x[0] for x in opts]; labels = dict(opts)
-    default_me = st.session_state.get("v400_my_manager")
+    default_me = my_manager_id(managers) or st.session_state.get("v400_my_manager")
     if default_me not in ids:
         default_me = ids[0] if ids else None
     me = st.selectbox("Min manager", ids, index=ids.index(default_me) if default_me in ids else 0, format_func=lambda x: labels.get(int(x), str(x)), key="v400_my_manager")
-    rival_choices = [x for x in ids if int(x) != int(me)]
-    suggestion_signature = int(me)
-    if st.session_state.get("v600_rival_suggestion_for") != suggestion_signature:
-        st.session_state["v400_rivals"] = suggested_rival_entries(managers, bootstrap, int(me), limit=5)
-        st.session_state["v600_rival_suggestion_for"] = suggestion_signature
-    current_rivals = [int(x) for x in (st.session_state.get("v400_rivals") or []) if int(x) in rival_choices]
-    st.session_state["v400_rivals"] = current_rivals
-    rivals = st.multiselect("Rivaler", rival_choices, max_selections=8, format_func=lambda x: labels.get(int(x), str(x)), key="v400_rivals")
+    suggested = suggested_rival_entries(managers, bootstrap, int(me), limit=5) if me else []
+    if "v400_rivals" not in st.session_state:
+        st.session_state["v400_rivals"] = suggested
+    valid_rivals = {x for x in ids if x != me}
+    if st.session_state.get("v700_rivals_owner") != int(me) or any(x not in valid_rivals for x in st.session_state.get("v700_rivals", [])):
+        st.session_state["v700_rivals"] = [x for x in st.session_state.get("v400_rivals", suggested) if x in valid_rivals][:8]
+        if not st.session_state["v700_rivals"]:
+            st.session_state["v700_rivals"] = suggested[:5]
+        st.session_state["v700_rivals_owner"] = int(me)
+    rivals = st.multiselect("Rivaler", [x for x in ids if x != me], max_selections=8, format_func=lambda x: labels.get(int(x), str(x)), key="v700_rivals")
+    st.session_state["v400_rivals"] = rivals
     c1, c2, c3 = st.columns(3)
-    with c1:
-        period = st.selectbox("Periode", ["Neste GW", "Neste 3 GW", "Neste 5 GW", "Resten av måneden", "Sesongen"], index=1, key="v400_period")
-    with c2:
-        goal = st.selectbox("Mål", ["Slå disse managerne", "Vinn måneden", "Kom topp 3", "Ta igjen manageren foran", "Forsvar ledelsen", "Vinn ligaen"], key="v400_goal")
-    with c3:
-        risk = st.selectbox("Risiko", ["Trygt", "Balansert", "Aggressivt"], index=1, key="v400_risk")
+    with c1: period = st.selectbox("Periode", ["Neste GW", "Neste 3 GW", "Neste 5 GW", "Resten av måneden", "Sesongen"], index=1, key="v400_period")
+    with c2: goal = st.selectbox("Mål", ["Slå disse managerne", "Vinn måneden", "Kom topp 3", "Ta igjen manageren foran", "Forsvar ledelsen", "Vinn ligaen"], key="v400_goal")
+    with c3: risk = st.selectbox("Risiko", ["Trygt", "Balansert", "Aggressivt"], index=1, key="v400_risk")
     if not rivals:
         st.caption("Velg minst én rival.")
         return
     run = st.button("Analyser rivalene", type="primary", use_container_width=True, key="v400_run_rivals")
     signature = (int(me), tuple(sorted(int(x) for x in rivals)), period, goal, risk)
-    if run or st.session_state.get("v400_rival_signature") != signature:
-        if not run:
-            st.caption("Trykk «Analyser rivalene» når du er klar.")
-            return
+    if run:
         names = ", ".join(labels.get(int(x), str(x)) for x in rivals)
         with st.spinner(f"Analyserer {labels.get(int(me), me)} mot {names} …"):
             result = rival_analysis(client, managers, history_store, int(me), [int(x) for x in rivals], period, risk, goal)
         st.session_state["v400_rival_signature"] = signature
         st.session_state["v400_rival_result"] = result
+    elif st.session_state.get("v400_rival_signature") != signature:
+        st.caption("Trykk «Analyser rivalene» når du er klar.")
+        return
     result = st.session_state.get("v400_rival_result")
     if not result or result.get("error"):
-        if result and result.get("error"):
-            st.warning(result["error"])
+        if result and result.get("error"): st.warning(result["error"])
         return
-    ownership = result["ownership"]
-    data_quality_note(ownership)
-    rival_n = nint(result.get("rival_n"), len(rivals))
-    strategy_context = str(result.get("strategy_context") or "neutral")
-    ui.callout(
-        "Din situasjon",
-        str(result.get("strategy_text") or ""),
-        "green" if strategy_context == "defend" else "red" if strategy_context == "chase" else "",
-    )
-    render_candidate_list(result.get("they_have_i_lack"), "Dekk deg", rival_n, "cover")
-    render_candidate_list(result.get("i_have_they_lack"), "Behold", rival_n, "keep")
-    render_candidate_list(result.get("nobody_has"), "Hent", rival_n, "attack")
+    ownership = result["ownership"]; data_quality_note(ownership)
+    rival_n = nint(result.get("rival_n"), len(rivals)); strategy_context = str(result.get("strategy_context") or "neutral")
+    ui.callout("Din situasjon", str(result.get("strategy_text") or ""), "green" if strategy_context == "defend" else "red" if strategy_context == "chase" else "")
 
-    ui.section("Trekk å vurdere")
+    overview_tab, transfer_tab, captain_tab = st.tabs(["Oversikt", "Trekk", "Kaptein"])
+    with overview_tab:
+        cols = st.columns(3, gap="large")
+        with cols[0]: render_candidate_list(result.get("they_have_i_lack"), "Dekk deg", rival_n, "cover", limit=3)
+        with cols[1]: render_candidate_list(result.get("i_have_they_lack"), "Behold", rival_n, "keep", limit=3)
+        with cols[2]: render_candidate_list(result.get("nobody_has"), "Hent", rival_n, "attack", limit=3)
+
     suggestions = result.get("suggestions", pd.DataFrame())
-    if suggestions is None or suggestions.empty:
-        st.caption("Fant ingen tydelige én-for-én-trekk som passer budsjett og posisjon.")
-    else:
-        for i, r in enumerate(suggestions.head(3).to_dict("records")):
-            if i == 0:
-                label = "Beste treff"
-            elif risk == "Trygt":
-                label = "Tryggere"
-            elif risk == "Aggressivt":
-                label = "Offensivt"
-            else:
-                label = "Alternativ"
-            meta = (
-                f"{r['out_player']} ({fmt_price(r.get('selling_price'))}) → "
-                f"{r['in_player']} ({fmt_price(r.get('in_price'))}) · {fmt_price(r.get('budget_after'))} igjen"
-            )
-            ui.recommendation(r["in_player"], label, meta, r.get("reasons") or [])
-        if not bool(suggestions.iloc[0].get("selling_price_exact")):
-            st.caption("Minst ett forslag bruker estimert salgspris fordi FPL ikke leverte managerens eksakte salgspris i picks-dataene.")
-
-    ui.section("Kaptein")
-    caps = result.get("captains", pd.DataFrame())
-    if caps is not None and not caps.empty:
-        labels_cap = ["Beste valg", "Tryggere alternativ", "Mer offensivt"]
-        cap_items = []
-        for i, r in enumerate(caps.to_dict("records")):
-            base = labels_cap[i] if i < len(labels_cap) else "Alternativ"
-            rival_cap_names = list(r.get("rival_captain_names") or [])
-            if rival_cap_names:
-                preview = ", ".join(rival_cap_names[:3])
-                if len(rival_cap_names) > 3:
-                    preview += f" +{len(rival_cap_names) - 3}"
-                base += f" · Kaptein hos {preview} denne runden"
-            cap_items.append({
-                "rank": i + 1,
-                "who": r.get("web_name"),
-                "meta": base,
-                "num": f"{nint(r.get('outlook_expected_low'))}–{nint(r.get('outlook_expected_high'))} poeng",
-            })
-        ui.rows(cap_items)
-
-    with st.expander("Mer analyse"):
-        ui.section("Hva om?")
+    with transfer_tab:
+        ui.section("Trekk å vurdere")
         if suggestions is None or suggestions.empty:
-            st.caption("Ingen transfer å simulere.")
+            st.caption("Fant ingen tydelige én-for-én-trekk som passer budsjett og posisjon.")
         else:
-            choices = list(range(min(3, len(suggestions))))
-            idx = st.selectbox("Trekk", choices, format_func=lambda i: f"{suggestions.iloc[i]['out_player']} → {suggestions.iloc[i]['in_player']}", key="v400_whatif")
-            r = suggestions.iloc[int(idx)].to_dict()
-            ui.stat_strip([
-                (fmt_price(r.get("budget_after")), "Budsjett etter"),
-                (f"{nint(r.get('rival_count'))}/{rival_n}", "Rivaler med spilleren"),
-                (f"{nint(r.get('expected_low'))}–{nint(r.get('expected_high'))}", "Forventet område"),
-            ])
-            st.caption("Anslag, ikke fasit.")
+            for i, r in enumerate(suggestions.head(3).to_dict("records")):
+                label = "Beste treff" if i == 0 else "Tryggere" if risk == "Trygt" else "Offensivt" if risk == "Aggressivt" else "Alternativ"
+                meta = f"{r['out_player']} ({fmt_price(r.get('selling_price'))}) → {r['in_player']} ({fmt_price(r.get('in_price'))}) · {fmt_price(r.get('budget_after'))} igjen"
+                ui.recommendation(r["in_player"], label, meta, r.get("reasons") or [])
+            if not bool(suggestions.iloc[0].get("selling_price_exact")):
+                st.caption("Minst ett forslag bruker estimert salgspris fordi FPL ikke leverte eksakt salgspris.")
+        with st.expander("Hva om?"):
+            if suggestions is None or suggestions.empty:
+                st.caption("Ingen transfer å simulere.")
+            else:
+                choices = list(range(min(3, len(suggestions))))
+                idx = st.selectbox("Trekk", choices, format_func=lambda i: f"{suggestions.iloc[i]['out_player']} → {suggestions.iloc[i]['in_player']}", key="v700_whatif")
+                r = suggestions.iloc[int(idx)].to_dict()
+                ui.stat_strip([(fmt_price(r.get("budget_after")), "Budsjett etter"), (f"{nint(r.get('rival_count'))}/{rival_n}", "Rivaler med spilleren"), (f"{nint(r.get('expected_low'))}–{nint(r.get('expected_high'))}", "Forventet område")])
+                st.caption("Anslag, ikke fasit.")
 
-        show_odds = st.toggle("Vis modellens anslag", key="v400_rival_odds")
-        if show_odds:
+    with captain_tab:
+        caps = result.get("captains", pd.DataFrame())
+        ui.section("Kaptein")
+        if caps is None or caps.empty:
+            st.caption("Ingen tydelig kapteinanbefaling akkurat nå.")
+        else:
+            cap_items = []
+            labels_cap = ["Beste valg", "Tryggere alternativ", "Mer offensivt"]
+            for i, r in enumerate(caps.to_dict("records")):
+                base = labels_cap[i] if i < len(labels_cap) else "Alternativ"
+                names = list(r.get("rival_captain_names") or [])
+                if names:
+                    base += " · Kaptein hos " + ", ".join(names[:3]) + (f" +{len(names)-3}" if len(names) > 3 else "")
+                cap_items.append({"rank": i + 1, "who": r.get("web_name"), "meta": base, "num": f"{nint(r.get('outlook_expected_low'))}–{nint(r.get('outlook_expected_high'))} poeng"})
+            ui.rows(cap_items)
+        with st.expander("Modellens anslag"):
             selected = [int(me)] + [int(x) for x in rivals]
             selected_managers = [m for m in managers if nint(m.get("entry")) in selected]
-            with st.spinner("Beregner gruppen …"):
-                histories, _ = histories_for(selected)
-                month_scores = current_month_points_map(managers, bootstrap) if goal == "Vinn måneden" else None
-                events_n = max(1, len(result.get("event_ids") or [1]))
-                odds = compare_group_odds(selected_managers, histories, current_event_id(bootstrap) or 1, history_store, period_events=events_n, month_scores=month_scores)
-            ui.section("Modellens anslag")
+            histories, _ = histories_for(selected)
+            month_scores = current_month_points_map(managers, bootstrap) if goal == "Vinn måneden" else None
+            events_n = max(1, len(result.get("event_ids") or [1]))
+            odds = compare_group_odds(selected_managers, histories, current_event_id(bootstrap) or 1, history_store, period_events=events_n, month_scores=month_scores)
             ui.rows([{"rank": i + 1, "who": r.get("manager"), "meta": f"Odds {decimal_odds_from_pct(r.get('win_pct'))}", "num": fmt_pct(r.get("win_pct"))} for i, r in enumerate(odds.to_dict("records"))])
-            st.caption("Historikk teller mindre jo lenger sesongen går.")
-
-
 
 def champion_season_history(managers: list[dict]) -> pd.DataFrame:
     """Build verified score/rank rows for every recorded LRO league champion.
@@ -1607,14 +2152,18 @@ try:
     requested_page = st.query_params.get("page")
     requested_view = st.query_params.get("league_view")
     requested_manager = st.query_params.get("manager")
-    deep_link_signature = f"{requested_page}|{requested_view}|{requested_manager}"
+    requested_me = st.query_params.get("me")
+    deep_link_signature = f"{requested_page}|{requested_view}|{requested_manager}|{requested_me}"
     if st.session_state.get("_v600_consumed_deeplink") != deep_link_signature:
         if requested_page in {"Forside", "Ligaen", "Rivalradar", "Hall of Fame"}:
             st.session_state["v400_main_page"] = requested_page
-        if requested_view in {"Tabell", "Manager", "Sammenlign", "Odds før sesongstart"}:
+        if requested_view in {"Tabell", "Sammenlign", "Odds før sesongstart"}:
             st.session_state["v405_league_view"] = requested_view
         if requested_manager and str(requested_manager).isdigit():
             st.session_state["v400_manager_select"] = int(requested_manager)
+        if requested_me and str(requested_me).isdigit():
+            st.session_state["v500_my_manager"] = int(requested_me)
+            st.session_state["v400_my_manager"] = int(requested_me)
         st.session_state["_v600_consumed_deeplink"] = deep_link_signature
 except Exception:
     pass
@@ -1641,7 +2190,7 @@ else:
 
 # Hidden developer health data: no sidebar, no normal UI noise.
 if st.query_params.get("debug") == "1" and bootstrap:
-    with st.expander("V600 debug"):
+    with st.expander("V703 debug"):
         st.code(APP_VERSION)
         issues = health_check(managers, bootstrap)
         st.write(issues or ["Ingen kjente health-check-avvik."])

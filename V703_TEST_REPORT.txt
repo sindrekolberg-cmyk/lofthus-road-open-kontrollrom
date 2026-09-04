@@ -1,0 +1,20 @@
+Lofthus Road Open V703 test report
+===================================
+
+PASS: Python compile — app.py + all lro_*.py modules
+PASS: League table has a dedicated Kaptein column
+PASS: Captain payload renders C and TC labels
+PASS: Vice captain is included as secondary desktop information
+PASS: Active chip remains visible in the league row
+PASS: Entire league row is keyboard/click navigable to manager profile
+PASS: Manager profile route no longer depends on a visible Manager tab
+PASS: Visible league navigation is Tabell / Sammenlign / Odds før sesongstart
+PASS: Manager profile reuses current picks and displays captain + live GW score
+PASS: Existing V702 live-front-page order preserved: LIVE before main tables
+PASS: Existing live monthly table logic preserved for the new calendar month
+PASS: Existing Snakkiser match-state/editorial priority logic preserved
+PASS: Embedded league-table JavaScript passes Node syntax check
+
+Not run in build container:
+- Live FPL HTTP smoke test (external network/runtime not available here)
+- Full Streamlit browser click-through (Streamlit package/runtime not installed in build container)
