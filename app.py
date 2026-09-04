@@ -61,7 +61,7 @@ from lro_archive import SnapshotStore
 from lro_odds import build_live_market, build_preseason_odds, compare_group_odds, decimal_odds_from_pct, simulate_group
 import lro_ui as ui
 
-APP_VERSION = "lofthus-road-open-v704-manager-menu"
+APP_VERSION = "lofthus-road-open-v705-live-manager-form"
 DATA_DIR = Path(__file__).resolve().parent / "data"
 PRESEASON_ODDS_FILE = DATA_DIR / "preseason_odds_2026_27.csv"
 
@@ -1493,11 +1493,57 @@ def render_league_table(managers: list[dict], bootstrap: dict) -> None:
         cols[6].markdown(f"<div class='v704-num {move_cls}'>{move_text}</div>", unsafe_allow_html=True)
         st.markdown("<div class='v704-divider'></div>", unsafe_allow_html=True)
 
-def render_form(managers: list[dict], entry: int) -> tuple[dict, dict[int, dict]]:
+def render_form(managers: list[dict], entry: int, bootstrap: dict | None = None) -> tuple[dict, dict[int, dict]]:
+    """Render recent form, using the live LRO score for an active GW.
+
+    FPL's ``entry/{id}/history`` endpoint is not a live endpoint. During an
+    active gameweek it can contain a current-GW row with 0/stale points even
+    while the league table already has the manager's live score. The profile
+    header therefore looked correct while the Form section claimed 0 points.
+
+    Past GWs still come from entry history. Only the active GW is overlaid with
+    the same live manager values used by the league table/profile header.
+    """
     with st.spinner("Henter form …"):
         histories, errors = histories_for([nint(m.get("entry")) for m in managers])
     entry_history = histories.get(int(entry), {}) or {}
     form = manager_form_from_histories(managers, histories, int(entry), 5)
+
+    current = current_event_id(bootstrap or {}) if bootstrap else None
+    event_meta = next(
+        (e for e in (bootstrap or {}).get("events", []) or [] if nint(e.get("id")) == nint(current)),
+        None,
+    )
+    is_live = bool(event_meta and event_meta.get("is_current") and not event_meta.get("finished"))
+
+    if is_live and current:
+        selected = next((m for m in managers if nint(m.get("entry")) == int(entry)), None)
+        if selected is not None:
+            live_points = nint(selected.get("event_total"))
+            live_total = nint(selected.get("total"))
+            live_league_rank = nint(selected.get("rank"))
+            # FPL ranking semantics: tied scores share the best applicable rank.
+            live_round_rank = 1 + sum(
+                1 for m in managers if nint(m.get("event_total")) > live_points
+            )
+            live_row = {
+                "entry": int(entry),
+                "manager": manager_name(selected),
+                "event": int(current),
+                "points": live_points,
+                "total_points": live_total,
+                "overall_rank": 0,
+                "round_rank": live_round_rank,
+                "league_rank": live_league_rank,
+                "is_live": True,
+            }
+            if form.empty:
+                form = pd.DataFrame([live_row])
+            else:
+                form = form[form["event"].map(nint) != int(current)].copy()
+                form = pd.concat([form, pd.DataFrame([live_row])], ignore_index=True)
+            form = form.sort_values("event").tail(5).reset_index(drop=True)
+
     if form.empty:
         own = entry_history.get("current", []) or []
         if own:
@@ -1506,15 +1552,17 @@ def render_form(managers: list[dict], entry: int) -> tuple[dict, dict[int, dict]
         else:
             st.caption("Formdata er ikke tilgjengelig.")
         return entry_history, histories
-    ui.rows([
-        {
+
+    rows = []
+    for r in form.to_dict("records"):
+        live_suffix = " · live" if bool(r.get("is_live")) else ""
+        rows.append({
             "rank": f"GW{nint(r.get('event'))}",
             "who": f"{nint(r.get('points'))} poeng",
-            "meta": f"{nint(r.get('round_rank'))}. beste i Lofthus",
-            "num": f"{nint(r.get('league_rank'))}. sammenlagt",
-        }
-        for r in form.to_dict("records")
-    ])
+            "meta": f"{nint(r.get('round_rank'))}. beste i Lofthus{live_suffix}",
+            "num": f"{nint(r.get('league_rank'))}. sammenlagt{live_suffix}",
+        })
+    ui.rows(rows)
     return entry_history, histories
 
 
@@ -1667,7 +1715,7 @@ def render_manager_profile(entry: int, managers: list[dict], bootstrap: dict, au
     with left:
         render_merits(name, auto_rows)
         ui.section("Form")
-        entry_history, histories = render_form(managers, entry)
+        entry_history, histories = render_form(managers, entry, bootstrap)
         render_chip_history(entry_history)
         render_squad(entry, managers, bootstrap)
     with right:

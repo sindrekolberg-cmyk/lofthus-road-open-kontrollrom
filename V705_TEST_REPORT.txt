@@ -1,0 +1,13 @@
+Lofthus Road Open V705 test report
+===================================
+
+PASS: Python compile — app.py + all lro_*.py modules + archive script
+PASS: render_form accepts bootstrap and identifies active unfinished GW
+PASS: active GW overlays stale entry-history points with manager event_total
+PASS: active GW round rank is calculated from all managers' live event_total
+PASS: active GW league rank uses current live manager rank
+PASS: previous GWs remain sourced from official entry history
+PASS: active form row is visibly marked live
+
+Not run in build container:
+- Live FPL HTTP smoke test (external networking unavailable here)
