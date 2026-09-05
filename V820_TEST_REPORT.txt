@@ -1,0 +1,26 @@
+LOFTHUS ROAD OPEN V820 · TEST REPORT
+=====================================
+
+PASS  Python compile: app.py, lro_*.py, lro_pages/*.py, scripts/*.py
+PASS  11/11 unittest core/integration tests
+PASS  Captain multiplier
+PASS  Triple Captain multiplier
+PASS  Transfer hits
+PASS  Live ranking / one-truth integration
+PASS  Rank ties
+PASS  Provisional live movement wording
+PASS  Newsroom persistence
+PASS  Unplayed zero is not called a failure
+PASS  Rasmus Grytvik-Skoglund 2024/25 bronze correction
+PASS  Explicit historical archive values are never overwritten
+PASS  Manager routing / deep-link shape
+PASS  Current Premier League player image path uses premierleague25 + photo id
+PASS  Home source uses sports_front / sports_news / sports_popular_players
+PASS  Home no longer uses the three-card status_strip
+PASS  Static 1440px design mock rendered and inspected during implementation
+
+NOT RUN  Full Streamlit runtime smoke (Streamlit unavailable in build container)
+NOT RUN  Live external FPL HTTP smoke from Python (container has no outbound network)
+NOT RUN  Pixel-perfect browser comparison on the deployed Streamlit app
+
+Result: package is compile-clean and core tests pass. Deployment rendering remains the final real-world check.

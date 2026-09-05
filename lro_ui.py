@@ -107,12 +107,89 @@ details.v8-manager{position:relative;display:inline-block;max-width:100%}details
 """
 
 
+CSS_V820 = r"""
+<style>
+/* V820 SPORTSFRONT
+   The homepage is intentionally treated as an editorial sports front, not a
+   dashboard. Secondary analysis still uses the compact V8 primitives below. */
+:root{
+  --v820-bg:#f4f1e9;--v820-ink:#0a1724;--v820-navy:#061a2c;--v820-navy2:#0b2d4a;
+  --v820-paper:#fffdf8;--v820-line:#d9d4ca;--v820-muted:#727d89;--v820-gold:#b98e31;
+  --v820-green:#07855b;--v820-red:#c74440;--v820-soft:#ece7dc;
+}
+html,body,[data-testid="stAppViewContainer"]{background:var(--v820-bg)!important}
+.block-container{max-width:1420px!important;padding:.72rem 1.25rem 3.4rem!important}
+
+/* tighter masthead: identity without eating the first screen */
+.v8-shell{border-radius:17px!important;padding:.92rem 1.15rem .68rem!important;margin-bottom:.55rem!important;box-shadow:0 13px 34px rgba(6,20,34,.10)!important;background:var(--v820-navy)!important}
+.v8-brand{font-size:clamp(1.75rem,3vw,2.55rem)!important;letter-spacing:-.06em!important}
+.v8-season{font-size:.56rem!important;margin-top:.3rem!important}.v8-shell-nav{margin-top:.62rem!important;padding-top:.52rem!important}
+.v8-shell-nav a{font-size:.69rem!important;padding:.32rem .5rem!important}
+
+/* small editorial ticker replaces three dashboard cards */
+.v820-ticker{display:flex;align-items:center;justify-content:flex-end;gap:.78rem;min-height:32px;margin:.08rem 0 .54rem;font-size:.66rem;color:var(--v820-muted);font-weight:720;white-space:nowrap;overflow:hidden}
+.v820-ticker-item{min-width:0;overflow:hidden;text-overflow:ellipsis}.v820-ticker-label{font-size:.48rem;text-transform:uppercase;letter-spacing:.11em;font-weight:950;color:#89929b;margin-right:.28rem}.v820-ticker b{color:var(--v820-ink);font-weight:950}.v820-ticker-sep{color:#c3bdb2}
+
+/* true sports front: image-led lead story + standings rail */
+.v820-front{display:grid;grid-template-columns:minmax(0,1.78fr) minmax(330px,.72fr);gap:1rem;align-items:stretch;margin:.28rem 0 1.1rem}
+.v820-hero{position:relative;height:455px;overflow:hidden;border-radius:20px;background:linear-gradient(128deg,var(--v820-navy) 0%,#0b2d4b 58%,#1c5474 100%);color:#fff;isolation:isolate;box-shadow:0 20px 48px rgba(6,20,34,.14)}
+.v820-hero:before{content:"";position:absolute;inset:0;z-index:1;background:radial-gradient(circle at 78% 12%,rgba(232,196,99,.16),transparent 28%),linear-gradient(90deg,rgba(6,26,44,.99) 0%,rgba(6,26,44,.96) 39%,rgba(6,26,44,.58) 62%,rgba(6,26,44,.12) 100%)}
+.v820-hero-img{position:absolute;z-index:1;right:1.5%;bottom:-4%;height:99%;width:51%;object-fit:contain;object-position:right bottom;filter:drop-shadow(-16px 18px 30px rgba(0,0,0,.25))}
+.v820-hero-noimg{position:absolute;right:2%;bottom:-3%;z-index:0;font-size:13rem;font-weight:950;color:rgba(255,255,255,.035);letter-spacing:-.12em}
+.v820-hero-copy{position:relative;z-index:3;width:61%;padding:1.45rem 1.55rem 1rem}.v820-kicker{font-size:.56rem;font-weight:950;letter-spacing:.14em;text-transform:uppercase;color:#ffb1ae}.v820-scoreline{color:#b7c4d1;margin-left:.7rem;letter-spacing:.03em}
+.v820-headline{font-size:clamp(2.65rem,5.1vw,4.8rem);font-weight:950;letter-spacing:-.075em;line-height:.86;margin:1.12rem 0 .7rem}.v820-headline a{color:#fff!important;text-decoration:none!important}
+.v820-deck{font-size:clamp(.92rem,1.4vw,1.12rem);font-weight:800;line-height:1.3;color:#eef3f7;max-width:540px}.v820-subdeck{font-size:.69rem;color:#b8c5d1;font-weight:720;margin-top:.48rem}
+.v820-hero-foot{position:absolute;z-index:4;left:1.55rem;right:1.55rem;bottom:1.25rem;border-top:1px solid rgba(255,255,255,.18);padding-top:.78rem;display:grid;grid-template-columns:1.25fr 1fr 1fr;gap:1rem}
+.v820-foot-label{font-size:.48rem;text-transform:uppercase;letter-spacing:.12em;font-weight:950;color:#9fb0c1}.v820-foot-main{font-size:.76rem;font-weight:900;margin-top:.18rem}.v820-foot-main strong{font-size:1.35rem;letter-spacing:-.04em;margin-left:.25rem;color:#78e2b2}.v820-foot-row{font-size:.67rem;font-weight:850;margin-top:.18rem}.v820-good{color:#78e2b2}.v820-bad{color:#ff9b96}
+
+/* standings is a newspaper rail, not another rounded dashboard card */
+.v820-rail{background:var(--v820-paper);border-top:4px solid var(--v820-ink);border-bottom:1px solid var(--v820-line);padding:.92rem 1rem .4rem;overflow:visible}
+.v820-railhead{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--v820-line);padding-bottom:.62rem}.v820-railtitle{font-size:.58rem;font-weight:950;letter-spacing:.13em;text-transform:uppercase}.v820-raillive{font-size:.5rem;font-weight:950;letter-spacing:.1em;text-transform:uppercase;color:var(--v820-red)}
+.v820-leader{padding:1rem 0 .9rem;border-bottom:1px solid var(--v820-line)}.v820-place{font-size:.48rem;color:var(--v820-gold);font-weight:950;text-transform:uppercase;letter-spacing:.12em}.v820-leader-name details.v8-manager>summary{font-size:1.28rem!important;letter-spacing:-.04em!important}.v820-team{font-size:.59rem;color:var(--v820-muted);font-weight:720;margin-top:.1rem}
+.v820-leader-score{font-size:2.25rem;font-weight:950;letter-spacing:-.065em;margin-top:.5rem}.v820-leader-score small{font-size:.54rem;color:var(--v820-muted);font-weight:800;letter-spacing:0;margin-left:.35rem}
+.v820-rrow{display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:.42rem;align-items:center;padding:.63rem 0;border-bottom:1px solid #e4dfd6}.v820-rrow:last-child{border-bottom:0}.v820-pos{font-size:.59rem;color:#6e7883;font-weight:900}.v820-rname details.v8-manager>summary{font-size:.72rem!important}.v820-rmeta{font-size:.49rem;color:var(--v820-muted);font-weight:730;margin-top:.1rem}.v820-rpoints{font-size:.88rem;font-weight:950}.v820-up{color:var(--v820-green)!important}.v820-down{color:var(--v820-red)!important}
+
+/* section headings are editorial markers, not card labels */
+.v820-section{display:flex;align-items:baseline;justify-content:space-between;gap:1rem;margin:1.7rem 0 .62rem}.v820-section strong{font-size:1.08rem;font-weight:950;letter-spacing:-.035em}.v820-section span{font-size:.58rem;color:var(--v820-muted);font-weight:740}
+
+/* newsroom: one visual lead + two different secondary treatments */
+.v820-news{display:grid;grid-template-columns:1.18fr .82fr;gap:1rem}.v820-leadstory{position:relative;min-height:345px;background:var(--v820-paper);border:1px solid var(--v820-line);overflow:hidden;border-radius:18px}.v820-leadstory.hasimg:before{content:"";position:absolute;inset:0;z-index:2;background:linear-gradient(90deg,rgba(6,26,44,.96) 0%,rgba(6,26,44,.88) 44%,rgba(6,26,44,.18) 100%)}.v820-story-img{position:absolute;right:0;bottom:-4%;width:56%;height:100%;object-fit:contain;object-position:right bottom;background:linear-gradient(135deg,#102b45,#1b506e)}
+.v820-leadstory.hasimg .v820-story-copy{color:#fff;max-width:58%;z-index:3}.v820-leadstory.hasimg .v820-story-meta{color:#c6d1dc}.v820-leadstory.hasimg .v820-story-tag{color:#f0d48a}
+.v820-story-graphic{position:absolute;left:0;top:0;bottom:0;width:43%;display:flex;align-items:center;justify-content:center;flex-direction:column;background:var(--v820-navy);color:#fff}.v820-story-arrow{font-size:3.6rem;line-height:.8;font-weight:950;color:#ff8f8a}.v820-story-number{font-size:6.5rem;line-height:.82;font-weight:950;letter-spacing:-.08em}.v820-story-month{font-size:3.2rem;line-height:.9;font-weight:950;letter-spacing:-.06em;text-align:center;padding:.6rem}.v820-story-trophy{font-size:4.5rem;line-height:1}
+.v820-story-copy{position:absolute;left:47%;right:4.5%;bottom:1.35rem;z-index:3}.v820-story-tag{font-size:.5rem;text-transform:uppercase;letter-spacing:.12em;font-weight:950;color:var(--v820-gold)}.v820-story-head{font-size:clamp(1.45rem,2.5vw,2.1rem);font-weight:950;line-height:1.02;letter-spacing:-.045em;margin-top:.38rem}.v820-story-head a{text-decoration:none!important;color:inherit!important}.v820-story-meta{font-size:.62rem;color:var(--v820-muted);font-weight:720;margin-top:.55rem;line-height:1.35}
+.v820-news-side{display:grid;grid-template-rows:1fr 1fr;gap:1rem}.v820-smallstory{position:relative;min-height:164px;background:var(--v820-paper);border:1px solid var(--v820-line);border-radius:18px;overflow:hidden;padding:1rem;display:flex;align-items:flex-end}.v820-smallstory.dark{background:#0a2943;color:#fff;border-color:#0a2943}.v820-smallstory img{position:absolute;right:-4%;bottom:-8%;height:96%;width:47%;object-fit:contain;object-position:right bottom;filter:drop-shadow(-6px 10px 14px rgba(0,0,0,.15))}.v820-small-copy{position:relative;z-index:2;max-width:64%}.v820-small-head{font-size:1.04rem;font-weight:950;line-height:1.05;letter-spacing:-.035em;margin-top:.3rem}.v820-small-head a{color:inherit!important;text-decoration:none!important}.v820-small-meta{font-size:.58rem;color:var(--v820-muted);font-weight:720;margin-top:.38rem}.v820-smallstory.dark .v820-small-meta{color:#bcc9d5}.v820-smallstory.dark .v820-story-tag{color:#efd38a}
+
+/* player strip is image-first */
+.v820-players{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1rem}.v820-player{position:relative;min-height:205px;background:var(--v820-paper);border:1px solid var(--v820-line);border-radius:18px;overflow:hidden;padding:1rem 1.05rem}.v820-player:after{content:"";position:absolute;width:155px;height:155px;border-radius:50%;right:-35px;bottom:-55px;background:#eee9de;z-index:0}.v820-player img{position:absolute;z-index:2;right:-1%;bottom:-4%;height:96%;width:50%;object-fit:contain;object-position:right bottom;filter:drop-shadow(-7px 11px 15px rgba(0,0,0,.12))}.v820-player-copy{position:relative;z-index:3;max-width:58%}.v820-player-club{font-size:.48rem;color:var(--v820-muted);font-weight:900;letter-spacing:.11em;text-transform:uppercase}.v820-player-name{font-size:1.18rem;font-weight:950;letter-spacing:-.045em;margin-top:.12rem}.v820-player-name a{text-decoration:none!important}.v820-player-pct{font-size:2.2rem;font-weight:950;letter-spacing:-.065em;margin-top:1.2rem}.v820-player-meta{font-size:.56rem;color:var(--v820-muted);font-weight:720;margin-top:.08rem}
+
+/* personal widget is intentionally quiet */
+.v820-personal{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-top:2px solid var(--v820-ink);border-bottom:1px solid var(--v820-line);background:rgba(255,255,255,.25)}.v820-personal-item{padding:.65rem .75rem}.v820-personal-item+.v820-personal-item{border-left:1px solid var(--v820-line)}.v820-personal-value{font-size:1rem;font-weight:950;letter-spacing:-.03em}.v820-personal-label{font-size:.49rem;color:var(--v820-muted);font-weight:900;text-transform:uppercase;letter-spacing:.1em;margin-top:.08rem}
+
+/* analysis is a destination, not homepage clutter */
+.v820-analysis-invite{margin-top:1.75rem;background:var(--v820-navy);color:#fff;border-radius:17px;padding:1rem 1.1rem;display:flex;align-items:center;justify-content:space-between;gap:1rem}.v820-analysis-invite strong{font-size:1.05rem;letter-spacing:-.035em}.v820-analysis-invite span{display:block;color:#afbdca;font-size:.59rem;font-weight:700;margin-top:.14rem}.v820-analysis-invite a{color:#fff!important;text-decoration:none!important;border:1px solid rgba(255,255,255,.18);padding:.48rem .68rem;border-radius:999px;font-size:.61rem;font-weight:900;white-space:nowrap}
+
+@media(max-width:980px){
+  .v820-front{grid-template-columns:1fr}.v820-hero{height:440px}.v820-rail{border-radius:14px}.v820-news{grid-template-columns:1fr}.v820-leadstory{min-height:320px}.v820-players{grid-template-columns:repeat(3,minmax(0,1fr))}.v820-ticker{justify-content:flex-start}
+}
+@media(max-width:760px){
+  .block-container{padding:.5rem .55rem 2.5rem!important}.v8-shell{border-radius:14px!important}.v820-ticker{font-size:.58rem;gap:.44rem;overflow-x:auto;justify-content:flex-start}.v820-ticker-item{overflow:visible;text-overflow:clip}.v820-ticker-sep{display:none}
+  .v820-hero{height:510px;border-radius:17px}.v820-hero-copy{width:88%;padding:1rem}.v820-headline{font-size:2.75rem;max-width:82%;margin-top:.8rem}.v820-deck{font-size:.86rem;max-width:72%}.v820-subdeck{max-width:70%}.v820-hero-img{height:67%;width:61%;right:-8%;bottom:12%}.v820-hero-foot{left:1rem;right:1rem;bottom:.9rem;grid-template-columns:1fr 1fr;gap:.6rem}.v820-hero-foot>div:first-child{grid-column:1/-1}.v820-foot-main strong{font-size:1.1rem}
+  .v820-news-side{grid-template-rows:auto}.v820-smallstory{min-height:150px}.v820-players{grid-template-columns:1fr}.v820-player{min-height:155px}.v820-player img{height:145px;width:46%}.v820-player-pct{margin-top:.65rem;font-size:1.8rem}.v820-personal{grid-template-columns:1fr 1fr}.v820-personal-item:nth-child(3){grid-column:1/-1;border-left:0;border-top:1px solid var(--v820-line)}.v820-analysis-invite{align-items:flex-start;flex-direction:column}
+}
+@media(max-width:430px){
+  .v820-headline{font-size:2.35rem;max-width:92%}.v820-deck{max-width:85%}.v820-hero-img{opacity:.88;width:68%;right:-14%}.v820-story-graphic{width:38%}.v820-story-copy{left:42%;right:4%}.v820-story-number{font-size:5rem}.v820-small-copy{max-width:70%}
+}
+</style>
+"""
+
+
 def esc(value: Any) -> str:
     return html.escape("" if value is None else str(value))
 
 
 def install_styles() -> None:
     st.markdown(CSS, unsafe_allow_html=True)
+    st.markdown(CSS_V820, unsafe_allow_html=True)
 
 
 def _initials(name: str) -> str:
@@ -441,3 +518,280 @@ def subnav(items: list[tuple[str, str]], active: str) -> None:
         for label, url in items
     )
     st.markdown(f'<div class="v8-subnav">{links}</div>', unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
+# V820 sportsfront primitives
+# ---------------------------------------------------------------------------
+
+def home_ticker(items: list[tuple[str, str, str]]) -> None:
+    """One quiet line of context. Deliberately not three dashboard cards."""
+    bits = []
+    for label, value, sub in items[:3]:
+        tail = f" {esc(sub)}" if sub else ""
+        bits.append(
+            f'<div class="v820-ticker-item"><span class="v820-ticker-label">{esc(label)}</span>'
+            f'<b>{esc(value)}</b>{tail}</div>'
+        )
+    if not bits:
+        return
+    st.markdown(
+        '<div class="v820-ticker">' + '<span class="v820-ticker-sep">•</span>'.join(bits) + '</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def sports_section(title: str, meta: str = "") -> None:
+    st.markdown(
+        f'<div class="v820-section"><strong>{esc(title)}</strong><span>{esc(meta)}</span></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _img_v820(url: str, cls: str = "", eager: bool = False) -> str:
+    """Current PL cut-out with a same-CDN fallback size.
+
+    The current player asset tree is `premierleague25`. A handful of 500px cuts
+    can lag behind the smaller version, so an inline fallback avoids another
+    giant empty hero without adding app-side HTTP proxying.
+    """
+    if not url:
+        return ""
+    loading = "eager" if eager else "lazy"
+    class_attr = f' class="{esc(cls)}"' if cls else ""
+    fallback = url.replace('/500x500/', '/250x250/') if '/500x500/' in url else ""
+    onerror = f' onerror="this.onerror=null;this.src=\'{esc(fallback)}\';"' if fallback and fallback != url else ""
+    return f'<img{class_attr} src="{esc(url)}" alt="" loading="{loading}" decoding="async"{onerror}>'
+
+
+def _v820_rail_html(rows: list[ManagerLiveState], me: int = 0, live: bool = False) -> str:
+    if not rows:
+        return '<aside class="v820-rail"><div class="v8-muted">Tabellen lastes.</div></aside>'
+    leader = rows[0]
+    cap = leader.captain if leader.captain != "–" else ""
+    leader_menu = _manager_menu(leader.entry, leader.manager, leader.team, me=me, captain=cap)
+    move = leader.live_rank_change
+    move_txt = f'↑{move}' if move > 0 else f'↓{abs(move)}' if move < 0 else '–'
+    move_cls = 'v820-up' if move > 0 else 'v820-down' if move < 0 else ''
+    out = [
+        '<aside class="v820-rail">',
+        f'<div class="v820-railhead"><div class="v820-railtitle">Topp 5</div><div class="v820-raillive">{"Live" if live else "Sammenlagt"}</div></div>',
+        '<div class="v820-leader">',
+        '<div class="v820-place">1. plass</div>',
+        f'<div class="v820-leader-name">{leader_menu}</div>',
+        f'<div class="v820-team">{esc(leader.team)}' + (f' · {esc(cap)}' if cap else '') + f' · <span class="{move_cls}">{move_txt}</span></div>',
+        f'<div class="v820-leader-score">{leader.live_total_points}<small>{leader.live_gw_points} GW</small></div>',
+        '</div>',
+    ]
+    for m in rows[1:5]:
+        cap = m.captain if m.captain != "–" else ""
+        menu = _manager_menu(m.entry, m.manager, m.team, me=me, captain=cap)
+        move = m.live_rank_change
+        move_txt = f'↑{move}' if move > 0 else f'↓{abs(move)}' if move < 0 else '–'
+        move_cls = 'v820-up' if move > 0 else 'v820-down' if move < 0 else ''
+        out.append(
+            f'<div class="v820-rrow"><div class="v820-pos">{m.live_rank}</div>'
+            f'<div class="v820-rname">{menu}<div class="v820-rmeta">{esc(cap or m.team)} · <span class="{move_cls}">{move_txt}</span></div></div>'
+            f'<div class="v820-rpoints">{m.live_total_points}</div></div>'
+        )
+    out.append('</aside>')
+    return ''.join(out)
+
+
+def _sports_headline(player: PlayerImpact, live: bool) -> str:
+    name = player.player.upper()
+    if live:
+        if player.event_points >= 12:
+            return f"{name} SETTER FYR PÅ LOFTHUS"
+        if player.event_points >= 8:
+            return f"{name} DRIVER LIVE-RUNDEN"
+        return f"{name} PÅVIRKER HELE LIGAEN"
+    if player.event_points >= 12:
+        return f"{name} BLE RUNDENS STORE SPILLER"
+    return f"{name} PREGET SISTE RUNDE"
+
+
+def sports_front(
+    state: LiveState,
+    beneficiary_rows: list[dict[str, Any]],
+    scoreline: str,
+    top_rows: list[ManagerLiveState],
+    me: int = 0,
+) -> None:
+    """Image-led matchday front. This is the public face of V820."""
+    candidates = [p for p in state.player_impacts if p.event_points or p.captain_count or p.triple_captain_count]
+    if state.is_live:
+        live_now = [p for p in candidates if p.fixture_status == "live"]
+        p = live_now[0] if live_now else (candidates[0] if candidates else None)
+    else:
+        p = max(candidates, key=lambda x: (x.event_points, x.impact_score), default=None)
+
+    if p:
+        player_link = f'<a target="_self" href="{esc(player_href(p.element, me=me))}">{esc(_sports_headline(p, state.is_live))}</a>'
+        cap_word = "kaptein" if p.captain_count == 1 else "kapteiner"
+        ownership_line = f"{p.ownership_count} av {max(1,state.league_size)} eier {esc(p.player)}"
+        if p.captain_count:
+            ownership_line += f" · {p.captain_count} {cap_word}"
+        positive = [r for r in beneficiary_rows if float(r.get("swing") or 0) > 0]
+        negative = [r for r in beneficiary_rows if float(r.get("swing") or 0) < 0]
+        biggest = positive[0] if positive else None
+        if biggest:
+            deck = f"{p.event_points} poeng. {biggest.get('manager')} får den største gevinsten i ligaen."
+        else:
+            deck = f"{p.event_points} poeng og en tydelig effekt på Lofthus-tabellen."
+        image = _img_v820(p.image_url, "v820-hero-img", eager=True)
+        fallback = '' if image else f'<div class="v820-hero-noimg">{esc(_initials(p.player))}</div>'
+    else:
+        player_link = f"GW{state.event_id}"
+        deck = "Lofthus følger kampene mens tabellen flytter på seg."
+        ownership_line = ""
+        image = ""
+        fallback = '<div class="v820-hero-noimg">LRO</div>'
+        positive, negative = [], []
+
+    phase = "LIVE" if state.is_live else "SISTE GW"
+    score = scoreline or ("Kampene pågår" if state.is_live else "Runden er oppdatert")
+    foot = []
+    if p and positive:
+        r = positive[0]
+        foot.append(
+            f'<div><div class="v820-foot-label">Største vinner</div><div class="v820-foot-main">{esc(r.get("manager"))}<strong>+{float(r.get("swing") or 0):.1f}</strong></div></div>'
+        )
+    else:
+        foot.append('<div><div class="v820-foot-label">Ligaeffekt</div><div class="v820-foot-main">Oppdateres fortløpende</div></div>')
+    other_pos = positive[1:3]
+    foot.append(
+        '<div><div class="v820-foot-label">Andre vinnere</div>' +
+        ''.join(f'<div class="v820-foot-row v820-good">{esc(r.get("manager"))} +{float(r.get("swing") or 0):.1f}</div>' for r in other_pos) +
+        ('<div class="v820-foot-row">Ingen store utslag</div>' if not other_pos else '') + '</div>'
+    )
+    foot.append(
+        '<div><div class="v820-foot-label">Rammes hardest</div>' +
+        ''.join(f'<div class="v820-foot-row v820-bad">{esc(r.get("manager"))} {float(r.get("swing") or 0):.1f}</div>' for r in negative[:2]) +
+        ('<div class="v820-foot-row">Ingen store utslag</div>' if not negative else '') + '</div>'
+    )
+
+    hero = (
+        f'<section class="v820-hero">{image}{fallback}<div class="v820-hero-copy">'
+        f'<div class="v820-kicker"><span class="v8-live-dot"></span>{phase} · GW{state.event_id}<span class="v820-scoreline">{esc(score)}</span></div>'
+        f'<div class="v820-headline">{player_link}</div><div class="v820-deck">{esc(deck)}</div>'
+        f'<div class="v820-subdeck">{ownership_line}</div></div><div class="v820-hero-foot">{"".join(foot)}</div></section>'
+    )
+    st.markdown(
+        f'<div class="v820-front">{hero}{_v820_rail_html(top_rows[:5], me=me, live=state.is_live)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _movement_graphic(headline: str) -> str:
+    import re
+    match = re.search(r"(\d+)\s+plasser", headline or "", re.I)
+    magnitude = match.group(1) if match else ""
+    low = (headline or "").casefold()
+    arrow = "↓" if any(x in low for x in ("falt", "ned", "raste")) else "↑"
+    if not magnitude:
+        magnitude = "!"
+    return f'<div class="v820-story-graphic"><div class="v820-story-arrow">{arrow}</div><div class="v820-story-number">{esc(magnitude)}</div></div>'
+
+
+def _story_visual(story: Any, state: LiveState | None, lead: bool) -> tuple[str, str]:
+    category = str(getattr(story, "category", "") or "")
+    player_element = nint(getattr(story, "player_element", 0))
+    if state and player_element:
+        impact = state.player(player_element)
+        if impact and impact.image_url:
+            return _img_v820(impact.image_url, "v820-story-img", eager=lead), "hasimg"
+    if category in {"movement", "movement_live"}:
+        return _movement_graphic(str(getattr(story, "headline", ""))), "graphic"
+    if category == "month":
+        month = (state.month_name if state else "Måned") or "Måned"
+        short = month[:3].upper()
+        return f'<div class="v820-story-graphic"><div class="v820-story-month">{esc(short)}</div></div>', "graphic"
+    if category == "round":
+        return '<div class="v820-story-graphic"><div class="v820-story-trophy">🏆</div></div>', "graphic"
+    if category == "leader":
+        return '<div class="v820-story-graphic"><div class="v820-story-number">1</div></div>', "graphic"
+    return '<div class="v820-story-graphic"><div class="v820-story-number">LRO</div></div>', "graphic"
+
+
+def sports_news(stories: Iterable[Any], me: int = 0, state: LiveState | None = None) -> None:
+    data = list(stories)[:3]
+    if not data:
+        st.markdown('<div class="v8-empty">Ingen stor nok historie akkurat nå.</div>', unsafe_allow_html=True)
+        return
+
+    def headline_html(story: Any) -> str:
+        headline = esc(getattr(story, "headline", ""))
+        manager_entry = nint(getattr(story, "manager_entry", 0))
+        player_element = nint(getattr(story, "player_element", 0))
+        if manager_entry:
+            return f'<a target="_self" href="{esc(manager_href(manager_entry, me=me))}">{headline}</a>'
+        if player_element:
+            return f'<a target="_self" href="{esc(player_href(player_element, me=me))}">{headline}</a>'
+        return headline
+
+    def status_label(story: Any) -> str:
+        raw = str(getattr(story, "status", "") or "").casefold()
+        return {"live": "LIVE", "settled": "FERDIG", "provisional": "LIVE", "context": "ANALYSE"}.get(raw, raw.upper() or "SNAKKIS")
+
+    lead = data[0]
+    visual, kind = _story_visual(lead, state, True)
+    lead_cls = "v820-leadstory hasimg" if kind == "hasimg" else "v820-leadstory"
+    lead_html = (
+        f'<article class="{lead_cls}">{visual}<div class="v820-story-copy">'
+        f'<div class="v820-story-tag">{esc(status_label(lead))}</div><div class="v820-story-head">{headline_html(lead)}</div>'
+        f'<div class="v820-story-meta">{esc(getattr(lead,"meta",""))}</div></div></article>'
+    )
+    side_cards = []
+    for story in data[1:3]:
+        player_element = nint(getattr(story, "player_element", 0))
+        image = ""
+        if state and player_element:
+            impact = state.player(player_element)
+            if impact and impact.image_url:
+                image = _img_v820(impact.image_url, eager=False)
+        dark = " dark" if image else ""
+        side_cards.append(
+            f'<article class="v820-smallstory{dark}">{image}<div class="v820-small-copy">'
+            f'<div class="v820-story-tag">{esc(status_label(story))}</div><div class="v820-small-head">{headline_html(story)}</div>'
+            f'<div class="v820-small-meta">{esc(getattr(story,"meta",""))}</div></div></article>'
+        )
+    if len(side_cards) == 1:
+        side_cards.append('<article class="v820-smallstory"><div class="v820-small-copy"><div class="v820-story-tag">LOFTHUS</div><div class="v820-small-head">Neste historie dukker opp når noe faktisk skjer</div><div class="v820-small-meta">Kvalitet foran fyllstoff.</div></div></article>')
+    st.markdown(
+        f'<div class="v820-news">{lead_html}<div class="v820-news-side">{"".join(side_cards)}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def sports_popular_players(players: list[PlayerImpact], me: int = 0, limit: int = 3) -> None:
+    top = sorted(players, key=lambda p: (-p.ownership_count, -p.captain_count, p.player))[:limit]
+    if not top:
+        st.markdown('<div class="v8-empty">Spillerdata lastes.</div>', unsafe_allow_html=True)
+        return
+    cards = []
+    for p in top:
+        image = _img_v820(p.image_url, eager=False) if p.image_url else ""
+        cap = f" · {p.captain_count} C" if p.captain_count else ""
+        cards.append(
+            f'<article class="v820-player">{image}<div class="v820-player-copy"><div class="v820-player-club">{esc(p.club)}</div>'
+            f'<div class="v820-player-name"><a target="_self" href="{esc(player_href(p.element, me=me))}">{esc(p.player)}</a></div>'
+            f'<div class="v820-player-pct">{p.ownership_pct:.0f}%</div><div class="v820-player-meta">{p.ownership_count} eiere{cap}</div></div></article>'
+        )
+    st.markdown(f'<div class="v820-players">{"".join(cards)}</div>', unsafe_allow_html=True)
+
+
+def personal_strip(items: list[tuple[Any, str]]) -> None:
+    blocks = ''.join(
+        f'<div class="v820-personal-item"><div class="v820-personal-value">{esc(value)}</div><div class="v820-personal-label">{esc(label)}</div></div>'
+        for value, label in items[:3]
+    )
+    st.markdown(f'<div class="v820-personal">{blocks}</div>', unsafe_allow_html=True)
+
+
+def analysis_invite(me: int = 0) -> None:
+    url = rival_href(me or 0)
+    st.markdown(
+        f'<div class="v820-analysis-invite"><div><strong>Vil du dypere?</strong><span>Rivalradar, EO, chips, sammenligning og spilleranalyse ligger ett nivå ned.</span></div>'
+        f'<a target="_self" href="{esc(url)}">Åpne analyse →</a></div>',
+        unsafe_allow_html=True,
+    )

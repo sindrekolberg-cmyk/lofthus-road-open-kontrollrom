@@ -361,13 +361,28 @@ def player_catalog(bootstrap: dict) -> dict[int, dict]:
         xa = _float(p.get("expected_assists"))
         xgi = _float(p.get("expected_goal_involvements"), xg + xa)
         code = _int(p.get("code"))
-        image_url = f"https://resources.premierleague.com/premierleague/photos/players/250x250/p{code}.png" if code else ""
+        photo = str(p.get("photo") or "")
+        # Premier League moved current player cut-outs to the season-namespaced
+        # `premierleague25` asset tree. The FPL `photo` field is the reliable
+        # asset id here (e.g. 223094.jpg). The old `.../p{id}.png` path still
+        # exists for some players, but using it as the primary source caused the
+        # V810 front page to render giant empty image areas when the request 404ed.
+        photo_code = photo.rsplit(".", 1)[0] if photo else (str(code) if code else "")
+        image_url = (
+            f"https://resources.premierleague.com/premierleague25/photos/players/500x500/{photo_code}.png"
+            if photo_code else ""
+        )
+        image_url_small = (
+            f"https://resources.premierleague.com/premierleague25/photos/players/110x140/{photo_code}.png"
+            if photo_code else ""
+        )
         out[pid] = {
             "element_id": pid,
             "web_name": str(p.get("web_name") or p.get("second_name") or p.get("first_name") or pid),
             "code": code,
-            "photo": str(p.get("photo") or ""),
+            "photo": photo,
             "image_url": image_url,
+            "image_url_small": image_url_small,
             "full_name": f"{p.get('first_name') or ''} {p.get('second_name') or ''}".strip(),
             "team_id": team_id,
             "club": teams.get(team_id, {}).get("short_name", ""),
