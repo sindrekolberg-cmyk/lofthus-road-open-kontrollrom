@@ -72,10 +72,25 @@ class FPLClient:
         with self._lock:
             self._cache[key] = CacheItem(now, now + max(1, int(ttl)), copy.deepcopy(value))
 
-    def get_json(self, path: str, ttl: int = 300, stale_if_error: int = 1800) -> Any:
+    def invalidate_picks(self, event_id: int | None = None) -> int:
+        """Drop cached entry picks so autosubs/captain fallback can resync."""
+        needle = "/picks/"
+        event_part = f"/event/{int(event_id)}/picks/" if event_id else None
+        removed = 0
+        with self._lock:
+            for key in list(self._cache):
+                if needle not in key:
+                    continue
+                if event_part and event_part not in key:
+                    continue
+                del self._cache[key]
+                removed += 1
+        return removed
+
+    def get_json(self, path: str, ttl: int = 300, stale_if_error: int = 1800, force: bool = False) -> Any:
         path = path if path.startswith("/") else f"/{path}"
         key = f"GET:{path}"
-        cached = self._get_cached(key)
+        cached = None if force else self._get_cached(key)
         if cached is not None:
             return cached
         url = f"{self.base_url}{path}"
@@ -123,10 +138,16 @@ class FPLClient:
         data = self.get_json(f"/event/{int(event_id)}/live/", ttl=22, stale_if_error=300)
         return data if isinstance(data, dict) else {}
 
-    def entry_picks(self, entry_id: int, event_id: int) -> dict:
+    def entry_picks(self, entry_id: int, event_id: int, force: bool = False) -> dict:
         # Picks are effectively frozen after deadline. A long TTL prevents navigation
-        # between local pages from creating a 63-request storm.
-        data = self.get_json(f"/entry/{int(entry_id)}/event/{int(event_id)}/picks/", ttl=900, stale_if_error=7200)
+        # between local pages from creating a 63-request storm. `force` is used at
+        # autosub / captain-fallback boundaries so FPL's later payload can land.
+        data = self.get_json(
+            f"/entry/{int(entry_id)}/event/{int(event_id)}/picks/",
+            ttl=900,
+            stale_if_error=7200,
+            force=force,
+        )
         return data if isinstance(data, dict) else {}
 
     def entry_history(self, entry_id: int) -> dict:
@@ -227,6 +248,7 @@ class FPLClient:
         entries: Iterable[int],
         event_id: int,
         max_workers: int = 8,
+        force: bool = False,
     ) -> tuple[dict[int, dict], dict[int, str]]:
         ids = sorted({int(e) for e in entries if _int(e) > 0})
         values: dict[int, dict] = {}
@@ -235,7 +257,7 @@ class FPLClient:
             return values, errors
         workers = min(max(1, int(max_workers)), 10, len(ids))
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(self.entry_picks, entry, int(event_id)): entry for entry in ids}
+            futures = {pool.submit(self.entry_picks, entry, int(event_id), force): entry for entry in ids}
             for future in as_completed(futures):
                 entry = futures[future]
                 try:
@@ -491,19 +513,14 @@ def month_phases(bootstrap: dict) -> list[dict]:
 
 
 def current_month_phase(bootstrap: dict, now_month: int | None = None) -> dict | None:
+    """Active month follows the current FPL event, not the civil calendar.
+
+    A new month becomes active when its first GW is current (deadline reached /
+    live). `now_month` is kept for call-site compatibility and is not used.
+    """
     phases = month_phases(bootstrap)
     if not phases:
         return None
-    import datetime as _dt
-
-    names = {
-        1: "Januar", 2: "Februar", 3: "Mars", 4: "April", 5: "Mai", 6: "Juni",
-        7: "Juli", 8: "August", 9: "September", 10: "Oktober", 11: "November", 12: "Desember",
-    }
-    calendar_name = names.get(now_month or _dt.datetime.now().month)
-    by_calendar = next((p for p in phases if p["name"] == calendar_name), None)
-    if by_calendar:
-        return by_calendar
     event_id = current_event_id(bootstrap) or 0
     by_event = next((p for p in phases if p["start_event"] <= event_id <= p["stop_event"]), None)
     return by_event or phases[0]

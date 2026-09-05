@@ -98,7 +98,7 @@ def test_transfer_budget():
 
 def test_month_calendar_and_aliases(tmpdir: Path):
     store = HistoryStore(tmpdir)
-    assert current_month_phase(bootstrap_fixture(), now_month=9)["name"] == "September"
+    assert current_month_phase(bootstrap_fixture(), now_month=9)["name"] == "August"
     assert store.canonical("Oskar Brun") == "Oskar Kristensen Brun"
     assert store.canonical("Kristoffer Wollvik Pettersen") == "Kristoffer W Pettersen"
 

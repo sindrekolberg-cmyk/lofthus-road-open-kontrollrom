@@ -45,6 +45,9 @@ class FakeClient:
     def histories_many(self, entries, max_workers=8):
         return {}, {}
 
+    def invalidate_picks(self, event_id=None):
+        return 0
+
 
 BOOTSTRAP = {
     "events": [{"id": 3, "is_current": True, "is_next": False, "finished": False, "deadline_time": "2026-09-05T11:00:00Z"}],
@@ -172,6 +175,81 @@ class ApiTests(unittest.TestCase):
     def test_unknown_manager_404(self):
         r = self.client.get("/api/managers/999999")
         self.assertEqual(r.status_code, 404)
+
+    def test_home_uses_one_snapshot(self):
+        r = self.client.get("/api/home")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        sid = body["status"]["snapshot_id"]
+        self.assertTrue(sid)
+        self.assertEqual(len(body["managers"]), 3)
+        last = body["managers"][-1]
+        self.assertIn(last["entry"], {1, 2, 3})
+        keys = [s["key"] for s in body["news"]]
+        self.assertEqual(len(keys), len(set(keys)))
+
+    def test_min_lofthus_manager_outside_top5(self):
+        r = self.client.get("/api/managers")
+        entries = [m["entry"] for m in r.json()["managers"]]
+        self.assertIn(3, entries)
+        detail = self.client.get("/api/managers/1")
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.json()["manager"]["entry"], 1)
+
+    def test_rival_does_not_invent_scoring(self):
+        r = self.client.get("/api/rival", params={"manager_a": 1, "manager_b": 2})
+        self.assertEqual(r.status_code, 200)
+        headlines = [e["headline"] for e in r.json()["my_unique"] + r.json()["rival_unique"]]
+        for h in headlines:
+            self.assertNotIn("scoring", h.lower())
+
+    def test_differentials_require_points(self):
+        r = self.client.get("/api/analysis/differentials")
+        self.assertEqual(r.status_code, 200)
+        for p in r.json()["players"]:
+            self.assertGreater(p["event_points"], 0)
+
+    def test_compare(self):
+        r = self.client.get("/api/compare", params={"manager_a": 1, "manager_b": 3})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["a"]["entry"], 1)
+        self.assertEqual(r.json()["b"]["entry"], 3)
+
+    def test_month_follows_current_event(self):
+        from lro_fpl import current_month_phase
+        august = {
+            "events": [{"id": 2, "is_current": True, "finished": False, "deadline_time": "2026-08-22T10:00:00Z"}],
+            "phases": [
+                {"id": 1, "name": "August", "start_event": 1, "stop_event": 2},
+                {"id": 2, "name": "September", "start_event": 3, "stop_event": 6},
+            ],
+        }
+        self.assertEqual(current_month_phase(august, now_month=9)["name"], "August")
+        sept = {
+            "events": [{"id": 3, "is_current": True, "finished": False, "deadline_time": "2026-09-12T10:00:00Z"}],
+            "phases": august["phases"],
+        }
+        self.assertEqual(current_month_phase(sept, now_month=8)["name"], "September")
+
+    def test_fpl_picks_cache_can_be_invalidated(self):
+        from lro_fpl import FPLClient
+        client = FPLClient()
+        client._set_cached("GET:/entry/1/event/3/picks/", {"picks": []}, ttl=900)
+        self.assertGreater(client.invalidate_picks(3), 0)
+        self.assertIsNone(client._get_cached("GET:/entry/1/event/3/picks/"))
+
+    def test_membership_is_not_inferred(self):
+        r = self.client.get("/api/managers/3")
+        self.assertEqual(r.json()["lofthus_membership"], [])
+
+    def test_news_and_archive(self):
+        self.assertEqual(self.client.get("/api/news").status_code, 200)
+        self.assertEqual(self.client.get("/api/archive").status_code, 200)
+        self.assertEqual(self.client.get("/api/players/popular").status_code, 200)
+        self.assertEqual(self.client.get("/api/analysis/captain").status_code, 200)
+        self.assertEqual(self.client.get("/api/analysis/ownership").status_code, 200)
+        self.assertEqual(self.client.get("/api/analysis/chips").status_code, 200)
+        self.assertEqual(self.client.get("/api/month").status_code, 200)
 
 
 if __name__ == "__main__":

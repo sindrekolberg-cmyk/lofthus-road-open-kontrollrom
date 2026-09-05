@@ -7,22 +7,26 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.engine import AppEngine, get_engine
+from api.engine import AppEngine, RequestSnapshot, get_engine
 from api.serialize import (
     analysis_from_state,
+    compare_payload,
     fixture_payload,
     hall_of_fame_payload,
     history_store_payload,
+    live_events_payload,
     manager_payload,
     manager_profile_payload,
-    pick_hero,
+    movers_payload,
     player_impact_payload,
     rival_payload,
     season_from_bootstrap,
     status_payload,
+    story_payload,
 )
 from lro_analysis import nint
 from lro_league import manager_name
+from lro_membership import load_membership, membership_for
 from lro_rival import auto_rivals, compare_managers
 
 
@@ -52,7 +56,7 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
                 pass
         yield
 
-    app = FastAPI(title="Lofthus Road Open API", version="1.0.0", lifespan=lifespan)
+    app = FastAPI(title="Lofthus Road Open API", version="2.0.0", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins(),
@@ -65,58 +69,47 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
     def engine_dep() -> AppEngine:
         return engine or get_engine()
 
+    def snap() -> RequestSnapshot:
+        return engine_dep().snapshot()
+
+    def status_from(s: RequestSnapshot) -> dict[str, Any]:
+        eng = engine_dep()
+        body = status_payload(
+            name=eng.config.name,
+            season=season_from_bootstrap(s.bootstrap, eng.config.season_fallback),
+            state=s.state,
+            managers=s.managers,
+            live_ready=s.state is not None,
+            histories_ready=s.histories is not None,
+            errors=s.errors,
+        )
+        body.update(s.meta())
+        return body
+
+    def find_manager(s: RequestSnapshot, entry_id: int):
+        return next((m for m in engine_dep().manager_states(s) if m.entry == int(entry_id)), None)
+
     @app.get("/api/health")
     def health() -> dict[str, Any]:
         return {"ok": True, "service": "lofthus-road-open"}
 
     @app.get("/api/status")
     def status() -> dict[str, Any]:
-        eng = engine_dep()
-        bootstrap, managers, errors = eng.load_shell()
-        state = eng.live_state()
-        return status_payload(
-            name=eng.config.name,
-            season=season_from_bootstrap(bootstrap, eng.config.season_fallback),
-            state=state,
-            managers=managers,
-            live_ready=state is not None,
-            histories_ready=eng.histories() is not None,
-            errors=errors,
-        )
-
-    def _status(eng: AppEngine) -> dict[str, Any]:
-        bootstrap, managers, errors = eng.load_shell()
-        state = eng.live_state()
-        return status_payload(
-            name=eng.config.name,
-            season=season_from_bootstrap(bootstrap, eng.config.season_fallback),
-            state=state,
-            managers=managers,
-            live_ready=state is not None,
-            histories_ready=eng.histories() is not None,
-            errors=errors,
-        )
+        return status_from(snap())
 
     @app.get("/api/league")
     def league() -> dict[str, Any]:
-        eng = engine_dep()
-        states = eng.manager_states()
-        st = _status(eng)
-        return {
-            "status": st,
-            "table": [manager_payload(m) for m in states],
-        }
+        s = snap()
+        return {"status": status_from(s), "table": [manager_payload(m) for m in engine_dep().manager_states(s)]}
 
     @app.get("/api/live")
     def live() -> dict[str, Any]:
-        eng = engine_dep()
-        bootstrap, _, _ = eng.load_shell()
-        state = eng.live_state()
-        st = _status(eng)
-        if not state:
+        s = snap()
+        st = status_from(s)
+        if not s.state:
             return {
                 "status": st,
-                "table": [manager_payload(m) for m in eng.manager_states()],
+                "table": [manager_payload(m) for m in engine_dep().manager_states(s)],
                 "gw_ranking": [],
                 "fixtures": [],
                 "player_impacts": [],
@@ -124,34 +117,32 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
             }
         return {
             "status": st,
-            "table": [manager_payload(m) for m in state.managers_by_rank()],
-            "gw_ranking": [manager_payload(m) for m in state.gw_ranking()],
-            "fixtures": fixture_payload(state, bootstrap),
-            "player_impacts": [player_impact_payload(p) for p in state.player_impacts[:40]],
+            "table": [manager_payload(m) for m in s.state.managers_by_rank()],
+            "gw_ranking": [manager_payload(m) for m in s.state.gw_ranking()],
+            "fixtures": fixture_payload(s.state, s.bootstrap),
+            "player_impacts": [player_impact_payload(p) for p in s.state.player_impacts[:40]],
             "live_ready": True,
         }
 
     @app.get("/api/month")
     def month() -> dict[str, Any]:
+        s = snap()
         eng = engine_dep()
-        state = eng.live_state()
-        st = _status(eng)
-        table = [manager_payload(m) for m in (state.month_ranking() if state else [])]
-        calendar = history_store_payload(eng.history, eng.auto_month_rows()).get("monthly") or []
+        table = [manager_payload(m) for m in (s.state.month_ranking() if s.state else [])]
+        calendar = history_store_payload(eng.history, eng.auto_month_rows(s.bootstrap)).get("monthly") or []
         return {
-            "status": st,
-            "month_name": state.month_name if state else "",
+            "status": status_from(s),
+            "month_name": s.state.month_name if s.state else "",
             "table": table,
             "previous": calendar,
         }
 
     @app.get("/api/managers")
     def managers() -> dict[str, Any]:
-        eng = engine_dep()
-        _, rows, _ = eng.load_shell()
-        states = {m.entry: m for m in eng.manager_states()}
+        s = snap()
+        states = {m.entry: m for m in engine_dep().manager_states(s)}
         out = []
-        for m in rows:
+        for m in s.managers:
             entry = nint(m.get("entry"))
             live = states.get(entry)
             out.append({
@@ -159,28 +150,32 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
                 "manager": live.manager if live else manager_name(m),
                 "team": live.team if live else str(m.get("entry_name") or ""),
                 "rank": live.live_rank if live else nint(m.get("rank")),
+                "gw": live.live_gw_points if live else nint(m.get("event_total")),
+                "total": live.live_total_points if live else nint(m.get("total")),
+                "rank_change": live.live_rank_change if live else 0,
             })
         out.sort(key=lambda r: (r["rank"] or 10**9, r["manager"]))
-        return {"managers": out}
-
-    def _find_manager(eng: AppEngine, entry_id: int):
-        return next((m for m in eng.manager_states() if m.entry == int(entry_id)), None)
+        return {"managers": out, "status": status_from(s)}
 
     @app.get("/api/managers/{entry_id}")
     def manager_detail(entry_id: int) -> dict[str, Any]:
+        s = snap()
         eng = engine_dep()
-        m = _find_manager(eng, entry_id)
+        m = find_manager(s, entry_id)
         if not m:
             raise HTTPException(status_code=404, detail="Manageren finnes ikke i ligaen.")
-        _, managers, _ = eng.load_shell()
-        return manager_profile_payload(
+        body = manager_profile_payload(
             m=m,
-            state=eng.live_state(),
-            managers=managers,
-            histories=eng.histories(),
+            state=s.state,
+            managers=s.managers,
+            histories=s.histories,
             history=eng.history,
-            auto_rows=eng.auto_month_rows(),
+            auto_rows=eng.auto_month_rows(s.bootstrap),
         )
+        members = load_membership(eng.config.data_dir)
+        body["lofthus_membership"] = membership_for(members, entry_id=entry_id, manager=m.manager)
+        body["status"] = status_from(s)
+        return body
 
     @app.get("/api/managers/{entry_id}/squad")
     def manager_squad_route(entry_id: int) -> dict[str, Any]:
@@ -197,6 +192,7 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
             "fpl_season": body.get("fpl_season"),
             "lofthus_overall": body.get("lofthus_overall"),
             "lofthus_best_finish": body.get("lofthus_best_finish"),
+            "lofthus_membership": body.get("lofthus_membership"),
         }
 
     @app.get("/api/managers/{entry_id}/chips")
@@ -220,73 +216,90 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
 
     @app.get("/api/rival")
     def rival(
-        manager_a: int = Query(..., description="Selected manager entry id"),
-        manager_b: int = Query(..., description="Rival entry id"),
+        manager_a: int = Query(...),
+        manager_b: int = Query(...),
     ) -> dict[str, Any]:
-        eng = engine_dep()
-        state = eng.live_state()
-        if not state:
+        s = snap()
+        if not s.state:
             raise HTTPException(status_code=503, detail="Live-data er ikke klare ennå.")
-        duel = compare_managers(state, manager_a, manager_b)
+        duel = compare_managers(s.state, manager_a, manager_b)
         if not duel:
             raise HTTPException(status_code=400, detail="Duellen kunne ikke beregnes.")
-        suggested = auto_rivals(state, manager_a, limit=5)
         return {
-            **rival_payload(duel),
-            "suggested_rivals": suggested,
-            "provisional": not state.is_finished,
-            "is_live": state.is_live,
-            "event_id": state.event_id,
+            **rival_payload(duel, s.state),
+            "suggested_rivals": auto_rivals(s.state, manager_a, limit=5),
+            "provisional": not s.state.is_finished,
+            "is_live": s.state.is_live,
+            "event_id": s.state.event_id,
+            "status": status_from(s),
         }
+
+    @app.get("/api/compare")
+    def compare(
+        manager_a: int = Query(...),
+        manager_b: int = Query(...),
+    ) -> dict[str, Any]:
+        s = snap()
+        a = find_manager(s, manager_a)
+        b = find_manager(s, manager_b)
+        if not a or not b:
+            raise HTTPException(status_code=404, detail="Begge managere må finnes i ligaen.")
+        return {**compare_payload(a, b, s.state, s.managers, s.histories), "status": status_from(s)}
 
     @app.get("/api/history")
     def history() -> dict[str, Any]:
         eng = engine_dep()
-        return history_store_payload(eng.history, eng.auto_month_rows())
+        s = snap()
+        return history_store_payload(eng.history, eng.auto_month_rows(s.bootstrap))
 
     @app.get("/api/hall-of-fame")
     def hall_of_fame() -> dict[str, Any]:
         eng = engine_dep()
-        return {"rows": hall_of_fame_payload(eng.history, eng.auto_month_rows())}
+        s = snap()
+        auto = eng.auto_month_rows(s.bootstrap)
+        hist = history_store_payload(eng.history, auto)
+        return {
+            "rows": hall_of_fame_payload(eng.history, auto),
+            "overall": hist.get("overall") or [],
+            "cup": hist.get("cup") or [],
+            "monthly": hist.get("monthly") or [],
+            "random": hist.get("random") or [],
+        }
 
     @app.get("/api/monthly-history")
     def monthly_history() -> dict[str, Any]:
         eng = engine_dep()
-        payload = history_store_payload(eng.history, eng.auto_month_rows())
-        return {"months": payload.get("monthly") or []}
+        s = snap()
+        return {"months": history_store_payload(eng.history, eng.auto_month_rows(s.bootstrap)).get("monthly") or []}
 
     @app.get("/api/news")
     def news() -> dict[str, Any]:
-        eng = engine_dep()
-        state = eng.live_state()
-        stories = []
-        for s in eng.news(limit=4):
-            row = s.to_dict()
-            image_url = ""
-            if state and s.player_element:
-                impact = state.player(s.player_element)
-                if impact:
-                    image_url = impact.image_url
-            row["image_url"] = image_url
-            stories.append(row)
-        return {"stories": stories, "count": len(stories)}
+        s = snap()
+        stories = [story_payload(st, s.state) for st in engine_dep().news(limit=4, snap=s)]
+        seen: set[str] = set()
+        unique = []
+        for row in stories:
+            key = str(row.get("key") or "")
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(row)
+        return {"stories": unique, "count": len(unique), "status": status_from(s)}
 
     @app.get("/api/players")
     def players() -> dict[str, Any]:
-        eng = engine_dep()
-        state = eng.live_state()
-        if not state:
+        s = snap()
+        if not s.state:
             return {"players": []}
-        return {"players": [player_impact_payload(p) for p in state.player_impacts]}
+        return {"players": [player_impact_payload(p) for p in s.state.player_impacts]}
 
     @app.get("/api/players/popular")
     def players_popular() -> dict[str, Any]:
-        eng = engine_dep()
-        state = eng.live_state()
-        if not state:
+        s = snap()
+        if not s.state:
             return {"players": []}
         ranked = sorted(
-            state.player_impacts,
+            s.state.player_impacts,
             key=lambda p: (p.ownership_count, p.captain_count, p.event_points, p.impact_score),
             reverse=True,
         )
@@ -294,68 +307,100 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
 
     @app.get("/api/analysis/captain")
     def analysis_captain() -> dict[str, Any]:
-        eng = engine_dep()
-        state = eng.live_state()
-        if not state:
+        s = snap()
+        if not s.state:
             return {"players": []}
-        return {"players": analysis_from_state(state)["captain"]}
+        return {"players": analysis_from_state(s.state)["captain"]}
 
     @app.get("/api/analysis/ownership")
     def analysis_ownership() -> dict[str, Any]:
-        eng = engine_dep()
-        state = eng.live_state()
-        if not state:
+        s = snap()
+        if not s.state:
             return {"players": []}
-        return {"players": analysis_from_state(state)["ownership"]}
+        return {"players": analysis_from_state(s.state)["ownership"]}
 
     @app.get("/api/analysis/chips")
     def analysis_chips() -> dict[str, Any]:
-        eng = engine_dep()
-        state = eng.live_state()
-        if not state:
+        s = snap()
+        if not s.state:
             return {"chips": []}
-        return {"chips": analysis_from_state(state)["chips"]}
+        return {"chips": analysis_from_state(s.state)["chips"]}
 
     @app.get("/api/analysis/differentials")
     def analysis_differentials() -> dict[str, Any]:
-        eng = engine_dep()
-        state = eng.live_state()
-        if not state:
+        s = snap()
+        if not s.state:
             return {"players": []}
-        return {"players": analysis_from_state(state)["differentials"]}
+        return {"players": analysis_from_state(s.state)["differentials"]}
 
     @app.get("/api/home")
     def home() -> dict[str, Any]:
+        s = snap()
         eng = engine_dep()
-        bootstrap, managers, _ = eng.load_shell()
-        state = eng.live_state()
-        st = _status(eng)
-        table = [manager_payload(m) for m in eng.manager_states()[:5]]
-        news_body = news()
-        popular = players_popular()
-        month_table = []
-        if state:
-            month_table = [manager_payload(m) for m in state.month_ranking()[:3]]
+        st = status_from(s)
+        states = eng.manager_states(s)
+        stories = [story_payload(item, s.state) for item in eng.news(limit=4, snap=s)]
+        seen: set[str] = set()
+        unique_stories = []
+        for row in stories:
+            key = str(row.get("key") or row.get("headline") or "")
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_stories.append(row)
+        hero_story = unique_stories[0] if unique_stories else None
+        hero_player = None
+        if s.state and hero_story and nint(hero_story.get("player_element")):
+            impact = s.state.player(nint(hero_story.get("player_element")))
+            if impact:
+                hero_player = player_impact_payload(impact)
+        month_table = [manager_payload(m) for m in (s.state.month_ranking()[:5] if s.state else [])]
+        popular = []
+        if s.state:
+            ranked = sorted(
+                s.state.player_impacts,
+                key=lambda p: (p.ownership_count, p.captain_count, p.event_points),
+                reverse=True,
+            )
+            popular = [player_impact_payload(p) for p in ranked[:6]]
         options = []
-        for m in managers:
+        by_live = {m.entry: m for m in states}
+        for m in s.managers:
             entry = nint(m.get("entry"))
-            if entry:
-                options.append({"entry": entry, "manager": manager_name(m), "team": str(m.get("entry_name") or "")})
+            if not entry:
+                continue
+            live = by_live.get(entry)
+            options.append({
+                "entry": entry,
+                "manager": live.manager if live else manager_name(m),
+                "team": live.team if live else str(m.get("entry_name") or ""),
+                "rank": live.live_rank if live else nint(m.get("rank")),
+                "gw": live.live_gw_points if live else nint(m.get("event_total")),
+                "total": live.live_total_points if live else nint(m.get("total")),
+                "rank_change": live.live_rank_change if live else 0,
+            })
         options.sort(key=lambda r: r["manager"])
         return {
             "status": st,
-            "hero": pick_hero(state),
-            "top5": table,
-            "news": news_body.get("stories") or [],
-            "popular": popular.get("players") or [],
-            "month": {"name": state.month_name if state else "", "table": month_table},
+            "hero": {"story": hero_story, "player": hero_player},
+            "top5": [manager_payload(m) for m in states[:5]],
+            "movers": movers_payload(states),
+            "news": unique_stories,
+            "popular": popular,
+            "month": {"name": s.state.month_name if s.state else "", "table": month_table},
+            "events": live_events_payload(s.state, s.bootstrap) if s.state else [],
             "managers": options,
+            "pulse": {
+                "gw": st.get("event_id") or 0,
+                "label": st.get("event_status_label") or "",
+                "is_live": bool(st.get("is_live")),
+                "fixtures": (live_events_payload(s.state, s.bootstrap) if s.state else [])[:6],
+            },
         }
 
     @app.get("/api/archive")
     def archive() -> dict[str, Any]:
-        eng = engine_dep()
-        return {"snapshots": eng.archive_index()}
+        return {"snapshots": engine_dep().archive_index()}
 
     return app
 

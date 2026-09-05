@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -9,14 +10,37 @@ from typing import Any
 from lro_analysis import canonical_managers, nint
 from lro_archive import SnapshotStore
 from lro_config import LeagueConfig, load_config
-from lro_fpl import FPLClient, current_event_id
+from lro_fpl import FPLClient, current_event_id, finished_event_ids
 from lro_history import HistoryStore
 from lro_league import auto_monthly_rows, effective_states
 from lro_live import LiveState, build_live_state
 from lro_newsroom import generate_candidates, merge_persistent_stories
 
 
-APP_VERSION = "lofthus-road-open-api-v1"
+APP_VERSION = "lofthus-road-open-api-v2"
+
+
+@dataclass
+class RequestSnapshot:
+    """One consistent live truth for a single API request."""
+
+    bootstrap: dict
+    managers: list[dict]
+    errors: list[str]
+    state: LiveState | None
+    histories: dict[int, dict] | None
+    snapshot_id: str
+    generated_at: str
+
+    def meta(self) -> dict[str, Any]:
+        return {
+            "snapshot_id": self.snapshot_id,
+            "generated_at": self.generated_at,
+            "gw": self.state.event_id if self.state else 0,
+            "phase": self.state.event_status if self.state else "pre",
+            "is_live": bool(self.state and self.state.is_live),
+            "is_finished": bool(self.state and self.state.is_finished),
+        }
 
 
 class AppEngine:
@@ -49,6 +73,7 @@ class AppEngine:
         self._histories_future: Future | None = None
         self._newsroom: list[dict[str, Any]] = []
         self._month_rows: list[dict] | None = None
+        self._month_rows_key: tuple | None = None
 
     def load_shell(self, ttl: float = 90.0) -> tuple[dict, list[dict], list[str]]:
         now = datetime.now(timezone.utc).timestamp()
@@ -121,6 +146,7 @@ class AppEngine:
         finished_sync = refreshed.is_finished and age >= 120
         if event_changed or left_live_play or needs_autosub_sync or finished_sync:
             try:
+                self.client.invalidate_picks(refreshed.event_id)
                 return build_live_state(
                     self.client,
                     [dict(m) for m in managers],
@@ -202,28 +228,47 @@ class AppEngine:
         values, _ = self.client.histories_many(entries, max_workers=10)
         return values
 
-    def auto_month_rows(self) -> list[dict]:
-        bootstrap, _, _ = self.load_shell()
+    def auto_month_rows(self, bootstrap: dict | None = None) -> list[dict]:
+        bootstrap = bootstrap if bootstrap is not None else self.load_shell()[0]
+        key = tuple(finished_event_ids(bootstrap))
         with self._lock:
-            if self._month_rows is not None:
+            if self._month_rows is not None and self._month_rows_key == key:
                 return self._month_rows
         rows = auto_monthly_rows(self.client, self.history, self.config.league_id, bootstrap) if bootstrap else []
         with self._lock:
             self._month_rows = rows
+            self._month_rows_key = key
         return rows
 
-    def manager_states(self):
-        _, managers, _ = self.load_shell()
-        return effective_states(managers, self.live_state())
-
-    def news(self, limit: int = 4):
-        bootstrap, managers, _ = self.load_shell()
+    def snapshot(self) -> RequestSnapshot:
+        bootstrap, managers, errors = self.load_shell()
         state = self.live_state()
-        if not state:
+        histories = self.histories()
+        generated = datetime.now(timezone.utc).isoformat()
+        stamp = state.fetched_at.isoformat() if state else "none"
+        return RequestSnapshot(
+            bootstrap=bootstrap,
+            managers=managers,
+            errors=list(errors),
+            state=state,
+            histories=histories,
+            snapshot_id=f"{stamp}:{len(managers)}:{state.event_id if state else 0}",
+            generated_at=generated,
+        )
+
+    def manager_states(self, snap: RequestSnapshot | None = None):
+        if snap is None:
+            snap = self.snapshot()
+        return effective_states(snap.managers, snap.state)
+
+    def news(self, limit: int = 4, snap: RequestSnapshot | None = None):
+        if snap is None:
+            snap = self.snapshot()
+        if not snap.state:
             return []
-        candidates = generate_candidates(state, managers, bootstrap, self.history, self.histories())
+        candidates = generate_candidates(snap.state, snap.managers, snap.bootstrap, self.history, snap.histories)
         with self._lock:
-            stories = merge_persistent_stories(candidates, self._newsroom, state, limit=limit)
+            stories = merge_persistent_stories(candidates, self._newsroom, snap.state, limit=limit)
             self._newsroom = [s.to_dict() for s in stories]
         return stories
 
@@ -250,6 +295,8 @@ class AppEngine:
             self._shell_at = datetime.now(timezone.utc).timestamp()
             self._live_state = state
             self._histories = histories if histories is not None else {}
+            self._month_rows = None
+            self._month_rows_key = None
             self.eager = True
 
     def warmup(self) -> None:

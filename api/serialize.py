@@ -286,15 +286,15 @@ def merits_payload(raw: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
-def edge_payload(edge: RivalPlayerEdge, rival_name: str) -> dict[str, Any]:
+def edge_payload(edge: RivalPlayerEdge, rival_name: str, state: LiveState | None = None) -> dict[str, Any]:
     swing = edge.live_swing
-    verb = "scoring" if edge.event_points >= 5 else "poeng"
-    if swing > 0:
-        headline = f"{edge.player}-{verb}: +{swing} mot {rival_name}"
-    elif swing < 0:
-        headline = f"{edge.player}-{verb}: {swing} mot {rival_name}"
-    else:
+    event_kind = _player_event_kind(state, edge.element) if state else ""
+    if swing == 0:
         headline = f"{edge.player} kan svinge duellen mot {rival_name}"
+    elif event_kind:
+        headline = f"{edge.player} {event_kind}: {swing:+d} mot {rival_name}"
+    else:
+        headline = f"{edge.player}: {swing:+d} mot {rival_name}"
     return {
         "element": edge.element,
         "player": edge.player,
@@ -305,11 +305,29 @@ def edge_payload(edge: RivalPlayerEdge, rival_name: str) -> dict[str, Any]:
         "live_swing": edge.live_swing,
         "status": edge.status,
         "status_label": fixture_status_label(edge.status),
+        "event_kind": event_kind,
         "headline": headline,
     }
 
 
-def rival_payload(duel: RivalDuel) -> dict[str, Any]:
+def _player_event_kind(state: LiveState, element: int) -> str:
+    picks = state.ownership.get("picks", pd.DataFrame()) if state.ownership else None
+    if picks is None or getattr(picks, "empty", True):
+        return ""
+    block = picks[picks["element"].map(nint) == int(element)]
+    if block.empty:
+        return ""
+    row = block.iloc[0].to_dict()
+    if nint(row.get("live_goals")):
+        return "mål"
+    if nint(row.get("live_assists")):
+        return "assist"
+    if nint(row.get("live_bonus")) >= 3:
+        return "bonus"
+    return ""
+
+
+def rival_payload(duel: RivalDuel, state: LiveState | None = None) -> dict[str, Any]:
     me = manager_payload(duel.me)
     rival = manager_payload(duel.rival)
     return {
@@ -321,10 +339,10 @@ def rival_payload(duel: RivalDuel) -> dict[str, Any]:
         "common_players": duel.common_players,
         "captains": {"me": duel.me.captain, "rival": duel.rival.captain},
         "players_remaining": {"me": duel.me.players_remaining, "rival": duel.rival.players_remaining},
-        "cheer_for": [edge_payload(e, duel.rival.manager) for e in duel.cheer_for],
-        "hope_blank": [edge_payload(e, duel.me.manager) for e in duel.hope_blank],
-        "my_unique": [edge_payload(e, duel.rival.manager) for e in duel.my_unique],
-        "rival_unique": [edge_payload(e, duel.me.manager) for e in duel.rival_unique],
+        "cheer_for": [edge_payload(e, duel.rival.manager, state) for e in duel.cheer_for],
+        "hope_blank": [edge_payload(e, duel.me.manager, state) for e in duel.hope_blank],
+        "my_unique": [edge_payload(e, duel.rival.manager, state) for e in duel.my_unique],
+        "rival_unique": [edge_payload(e, duel.me.manager, state) for e in duel.rival_unique],
     }
 
 
@@ -430,7 +448,7 @@ def analysis_from_state(state: LiveState) -> dict[str, Any]:
     ownership = sorted(players, key=lambda p: (-p["ownership_count"], -p["captain_count"], p["player"]))
     diffs = [
         p for p in players
-        if p["ownership_pct"] <= 15 and (p["event_points"] or p["captain_count"] == 0)
+        if p["ownership_pct"] <= 12 and p["event_points"] > 0 and p["fixture_status"] != "not_started"
     ]
     diffs = sorted(diffs, key=lambda p: (-p["event_points"], p["ownership_pct"], p["player"]))
     events = state.ownership.get("manager_events", pd.DataFrame())
@@ -478,10 +496,95 @@ def manager_profile_payload(
         "lofthus_merits": merits_payload(merits),
         "lofthus_overall": overall,
         "lofthus_best_finish": history.best_finish(m.manager),
+        "lofthus_membership": [],
         "provisional": bool(state and not state.is_finished),
         "event_id": state.event_id if state else 0,
         "month_name": state.month_name if state else "",
         "is_live": bool(state and state.is_live),
+    }
+
+
+def movers_payload(rows: list[ManagerLiveState], limit: int = 3) -> dict[str, Any]:
+    climbers = sorted(rows, key=lambda m: (-m.live_rank_change, m.live_rank))[:limit]
+    fallers = sorted(rows, key=lambda m: (m.live_rank_change, m.live_rank))[:limit]
+    return {
+        "climbers": [manager_payload(m) for m in climbers if m.live_rank_change > 0],
+        "fallers": [manager_payload(m) for m in fallers if m.live_rank_change < 0],
+    }
+
+
+def live_events_payload(state: LiveState, bootstrap: dict) -> list[dict[str, Any]]:
+    fixtures = fixture_payload(state, bootstrap)
+    out = []
+    for f in fixtures[:8]:
+        clubs = {
+            str(f.get("home") or ""),
+            str(f.get("away") or ""),
+            str(f.get("home_name") or ""),
+            str(f.get("away_name") or ""),
+        }
+        related_impacts = [
+            p for p in state.player_impacts
+            if p.club in clubs and p.event_points and p.fixture_status != "not_started"
+        ]
+        related_impacts.sort(key=lambda p: (-p.event_points, -p.captain_count, -p.ownership_count))
+        related = [player_impact_payload(p) for p in related_impacts[:2]]
+        lead = related_impacts[0] if related_impacts else None
+        kind = _player_event_kind(state, lead.element) if lead else ""
+        headline = ""
+        if lead:
+            headline = f"{lead.player} {kind}".strip() if kind else f"{lead.player}: +{lead.event_points}"
+        out.append({
+            **f,
+            "lofthus": related,
+            "lofthus_owners": lead.ownership_count if lead else 0,
+            "lofthus_captains": lead.captain_count if lead else 0,
+            "lofthus_headline": headline,
+        })
+    return out
+
+
+def story_payload(story, state: LiveState | None = None) -> dict[str, Any]:
+    row = story.to_dict() if hasattr(story, "to_dict") else dict(story)
+    image_url = ""
+    if state and nint(row.get("player_element")):
+        impact = state.player(nint(row.get("player_element")))
+        if impact:
+            image_url = impact.image_url
+    row["image_url"] = image_url
+    return row
+
+
+def compare_payload(
+    a: ManagerLiveState,
+    b: ManagerLiveState,
+    state: LiveState | None,
+    managers: list[dict],
+    histories: dict[int, dict] | None,
+) -> dict[str, Any]:
+    overlap = 0
+    unique_a = unique_b = 0
+    if state:
+        picks = state.ownership.get("picks", pd.DataFrame())
+        if picks is not None and not picks.empty:
+            sa = set(picks[(picks["entry"].map(nint) == a.entry) & (picks["multiplier"].map(nint) > 0)]["element"].map(nint))
+            sb = set(picks[(picks["entry"].map(nint) == b.entry) & (picks["multiplier"].map(nint) > 0)]["element"].map(nint))
+            overlap = len(sa & sb)
+            unique_a = len(sa - sb)
+            unique_b = len(sb - sa)
+    return {
+        "a": manager_payload(a),
+        "b": manager_payload(b),
+        "total_gap": a.live_total_points - b.live_total_points,
+        "gw_gap": a.live_gw_points - b.live_gw_points,
+        "rank_gap": b.live_rank - a.live_rank,
+        "captains": {"a": a.captain, "b": b.captain},
+        "chips": {"a": a.active_chip or "", "b": b.active_chip or ""},
+        "overlap": overlap,
+        "unique": {"a": unique_a, "b": unique_b},
+        "form_a": json_value(form_rows(managers, histories, a.entry, state, last_n=5)),
+        "form_b": json_value(form_rows(managers, histories, b.entry, state, last_n=5)),
+        "provisional": bool(state and not state.is_finished),
     }
 
 
