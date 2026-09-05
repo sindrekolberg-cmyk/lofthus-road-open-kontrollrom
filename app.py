@@ -14,7 +14,7 @@ from lro_routes import parse_route
 from lro_runtime import get_client, get_history_store, histories_async, live_state_async, load_shell, runtime_debug
 from lro_pages import home, league, manager, rivalradar, history as history_page, player
 
-APP_VERSION = "lofthus-road-open-v820-sportsfront"
+APP_VERSION = "lofthus-road-open-v821-image-hotfix"
 ROOT = Path(__file__).resolve().parent
 
 st.set_page_config(
@@ -95,7 +95,7 @@ def _product_body() -> None:
 _product_body()
 
 if route.debug:
-    with st.expander("V820 debug", expanded=False):
+    with st.expander("V821 debug", expanded=False):
         payload = {
             "version": APP_VERSION,
             "route": route.__dict__,

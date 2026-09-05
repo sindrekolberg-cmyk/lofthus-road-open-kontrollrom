@@ -11,7 +11,7 @@ import requests
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open V810"}
+HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open V821"}
 POSITION_LABELS = {1: "Keeper", 2: "Forsvar", 3: "Midtbane", 4: "Angrep"}
 
 

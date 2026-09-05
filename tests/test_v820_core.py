@@ -67,7 +67,7 @@ def ownership():
     return {"event": 3, "picks": picks, "manager_events": events, "players": players, "loaded_managers": 3, "league_size": 3, "errors": []}
 
 
-class V820CoreTests(unittest.TestCase):
+class V821CoreTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.history = HistoryStore(Path(self.temp.name))
@@ -161,9 +161,20 @@ class V820CoreTests(unittest.TestCase):
         self.assertIn("ui.sports_news", home)
         self.assertIn("ui.sports_popular_players", home)
         self.assertNotIn("ui.status_strip(", home)
+        self.assertNotIn("ui.home_ticker(", home)
         self.assertIn("v820-hero-img", ui)
         self.assertIn("v820-story-graphic", ui)
         self.assertIn("v820-analysis-invite", ui)
+
+
+    def test_v821_images_are_server_resolved_not_browser_hotlinked(self):
+        ui = (Path(__file__).resolve().parents[1] / "lro_ui.py").read_text(encoding="utf-8")
+        self.assertIn("def _resolved_player_image", ui)
+        self.assertIn("base64.b64encode", ui)
+        self.assertIn("data:{ctype};base64", ui)
+        self.assertIn("Referer", ui)
+        self.assertIn("premierleague/photos/players", ui)
+        self.assertIn("return _img(url, cls=cls, eager=eager)", ui)
 
     def test_routes_roundtrip_manager_and_backlink_shape(self):
         route = parse_route({"page": "Manager", "manager": "42", "me": "7"})

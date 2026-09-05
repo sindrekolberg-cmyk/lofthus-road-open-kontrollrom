@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import base64
 import html
+import re
 from typing import Any, Iterable
+
+import requests
 
 import pandas as pd
 import streamlit as st
@@ -197,12 +201,72 @@ def _initials(name: str) -> str:
     return "".join(x[0] for x in parts[:2]).upper() or "LRO"
 
 
+def _pl_image_candidates(url: str) -> list[str]:
+    """Build conservative fallbacks for Premier League player cut-outs.
+
+    Browser-side hotlinking of the PL asset CDN is not reliable in every
+    Streamlit deployment. V821 resolves the image on the server instead, so
+    these candidates are also useful when a specific size/namespace is stale.
+    """
+    if not url:
+        return []
+    candidates: list[str] = []
+    def add(value: str) -> None:
+        if value and value not in candidates:
+            candidates.append(value)
+
+    add(url)
+    match = re.search(r"/photos/players/[^/]+/(?:p)?(\d+)\.png", url)
+    if match:
+        pid = match.group(1)
+        base = "https://resources.premierleague.com"
+        # Current PL site assets. Keep both namespaces because the site build
+        # can move independently of the FPL season.
+        for ns in ("premierleague25", "premierleague26"):
+            for size in ("500x500", "250x250", "110x140", "40x40"):
+                add(f"{base}/{ns}/photos/players/{size}/{pid}.png")
+        # Long-lived legacy path, still available for many players.
+        for size in ("250x250", "110x140"):
+            add(f"{base}/premierleague/photos/players/{size}/p{pid}.png")
+    return candidates
+
+
+@st.cache_data(ttl=21600, max_entries=512, show_spinner=False)
+def _resolved_player_image(url: str) -> str:
+    """Fetch a PL cut-out server-side and return an embedded data URI.
+
+    This deliberately avoids making the visitor's browser hotlink the PL CDN.
+    It fixes the V820 failure mode where the img tag existed, but every image
+    request failed and left a large empty hero/card.
+    """
+    headers = {
+        "User-Agent": "Mozilla/5.0 Lofthus Road Open V821",
+        "Referer": "https://www.premierleague.com/",
+        "Origin": "https://www.premierleague.com",
+        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+    }
+    for candidate in _pl_image_candidates(url):
+        try:
+            response = requests.get(candidate, headers=headers, timeout=4)
+            ctype = str(response.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+            body = response.content or b""
+            if response.status_code == 200 and ctype.startswith("image/") and len(body) > 500:
+                encoded = base64.b64encode(body).decode("ascii")
+                return f"data:{ctype};base64,{encoded}"
+        except requests.RequestException:
+            continue
+    return ""
+
+
 def _img(url: str, cls: str = "", eager: bool = False) -> str:
     if not url:
         return ""
+    src = _resolved_player_image(url)
+    if not src:
+        return ""
     loading = "eager" if eager else "lazy"
     class_attr = f' class="{esc(cls)}"' if cls else ""
-    return f'<img{class_attr} src="{esc(url)}" alt="" loading="{loading}" decoding="async">'
+    return f'<img{class_attr} src="{src}" alt="" loading="{loading}" decoding="async">'
 
 
 def _manager_menu(entry: int, name: str, team: str, me: int = 0, captain: str = "") -> str:
@@ -548,19 +612,8 @@ def sports_section(title: str, meta: str = "") -> None:
 
 
 def _img_v820(url: str, cls: str = "", eager: bool = False) -> str:
-    """Current PL cut-out with a same-CDN fallback size.
-
-    The current player asset tree is `premierleague25`. A handful of 500px cuts
-    can lag behind the smaller version, so an inline fallback avoids another
-    giant empty hero without adding app-side HTTP proxying.
-    """
-    if not url:
-        return ""
-    loading = "eager" if eager else "lazy"
-    class_attr = f' class="{esc(cls)}"' if cls else ""
-    fallback = url.replace('/500x500/', '/250x250/') if '/500x500/' in url else ""
-    onerror = f' onerror="this.onerror=null;this.src=\'{esc(fallback)}\';"' if fallback and fallback != url else ""
-    return f'<img{class_attr} src="{esc(url)}" alt="" loading="{loading}" decoding="async"{onerror}>'
+    """V821: use the server-resolved image rather than browser hotlinking."""
+    return _img(url, cls=cls, eager=eager)
 
 
 def _v820_rail_html(rows: list[ManagerLiveState], me: int = 0, live: bool = False) -> str:

@@ -56,7 +56,7 @@ def render(
     histories: dict[int, dict] | None,
     me: int = 0,
 ) -> int:
-    """V820 front page.
+    """V821 front page.
 
     Public surface = sports site. The deep analysis remains in the product, but
     the homepage only exposes the data that earns editorial space.
@@ -70,26 +70,9 @@ def render(
     month = state.month_ranking() if state else []
     month_leader = month[0] if month and sum(x.month_points for x in month) > 0 else None
 
-    # One quiet context line instead of three equal dashboard cards.
-    ticker: list[tuple[str, str, str]] = []
-    if me and state:
-        mine = state.manager(me)
-        if mine:
-            ahead = next((m for m in state.managers_by_rank() if m.live_rank == mine.live_rank - 1), None)
-            gap = (ahead.live_total_points - mine.live_total_points + 1) if ahead else 0
-            ticker = [
-                ("Din plass", f"{mine.live_rank}.", f"{mine.live_gw_points} GW" + (" live" if state.is_live else "")),
-                ("Neste rival", ahead.manager if ahead else "Du leder", f"{gap} p" if ahead else ""),
-                (state.month_name or "Måneden", f"{mine.month_rank}." if mine.month_rank else "–", f"{mine.month_points} p"),
-            ]
-    else:
-        if leader:
-            ticker.append(("Leder", leader.manager, str(leader.live_total_points)))
-        if winner:
-            ticker.append(("Forrige GW", str(winner.get("manager") or "–"), str(nint(winner.get("gw")))))
-        if month_leader and state:
-            ticker.append((state.month_name or "Måneden", month_leader.manager, str(month_leader.month_points)))
-    ui.home_ticker(ticker[:3])
+    # V821: no public dashboard strip above the lead story. The league leader
+    # already owns the Top 5 rail, previous-GW/month context belongs in stories,
+    # and a selected manager gets a personal strip lower on the page.
 
     if state:
         # The hero always has one dominant sporting subject. During live play we
@@ -117,8 +100,8 @@ def render(
 
     if state:
         candidates = generate_candidates(state, managers, bootstrap, history, histories)
-        stories = merge_persistent_stories(candidates, st.session_state.get("v820_newsroom"), state, limit=3)
-        st.session_state["v820_newsroom"] = [x.to_dict() for x in stories]
+        stories = merge_persistent_stories(candidates, st.session_state.get("v821_newsroom"), state, limit=3)
+        st.session_state["v821_newsroom"] = [x.to_dict() for x in stories]
         ui.sports_section("Snakkiser", "Det viktigste fra ligaen")
         ui.sports_news(stories, me=me, state=state)
     else:
