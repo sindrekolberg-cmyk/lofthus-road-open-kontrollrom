@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { analysisEntries } from "@/lib/data";
+import { analysisEntries } from "@/lib/types";
 
 export function AnalyseEntry() {
   return (

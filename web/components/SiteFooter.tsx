@@ -13,7 +13,7 @@ export function SiteFooter() {
           </p>
         </div>
         <p className="text-xs tracking-wide">
-          Prototype · Gameweek 4 ·{" "}
+          Lofthus Road Open ·{" "}
           <Link href="/" className="text-paper/90 hover:text-paper">
             Forside
           </Link>

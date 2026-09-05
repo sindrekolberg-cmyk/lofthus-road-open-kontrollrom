@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { nav } from "@/lib/data";
+import { nav } from "@/lib/types";
 
 export function SiteHeader() {
   const pathname = usePathname();
