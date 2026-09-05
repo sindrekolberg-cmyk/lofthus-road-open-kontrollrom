@@ -44,8 +44,8 @@ def render(
 
     st.markdown(
         f'<div style="display:flex;gap:.75rem;flex-wrap:wrap;margin:.2rem 0 .7rem">'
-        f'<a href="{rival_href(me,rival)}" style="font-size:.72rem;font-weight:900;text-decoration:none">Fast lenke til duellen</a>'
-        f'<a href="{manager_href(me,me=me)}" style="font-size:.72rem;font-weight:900;text-decoration:none">Se laget ditt</a>'
+        f'<a target="_self" href="{rival_href(me,rival)}" style="font-size:.72rem;font-weight:900;text-decoration:none">Fast lenke til duellen</a>'
+        f'<a target="_self" href="{manager_href(me,me=me)}" style="font-size:.72rem;font-weight:900;text-decoration:none">Se laget ditt</a>'
         f'</div>',
         unsafe_allow_html=True,
     )
@@ -84,7 +84,7 @@ def render(
         for entry in suggestions:
             m = by_entry.get(entry)
             if m:
-                links.append(f'<a href="{rival_href(me,entry)}" style="text-decoration:none;font-size:.72rem;font-weight:850">{ui.esc(m.manager)}</a>')
+                links.append(f'<a target="_self" href="{rival_href(me,entry)}" style="text-decoration:none;font-size:.72rem;font-weight:850">{ui.esc(m.manager)}</a>')
         if links:
             ui.section("Andre rivaler")
             st.markdown('<div style="display:flex;gap:.9rem;flex-wrap:wrap">' + "".join(links) + '</div>', unsafe_allow_html=True)

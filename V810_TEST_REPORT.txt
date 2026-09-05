@@ -1,0 +1,49 @@
+LOFTHUS ROAD OPEN V810 · TEST REPORT
+====================================
+
+Dato: 2026-09-05
+
+PASS - Python compilation
+  Command:
+  python -m py_compile app.py lro_*.py lro_pages/*.py scripts/*.py
+
+PASS - 10/10 core unit/integration tests
+  Command:
+  python -m unittest tests.test_v810_core -q
+
+  Covered scenarios include:
+  - one authoritative live score across league/form/rival flows
+  - ordinary captain and Triple Captain multipliers
+  - transfer hits
+  - live ranking
+  - competition-style rank ties
+  - newsroom persistence
+  - provisional live movement language
+  - unplayed zero is not described as a failure
+  - manager/deep-link route shape
+  - Rasmus Grytvik-Skoglund 3rd in 2024/25 fills only a missing field
+  - explicit archive values are never overwritten by that correction
+  - player catalog produces Premier League player image URLs from FPL player code
+
+PASS - Static V810 UI smoke
+  Exercised the HTML render paths for:
+  - matchday LIVE hero + Top 5 rail
+  - visual Snakkiser grid
+  - visual popular-player cards
+  - player hero
+  - squad formation with player images
+  - form strip
+
+  Generated markup was parsed successfully with Python HTMLParser.
+
+PASS - Same-tab navigation preserved in shared manager/menu links
+  Internal V810 links continue to use target="_self".
+
+NOT RUN - Real Streamlit browser visual regression test
+  The build container does not provide a reliable full Streamlit/browser runtime for interactive visual clicking.
+
+NOT RUN - Live FPL network integration
+  External live FPL requests were not used as a release gate in this container.
+
+KNOWN RUNTIME DEPENDENCY
+  Player photos are remote presentation assets. A failed image request must not affect LiveState or points calculations.

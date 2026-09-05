@@ -19,24 +19,26 @@ def _identity(managers: list[dict], selected: int) -> int:
     opts = manager_options(managers)
     ids = [entry for entry, _ in opts]
     labels = dict(opts)
-    if selected in ids:
-        return int(selected)
-    choice = st.selectbox(
-        "Hvem er du?",
-        options=[0] + ids,
-        index=0,
-        format_func=lambda x: "Velg manager" if int(x) == 0 else labels.get(int(x), str(x)),
-        key="v800_identity",
-        label_visibility="collapsed",
-        placeholder="Hvem er du i ligaen?",
-    )
-    if choice:
-        try:
-            st.query_params["me"] = str(int(choice))
-        except Exception:
-            pass
-        st.rerun()
-    return 0
+    selected = int(selected) if selected in ids else 0
+    button = labels.get(selected, "Velg manager") if selected else "Velg manager"
+    with st.popover(button, use_container_width=False):
+        choice = st.selectbox(
+            "Min manager",
+            options=[0] + ids,
+            index=([0] + ids).index(selected) if selected in ids else 0,
+            format_func=lambda x: "Ingen valgt" if int(x) == 0 else labels.get(int(x), str(x)),
+            key="v810_identity",
+        )
+        if int(choice or 0) != selected:
+            try:
+                if choice:
+                    st.query_params["me"] = str(int(choice))
+                elif "me" in st.query_params:
+                    del st.query_params["me"]
+            except Exception:
+                pass
+            st.rerun()
+    return selected
 
 
 def _previous(managers: list[dict], histories: dict[int, dict] | None, bootstrap: dict, history: HistoryStore) -> dict:
@@ -93,25 +95,26 @@ def render(
             positive = [r for r in swings if float(r.get("swing") or 0) > 0][:3]
             negative = [r for r in reversed(swings) if float(r.get("swing") or 0) < 0][:2]
             impact_rows = positive + negative
-        ui.live_centre(state, impact_rows, fixture_scoreline(state, bootstrap), me=me)
-
-    ui.section("Topp 5 · live" if state and not state.is_finished else "Topp 5", "")
-    ui.top_five(states[:5], me=me, live=bool(state and not state.is_finished))
+        ui.home_matchday(state, impact_rows, fixture_scoreline(state, bootstrap), states[:5], me=me)
+    else:
+        ui.section("Topp 5", "Sammenlagt")
+        ui.top_five(states[:5], me=me, live=False)
 
     if state:
         candidates = generate_candidates(state, managers, bootstrap, history, histories)
-        stories = merge_persistent_stories(candidates, st.session_state.get("v800_newsroom"), state, limit=4)
-        st.session_state["v800_newsroom"] = [x.to_dict() for x in stories]
+        stories = merge_persistent_stories(candidates, st.session_state.get("v810_newsroom"), state, limit=4)
+        st.session_state["v810_newsroom"] = [x.to_dict() for x in stories]
         ui.section("Snakkiser")
-        ui.story_list(stories, me=me)
+        ui.story_list(stories, me=me, state=state)
     else:
         ui.section("Snakkiser")
         st.markdown('<div class="v8-empty">Live-redaksjonen våkner når lagdataene er klare.</div>', unsafe_allow_html=True)
 
     if state:
-        left, right = st.columns([1.15, .85], gap="large")
-        with left:
-            if me and (mine := state.manager(me)):
+        mine = state.manager(me) if me else None
+        if mine:
+            left, right = st.columns([1, 1], gap="large")
+            with left:
                 ui.section("Min Lofthus")
                 rivals = [m for m in state.managers_by_rank() if m.entry != me]
                 ahead = [m for m in rivals if m.live_rank < mine.live_rank]
@@ -123,8 +126,11 @@ def render(
                     (nearest.manager if nearest else "Leder", "Nærmest foran"),
                 ])
                 if nearest:
-                    st.markdown(f'<div style="margin-top:.5rem"><a href="{rival_href(me, nearest.entry)}" style="font-size:.73rem;font-weight:900;text-decoration:none">Åpne duellen →</a></div>', unsafe_allow_html=True)
-        with right:
+                    st.markdown(f'<div style="margin-top:.5rem"><a target="_self" href="{rival_href(me, nearest.entry)}" style="font-size:.73rem;font-weight:900;text-decoration:none">Åpne duellen →</a></div>', unsafe_allow_html=True)
+            with right:
+                ui.section("Mest populære")
+                ui.popular_players(state.player_impacts, me=me, limit=3)
+        else:
             ui.section("Mest populære")
             ui.popular_players(state.player_impacts, me=me, limit=3)
         ui.data_quality(state)

@@ -11,7 +11,7 @@ import requests
 
 BASE_URL = "https://fantasy.premierleague.com/api"
 DEFAULT_LEAGUE_ID = 25220
-HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open V800"}
+HEADERS = {"User-Agent": "Mozilla/5.0 Lofthus Road Open V810"}
 POSITION_LABELS = {1: "Keeper", 2: "Forsvar", 3: "Midtbane", 4: "Angrep"}
 
 
@@ -360,9 +360,14 @@ def player_catalog(bootstrap: dict) -> dict[int, dict]:
         xg = _float(p.get("expected_goals"))
         xa = _float(p.get("expected_assists"))
         xgi = _float(p.get("expected_goal_involvements"), xg + xa)
+        code = _int(p.get("code"))
+        image_url = f"https://resources.premierleague.com/premierleague/photos/players/250x250/p{code}.png" if code else ""
         out[pid] = {
             "element_id": pid,
             "web_name": str(p.get("web_name") or p.get("second_name") or p.get("first_name") or pid),
+            "code": code,
+            "photo": str(p.get("photo") or ""),
+            "image_url": image_url,
             "full_name": f"{p.get('first_name') or ''} {p.get('second_name') or ''}".strip(),
             "team_id": team_id,
             "club": teams.get(team_id, {}).get("short_name", ""),

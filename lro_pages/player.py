@@ -23,16 +23,16 @@ def render(state: LiveState | None, element: int, me: int = 0) -> None:
 
     name = impact.player if impact else str((raw or {}).get("player") or f"Spiller {element}")
     club = impact.club if impact else str((raw or {}).get("club") or "")
-    ui.page_lead(name, club.upper() if club else "LOFTHUS-SPILLER")
+    event_points = impact.event_points if impact else nint((raw or {}).get("event_points"))
+    ownership_pct = impact.ownership_pct if impact else nfloat((raw or {}).get("ownership_pct"))
+    captains = impact.captain_count if impact else nint((raw or {}).get("captain_count"))
+    image_url = impact.image_url if impact else str((raw or {}).get("image_url") or "")
+    status = impact.fixture_status if impact else ""
+    ui.player_hero(name, club, image_url, event_points, f"{ownership_pct:.0f} %", captains, status)
     ui.mini_grid([
-        (impact.event_points if impact else nint((raw or {}).get("event_points")), "GW-poeng"),
         (f"{impact.ownership_count}/{state.league_size}" if impact else nint((raw or {}).get("ownership_count")), "Eiere"),
-        (impact.captain_count if impact else nint((raw or {}).get("captain_count")), "Kapteiner"),
-    ])
-    ui.status_strip([
-        ("LRO-eierskap", f"{impact.ownership_pct:.0f} %" if impact else f"{nfloat((raw or {}).get('ownership_pct')):.0f} %", ""),
-        ("Effektivt eierskap", f"{impact.effective_ownership_pct:.0f} %" if impact else f"{nfloat((raw or {}).get('effective_ownership_pct')):.0f} %", ""),
-        ("Status", (impact.fixture_status if impact else "").replace("not_started","Ikke startet").replace("finished","Ferdig").replace("live","LIVE"), ""),
+        (f"{impact.effective_ownership_pct:.0f} %" if impact else f"{nfloat((raw or {}).get('effective_ownership_pct')):.0f} %", "Effektivt eierskap"),
+        (impact.triple_captain_count if impact else nint((raw or {}).get("triple_captain_count")), "Triple Captain"),
     ])
 
     ui.section("Hvem profiterer mest?")
@@ -57,5 +57,5 @@ def render(state: LiveState | None, element: int, me: int = 0) -> None:
                 m = state_by_name.get(str(owner))
                 if m:
                     label = f"{owner} (C)" if owner in captains else str(owner)
-                    names.append(f'<a href="{manager_href(m.entry,me=me)}" style="text-decoration:none;font-size:.72rem;font-weight:850">{ui.esc(label)}</a>')
+                    names.append(f'<a target="_self" href="{manager_href(m.entry,me=me)}" style="text-decoration:none;font-size:.72rem;font-weight:850">{ui.esc(label)}</a>')
             st.markdown('<div style="display:flex;gap:.8rem;flex-wrap:wrap">'+"".join(names)+'</div>', unsafe_allow_html=True)

@@ -28,7 +28,7 @@ def get_history_store(data_dir: str, version: str) -> HistoryStore:
 
 @st.cache_resource
 def _pool() -> ThreadPoolExecutor:
-    return ThreadPoolExecutor(max_workers=3, thread_name_prefix="lro-v800")
+    return ThreadPoolExecutor(max_workers=3, thread_name_prefix="lro-v810")
 
 
 @st.cache_resource

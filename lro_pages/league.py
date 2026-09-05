@@ -118,7 +118,7 @@ def render(
     me: int=0,
     compare: tuple[int,...]=(),
 ) -> None:
-    ui.page_lead("Ligaen", "LIVE TABLE" if state and state.is_live else "TABELL")
+    ui.page_lead("Ligaen", "LIVE" if state and state.is_live else "TABELL")
     ui.subnav([
         ("Tabell",league_href("Tabell",me=me)),
         ("Måneden",league_href("Måneden",me=me)),

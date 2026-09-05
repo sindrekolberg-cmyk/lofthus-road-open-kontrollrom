@@ -58,6 +58,7 @@ class PlayerImpact:
     live_minutes: int
     fixture_status: str
     impact_score: float
+    image_url: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -255,6 +256,7 @@ def _build_player_impacts(ownership: dict, team_states: dict[int, str]) -> list[
             live_minutes=nint(row.get("live_minutes")),
             fixture_status=status,
             impact_score=round(importance, 2),
+            image_url=str(row.get("image_url") or ""),
         ))
     return sorted(out, key=lambda p: (-p.impact_score, -p.event_points, normalize_text(p.player)))
 
@@ -267,7 +269,7 @@ def build_live_state(
     bootstrap: dict | None = None,
     ownership: dict | None = None,
 ) -> LiveState:
-    """Build the single authoritative matchday state used by every V800 page."""
+    """Build the single authoritative matchday state used by every V810 page."""
     bootstrap = bootstrap or client.bootstrap()
     event_id = current_event_id(bootstrap) or 0
     if not event_id:

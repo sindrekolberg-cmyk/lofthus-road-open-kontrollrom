@@ -62,7 +62,7 @@ def render(
         return
 
     st.markdown(
-        f'<a href="{league_href("Tabell", me=me)}" style="font-size:.72rem;font-weight:900;text-decoration:none">← Tilbake til tabellen</a>',
+        f'<a target="_self" href="{league_href("Tabell", me=me)}" style="font-size:.72rem;font-weight:900;text-decoration:none">← Tilbake til tabellen</a>',
         unsafe_allow_html=True,
     )
     ui.manager_header(m)
@@ -78,7 +78,7 @@ def render(
             (f"£{m.team_value:.1f}m" if m.team_value else "–", "Lagverdi"),
         ])
         st.markdown(
-            f'<div style="margin-top:.55rem"><a href="{rival_href(me or entry)}" style="font-size:.73rem;font-weight:900;text-decoration:none">Åpne Rivalradar →</a></div>',
+            f'<div style="margin-top:.55rem"><a target="_self" href="{rival_href(me or entry)}" style="font-size:.73rem;font-weight:900;text-decoration:none">Åpne Rivalradar →</a></div>',
             unsafe_allow_html=True,
         )
     else:
