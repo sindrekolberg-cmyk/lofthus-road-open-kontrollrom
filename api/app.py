@@ -12,14 +12,16 @@ from api.engine import AppEngine, RequestSnapshot, get_engine
 from api.serialize import (
     analysis_from_state,
     compare_payload,
-    fixture_payload,
     hall_of_fame_payload,
+    hall_records_payload,
     history_store_payload,
     live_events_payload,
     manager_payload,
     manager_profile_payload,
     movers_payload,
+    odds_payload,
     player_impact_payload,
+    player_swing_payload,
     rival_payload,
     season_from_bootstrap,
     status_payload,
@@ -131,7 +133,7 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
             "status": st,
             "table": [manager_payload(m) for m in s.state.managers_by_rank()],
             "gw_ranking": [manager_payload(m) for m in s.state.gw_ranking()],
-            "fixtures": fixture_payload(s.state, s.bootstrap),
+            "fixtures": live_events_payload(s.state, s.bootstrap),
             "player_impacts": [player_impact_payload(p) for p in s.state.player_impacts[:40]],
             "live_ready": True,
         }
@@ -254,6 +256,8 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
         s = snap()
         a = find_manager(s, manager_a)
         b = find_manager(s, manager_b)
+        if manager_a == manager_b:
+            raise HTTPException(status_code=400, detail="Velg to ulike managere.")
         if not a or not b:
             raise HTTPException(status_code=404, detail="Begge managere må finnes i ligaen.")
         return {**compare_payload(a, b, s.state, s.managers, s.histories), "status": status_from(s)}
@@ -270,8 +274,10 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
         s = snap()
         auto = eng.auto_month_rows(s.bootstrap)
         hist = history_store_payload(eng.history, auto)
+        rows = hall_of_fame_payload(eng.history, auto)
         return {
-            "rows": hall_of_fame_payload(eng.history, auto),
+            "rows": rows,
+            "records": hall_records_payload(rows),
             "overall": hist.get("overall") or [],
             "cup": hist.get("cup") or [],
             "monthly": hist.get("monthly") or [],
@@ -316,6 +322,25 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
             reverse=True,
         )
         return {"players": [player_impact_payload(p) for p in ranked[:8]]}
+
+    @app.get("/api/players/{element_id}")
+    def player_detail(element_id: int) -> dict[str, Any]:
+        s = snap()
+        if not s.state:
+            raise HTTPException(status_code=503, detail="Live-data er ikke klare ennå.")
+        body = player_swing_payload(s.state, element_id)
+        if not body:
+            raise HTTPException(status_code=404, detail="Spilleren finnes ikke i live-data.")
+        body["status"] = status_from(s)
+        return body
+
+    @app.get("/api/odds")
+    def odds() -> dict[str, Any]:
+        s = snap()
+        eng = engine_dep()
+        body = odds_payload(s.state, s.histories, eng.history)
+        body["status"] = status_from(s)
+        return body
 
     @app.get("/api/analysis/captain")
     def analysis_captain() -> dict[str, Any]:
@@ -392,6 +417,7 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
                 "rank_change": live.live_rank_change if live else 0,
             })
         options.sort(key=lambda r: r["manager"])
+        events = live_events_payload(s.state, s.bootstrap) if s.state else []
         return {
             "status": st,
             "hero": {"story": hero_story, "player": hero_player},
@@ -400,13 +426,13 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
             "news": unique_stories,
             "popular": popular,
             "month": {"name": s.state.month_name if s.state else "", "table": month_table},
-            "events": live_events_payload(s.state, s.bootstrap) if s.state else [],
+            "events": events,
             "managers": options,
             "pulse": {
                 "gw": st.get("event_id") or 0,
                 "label": st.get("event_status_label") or "",
                 "is_live": bool(st.get("is_live")),
-                "fixtures": (live_events_payload(s.state, s.bootstrap) if s.state else [])[:6],
+                "fixtures": events[:6],
             },
         }
 

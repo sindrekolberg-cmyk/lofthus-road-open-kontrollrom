@@ -155,6 +155,8 @@ class ApiTests(unittest.TestCase):
         self.assertIn("cheer_for", body)
         self.assertIn("hope_blank", body)
         self.assertIn("live_gap", body)
+        self.assertIn(body["strategy"]["context"], {"defend", "chase", "neutral"})
+        self.assertTrue(body["strategy"]["text"])
 
     def test_history_preserves_2024_25_bronze(self):
         r = self.client.get("/api/history")
@@ -215,6 +217,38 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json()["a"]["entry"], 1)
         self.assertEqual(r.json()["b"]["entry"], 3)
+        same = self.client.get("/api/compare", params={"manager_a": 1, "manager_b": 1})
+        self.assertEqual(same.status_code, 400)
+
+    def test_live_events_include_lofthus_consequence(self):
+        home = self.client.get("/api/home").json()
+        events = home["events"]
+        self.assertTrue(events)
+        lead = events[0]
+        self.assertIn("lofthus_headline", lead)
+        self.assertEqual(lead["lofthus_winner"]["manager"], "C")
+        self.assertEqual(lead["lofthus_loser"]["manager"], "A")
+        live = self.client.get("/api/live").json()
+        self.assertEqual(live["fixtures"][0]["lofthus_winner"]["manager"], "C")
+
+    def test_player_swings(self):
+        r = self.client.get("/api/players/10")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["player"]["player"], "Isak")
+        self.assertEqual(body["winner"]["manager"], "C")
+        self.assertEqual(body["loser"]["manager"], "A")
+
+    def test_odds_endpoint(self):
+        r = self.client.get("/api/odds")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("rows", r.json())
+        self.assertIn("ready", r.json())
+
+    def test_hall_records(self):
+        r = self.client.get("/api/hall-of-fame")
+        records = r.json().get("records") or {}
+        self.assertTrue(records.get("league_titles") or records.get("podiums"))
 
     def test_month_follows_current_event(self):
         from lro_fpl import current_month_phase

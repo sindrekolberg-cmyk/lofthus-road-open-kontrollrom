@@ -9,7 +9,7 @@ from lro_analysis import chip_label, manager_squad, nint
 from lro_fpl import season_label
 from lro_history import HistoryStore
 from lro_league import form_rows, player_status_map, profile_story
-from lro_live import LiveState, ManagerLiveState, PlayerImpact
+from lro_live import LiveState, ManagerLiveState, PlayerImpact, manager_swing_for_player
 from lro_rival import RivalDuel, RivalPlayerEdge
 
 
@@ -343,7 +343,24 @@ def rival_payload(duel: RivalDuel, state: LiveState | None = None) -> dict[str, 
         "hope_blank": [edge_payload(e, duel.me.manager, state) for e in duel.hope_blank],
         "my_unique": [edge_payload(e, duel.rival.manager, state) for e in duel.my_unique],
         "rival_unique": [edge_payload(e, duel.me.manager, state) for e in duel.rival_unique],
+        "strategy": rival_strategy_payload(duel, state),
     }
+
+
+def rival_strategy_payload(duel: RivalDuel, state: LiveState | None) -> dict[str, Any]:
+    gap = int(duel.live_gap)
+    event_now = state.event_id if state else 1
+    threshold = 28 if event_now <= 5 else 20 if event_now <= 20 else 12
+    if gap >= threshold:
+        context = "defend"
+        text = f"Du ligger {gap} poeng foran. Dekning kan være mer verdt enn unødvendig gambling."
+    elif gap <= -threshold:
+        context = "chase"
+        text = f"Du ligger {abs(gap)} poeng bak. Gode forskjeller kan være mer verdifulle enn ren dekning."
+    else:
+        context = "neutral"
+        text = "Det er tett nok til at forventet poengverdi bør veie tyngst. Forskjeller er bonus, ikke mål i seg selv."
+    return {"context": context, "text": text, "gap": gap, "threshold": threshold}
 
 
 def history_store_payload(history: HistoryStore, auto_rows: list[dict] | None = None) -> dict[str, Any]:
@@ -408,6 +425,77 @@ def hall_of_fame_payload(history: HistoryStore, auto_rows: list[dict] | None = N
             "cup_seasons": list(r.get("cup_seasons") or []),
         })
     return rows
+
+
+def hall_records_payload(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    def leader(field: str, label: str) -> dict[str, Any] | None:
+        if not rows:
+            return None
+        best = max(rows, key=lambda r: (nint(r.get(field)), -nint(r.get("rank"), 999)))
+        value = nint(best.get(field))
+        if value <= 0:
+            return None
+        return {"manager": best["manager"], "value": value, "label": label, "field": field}
+
+    return {
+        "league_titles": leader("league_gold", "Ligatitler"),
+        "cup_titles": leader("cup_gold", "Cuptitler"),
+        "month_titles": leader("monthly_gold", "Månedstitler"),
+        "podiums": leader("podiums", "Podier"),
+    }
+
+
+def odds_payload(
+    state: LiveState | None,
+    histories: dict[int, dict] | None,
+    history: HistoryStore,
+) -> dict[str, Any]:
+    from lro_odds import build_live_market
+
+    if not state:
+        return {"rows": [], "ready": False, "note": "Live-data er ikke klare."}
+    managers = [
+        {
+            "entry": m.entry,
+            "rank": m.live_rank,
+            "total": m.live_total_points,
+            "player_name": m.manager,
+        }
+        for m in state.manager_live
+    ]
+    try:
+        df = build_live_market(managers, histories or {}, state.event_id, history)
+    except Exception:
+        return {"rows": [], "ready": False, "note": "Odds kunne ikke beregnes."}
+    if df is None or df.empty:
+        return {"rows": [], "ready": False, "note": "For tynt grunnlag til å vise odds."}
+    rows = []
+    for r in df.head(12).to_dict("records"):
+        rows.append({
+            "entry": nint(r.get("entry")),
+            "manager": str(r.get("manager") or ""),
+            "rank": nint(r.get("current_rank")),
+            "win_pct": round(float(r.get("win_pct") or 0), 1),
+            "odds": round(float(r.get("winner_odds") or 0), 2),
+            "preseason_odds": round(float(r.get("preseason_odds") or 0), 2),
+            "note": str(r.get("note") or ""),
+        })
+    return {"rows": rows, "ready": True, "event_id": state.event_id}
+
+
+def player_swing_payload(state: LiveState, element_id: int) -> dict[str, Any] | None:
+    impact = state.player(int(element_id))
+    if not impact:
+        return None
+    swings = manager_swing_for_player(state, int(element_id))
+    gainers = [r for r in swings if r["swing"] > 0.05]
+    losers = [r for r in swings if r["swing"] < -0.05]
+    return {
+        "player": player_impact_payload(impact),
+        "swings": swings[:20],
+        "winner": gainers[0] if gainers else None,
+        "loser": losers[-1] if losers else None,
+    }
 
 
 def pick_hero(state: LiveState | None) -> dict[str, Any] | None:
@@ -532,14 +620,26 @@ def live_events_payload(state: LiveState, bootstrap: dict) -> list[dict[str, Any
         lead = related_impacts[0] if related_impacts else None
         kind = _player_event_kind(state, lead.element) if lead else ""
         headline = ""
+        winner = loser = None
         if lead:
             headline = f"{lead.player} {kind}".strip() if kind else f"{lead.player}: +{lead.event_points}"
+            swings = manager_swing_for_player(state, lead.element)
+            gainers = [r for r in swings if r["swing"] > 0.05]
+            losers = [r for r in swings if r["swing"] < -0.05]
+            if gainers:
+                top = gainers[0]
+                winner = {"entry": top["entry"], "manager": top["manager"], "swing": top["swing"]}
+            if losers:
+                bottom = losers[-1]
+                loser = {"entry": bottom["entry"], "manager": bottom["manager"], "swing": bottom["swing"]}
         out.append({
             **f,
             "lofthus": related,
             "lofthus_owners": lead.ownership_count if lead else 0,
             "lofthus_captains": lead.captain_count if lead else 0,
             "lofthus_headline": headline,
+            "lofthus_winner": winner,
+            "lofthus_loser": loser,
         })
     return out
 
