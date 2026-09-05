@@ -109,6 +109,7 @@ class ApiTests(unittest.TestCase):
         r = self.client.get("/api/health")
         self.assertEqual(r.status_code, 200)
         self.assertTrue(r.json()["ok"])
+        self.assertEqual(self.client.get("/").status_code, 200)
 
     def test_league_uses_live_truth(self):
         r = self.client.get("/api/league")

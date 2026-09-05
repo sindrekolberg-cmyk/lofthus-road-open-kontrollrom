@@ -4,16 +4,30 @@ services:
     runtime: python
     region: frankfurt
     plan: 0.5c-512mb
+    branch: integration-v2
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn api.app:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
     autoDeployTrigger: commit
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.8"
+      - key: LRO_API_WARMUP
+        value: "1"
+      - key: LRO_CORS_ORIGIN_REGEX
+        value: https://([a-z0-9-]+\.)*vercel\.app
+      - key: LRO_CORS_ORIGINS
+        value: http://localhost:3000,http://127.0.0.1:3000,https://lofthus-road-open-kontrollrom-uvvh.vercel.app,https://lofthus-road-open-kontrollrom-uvvh-git-integration-v2-genetic1.vercel.app
   - type: web
     name: lofthus-road-open
     runtime: python
     region: frankfurt
     plan: 0.5c-512mb
+    branch: main
     buildCommand: pip install -r requirements.txt
     startCommand: streamlit run app.py --server.address 0.0.0.0 --server.port $PORT --server.headless true --browser.gatherUsageStats false
     healthCheckPath: /_stcore/health
     autoDeployTrigger: commit
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.8"

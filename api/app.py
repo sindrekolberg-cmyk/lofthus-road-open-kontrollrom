@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -43,17 +44,24 @@ def _cors_origins() -> list[str]:
 
 
 def _cors_regex() -> str:
-    return os.getenv("LRO_CORS_ORIGIN_REGEX", r"https://([a-z0-9-]+\.)*vercel\.app").strip()
+    return os.getenv(
+        "LRO_CORS_ORIGIN_REGEX",
+        r"https://([a-z0-9-]+\.)*vercel\.app",
+    ).strip()
+
+
+def _safe_warmup() -> None:
+    try:
+        get_engine().warmup()
+    except Exception:
+        pass
 
 
 def create_app(engine: AppEngine | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         if os.getenv("LRO_API_WARMUP", "1") == "1" and engine is None:
-            try:
-                get_engine().warmup()
-            except Exception:
-                pass
+            threading.Thread(target=_safe_warmup, name="lro-warmup", daemon=True).start()
         yield
 
     app = FastAPI(title="Lofthus Road Open API", version="2.0.0", lifespan=lifespan)
@@ -92,6 +100,10 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
     @app.get("/api/health")
     def health() -> dict[str, Any]:
         return {"ok": True, "service": "lofthus-road-open"}
+
+    @app.get("/")
+    def root() -> dict[str, Any]:
+        return {"ok": True, "service": "lofthus-road-open", "health": "/api/health"}
 
     @app.get("/api/status")
     def status() -> dict[str, Any]:

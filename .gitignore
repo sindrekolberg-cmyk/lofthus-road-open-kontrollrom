@@ -5,3 +5,4 @@ backups/
 *.pyc
 web/.next/
 web/node_modules/
+node_modules/
