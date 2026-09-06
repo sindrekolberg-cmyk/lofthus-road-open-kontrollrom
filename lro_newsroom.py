@@ -141,6 +141,31 @@ def _finished_event(bootstrap: dict) -> int:
     return max(finished) if finished else 0
 
 
+def desk_score(story: Story, event_id: int) -> tuple:
+    """Prefer this GW's live pulse over leftover previous-round drama."""
+    current = (not story.source_event) or int(story.source_event) == int(event_id)
+    tier = {
+        "live": 10,
+        "leader": 9,
+        "movement_live": 8,
+        "chip": 7,
+        "differential": 6,
+        "autosub": 6,
+        "month": 4,
+        "movement": 2,
+        "round": 1,
+        "ownership": 0,
+        "context": 0,
+    }.get(story.category, 3)
+    importance = story.importance
+    freshness = story.freshness
+    if not current:
+        tier = min(tier, 2)
+        importance = min(importance, 42)
+        freshness = min(freshness, 28)
+    return (tier, importance, freshness, -len(story.key))
+
+
 def generate_candidates(
     state: LiveState,
     managers: list[dict],
@@ -296,9 +321,10 @@ def generate_candidates(
             "live" if state.is_live else "settled", 180, manager_entry=leader.entry, source_event=state.event_id,
         ))
 
-    # Last round only belongs on the desk after the current event is actually finished.
+    # Last round can sit in Snakkiser as a small item, never as the desk lead
+    # while the current gameweek is still the story.
     previous = completed_round_summary(managers, histories, _finished_event(bootstrap), history)
-    if previous and state.is_finished:
+    if previous:
         fall = previous.get("biggest_fall") or {}
         climb = previous.get("best_climber") or {}
         fall_mag = abs(nint(fall.get("move"))) if nint(fall.get("move")) < 0 else 0
@@ -315,24 +341,24 @@ def generate_candidates(
             candidates.append(_story(
                 f"finished-move-{previous.get('event')}-{nint(subject.get('entry'))}", "movement",
                 headline, f"GW{previous.get('event')}: {nint(subject.get('gw'))} poeng",
-                min(96, 70 + magnitude), "settled", 36 * 60, source_event=nint(previous.get("event")),
-                manager_entry=nint(subject.get("entry")), freshness=70,
+                min(40, 28 + magnitude // 4), "settled", 36 * 60, source_event=nint(previous.get("event")),
+                manager_entry=nint(subject.get("entry")), freshness=22,
             ))
         winner = previous.get("gw_winner") or {}
         if nint(winner.get("gw")):
             candidates.append(_story(
                 f"round-winner-{previous.get('event')}-{nint(winner.get('entry'))}", "round",
                 f"{winner.get('manager')} var best forrige runde",
-                f"{nint(winner.get('gw'))} poeng i GW{previous.get('event')}", 68, "settled", 30 * 60,
-                source_event=nint(previous.get("event")), manager_entry=nint(winner.get("entry")), freshness=65,
+                f"{nint(winner.get('gw'))} poeng i GW{previous.get('event')}", 36, "settled", 30 * 60,
+                source_event=nint(previous.get("event")), manager_entry=nint(winner.get("entry")), freshness=20,
             ))
 
     best: dict[str, Story] = {}
     for story in candidates:
         old = best.get(story.key)
-        if old is None or (story.importance, story.freshness) > (old.importance, old.freshness):
+        if old is None or desk_score(story, state.event_id) > desk_score(old, state.event_id):
             best[story.key] = story
-    return sorted(best.values(), key=lambda s: (-s.importance, -s.freshness, s.key))
+    return sorted(best.values(), key=lambda s: desk_score(s, state.event_id), reverse=True)
 
 
 def merge_persistent_stories(
@@ -352,15 +378,18 @@ def merge_persistent_stories(
         # stories can persist into the next page load as intended.
         if old.status == "live" and (not state.is_live or (old.source_event and old.source_event != state.event_id)):
             continue
-        if not state.is_finished and old.source_event and old.source_event != state.event_id:
+        if old.source_event and old.source_event != state.event_id and old.category in {"movement", "round"}:
+            # Keep as archive copy, but never let it outrank this GW after decay.
+            pass
+        elif not state.is_finished and old.source_event and old.source_event != state.event_id:
             continue
         current = pool.get(old.key)
         if current is None:
             pool[old.key] = old
-        elif old.importance > current.importance:
+        elif desk_score(old, state.event_id) > desk_score(current, state.event_id):
             pool[old.key] = old
 
-    ordered = sorted(pool.values(), key=lambda s: (-s.importance, -s.freshness, s.created_at, s.key))
+    ordered = sorted(pool.values(), key=lambda s: desk_score(s, state.event_id), reverse=True)
     # Avoid four versions of the same kind of story. One category slot is enough.
     result: list[Story] = []
     seen_categories: set[str] = set()

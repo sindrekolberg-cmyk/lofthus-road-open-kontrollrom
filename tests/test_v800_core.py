@@ -131,6 +131,33 @@ class V800CoreTests(unittest.TestCase):
         merged = merge_persistent_stories([weak], [old.to_dict()], state, limit=4)
         self.assertEqual(merged[0].key, "king")
 
+    def test_previous_round_collapse_does_not_lead_open_gw(self):
+        state = build_live_state(FakeClient({10: 10, 20: 0}), managers(), self.history, 25220, bootstrap=BOOTSTRAP, ownership=ownership())
+        old = _story(
+            "finished-move-2-99",
+            "movement",
+            "Thomas Fredrik Kristensen falt 43 plasser forrige runde",
+            "GW2: 18 poeng",
+            96,
+            "settled",
+            60,
+            source_event=2,
+            freshness=70,
+        )
+        live = _story(
+            "live-player-3-10",
+            "live",
+            "Isak leverte: 13 poeng",
+            "14 eiere",
+            84,
+            "settled",
+            25,
+            source_event=3,
+        )
+        merged = merge_persistent_stories([live], [old.to_dict()], state, limit=4)
+        self.assertEqual(merged[0].key, "live-player-3-10")
+        self.assertTrue(any(s.key == "finished-move-2-99" for s in merged))
+
     def test_rasmus_2024_25_third_place_fills_only_missing_field(self):
         p = Path(self.temp.name) / "overall_results.csv"
         p.write_text("season,winner,runner_up,third_place,note,status,source\n2024/25,Winner,Runner,,,,\n", encoding="utf-8")
