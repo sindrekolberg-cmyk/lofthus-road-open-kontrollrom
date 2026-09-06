@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
@@ -10,9 +10,15 @@ from lro_analysis import chip_label, manager_squad, nint
 from lro_fpl import season_label
 from lro_history import HistoryStore
 from lro_league import form_rows, player_status_map, profile_story
-from lro_live import LiveState, ManagerLiveState, PlayerImpact, inferred_fixture_status, manager_swing_for_player
+from lro_live import LiveState, ManagerLiveState, PlayerImpact, _parse_kickoff, inferred_fixture_status, manager_swing_for_player
 from lro_pulse import is_stale, round_kicker, source_updated_at
 from lro_rival import RivalDuel, RivalPlayerEdge
+from lro_status import (
+    gw_is_active,
+    is_fixture_live,
+    ordered_pulse_fixtures,
+    talker_tier,
+)
 
 
 def json_value(value: Any) -> Any:
@@ -143,6 +149,7 @@ def status_payload(
         "round_kicker": round_kicker(event_id, is_live, is_finished, event_status),
         "is_live": is_live,
         "is_finished": is_finished,
+        "gw_active": gw_is_active(is_live, is_finished, event_id),
         "provisional": bool(state and not state.is_finished),
         "month_name": state.month_name if state else "",
         "fetched_at": state.fetched_at.isoformat() if state else None,
@@ -156,7 +163,7 @@ def status_payload(
     }
 
 
-def fixture_payload(state: LiveState, bootstrap: dict) -> list[dict[str, Any]]:
+def fixture_payload(state: LiveState, bootstrap: dict, fixtures: list[dict] | None = None, now: datetime | None = None) -> list[dict[str, Any]]:
     teams = {
         nint(t.get("id")): {
             "name": str(t.get("name") or ""),
@@ -165,8 +172,8 @@ def fixture_payload(state: LiveState, bootstrap: dict) -> list[dict[str, Any]]:
         for t in bootstrap.get("teams", []) or []
     }
     out = []
-    for f in state.fixtures or []:
-        status = inferred_fixture_status(f)
+    for f in fixtures if fixtures is not None else state.fixtures or []:
+        status = inferred_fixture_status(f, now=now)
         started = status != "not_started"
         hid = nint(f.get("team_h"))
         aid = nint(f.get("team_a"))
@@ -606,10 +613,10 @@ def movers_payload(rows: list[ManagerLiveState], limit: int = 3) -> dict[str, An
     }
 
 
-def live_events_payload(state: LiveState, bootstrap: dict) -> list[dict[str, Any]]:
-    fixtures = fixture_payload(state, bootstrap)
+def live_events_payload(state: LiveState, bootstrap: dict, now: datetime | None = None) -> list[dict[str, Any]]:
+    fixtures = fixture_payload(state, bootstrap, fixtures=ordered_pulse_fixtures(state.fixtures or [], now=now), now=now)
     out = []
-    for f in fixtures[:8]:
+    for f in fixtures:
         clubs = {
             str(f.get("home") or ""),
             str(f.get("away") or ""),
@@ -626,7 +633,7 @@ def live_events_payload(state: LiveState, bootstrap: dict) -> list[dict[str, Any
         kind = _player_event_kind(state, lead.element) if lead else ""
         headline = ""
         winner = loser = None
-        if lead:
+        if is_fixture_live(str(f.get("status") or "")) and lead:
             headline = f"{lead.player} {kind}".strip() if kind else f"{lead.player}: +{lead.event_points}"
             swings = manager_swing_for_player(state, lead.element)
             gainers = [r for r in swings if r["swing"] > 0.05]
@@ -640,8 +647,8 @@ def live_events_payload(state: LiveState, bootstrap: dict) -> list[dict[str, Any
         out.append({
             **f,
             "lofthus": related,
-            "lofthus_owners": lead.ownership_count if lead else 0,
-            "lofthus_captains": lead.captain_count if lead else 0,
+            "lofthus_owners": lead.ownership_count if lead and headline else 0,
+            "lofthus_captains": lead.captain_count if lead and headline else 0,
             "lofthus_headline": headline,
             "lofthus_winner": winner,
             "lofthus_loser": loser,
@@ -717,6 +724,33 @@ def match_impact_payload(state: LiveState, bootstrap: dict, fixture_id: int) -> 
     }
 
 
+def talkers_payload(state: LiveState, bootstrap: dict, limit: int = 5, now: datetime | None = None) -> list[dict[str, Any]]:
+    now = now or datetime.now(timezone.utc)
+    fixtures = fixture_payload(state, bootstrap, now=now)
+    by_club: dict[str, dict[str, Any]] = {}
+    for f in fixtures:
+        for key in ("home", "away", "home_name", "away_name"):
+            name = str(f.get(key) or "")
+            if name:
+                by_club[name] = f
+    ranked: list[tuple[tuple, PlayerImpact]] = []
+    for p in state.player_impacts:
+        fx = by_club.get(p.club)
+        kickoff = _parse_kickoff((fx or {}).get("kickoff"))
+        tier = talker_tier(p.fixture_status, kickoff, now)
+        if tier is None:
+            continue
+        if tier == 3:
+            key = (tier, p.event_points, p.ownership_count, p.impact_score)
+        elif tier == 2:
+            key = (tier, p.captain_count, p.effective_ownership_pct, p.ownership_count)
+        else:
+            key = (tier, p.event_points, p.impact_score, p.ownership_count)
+        ranked.append((key, p))
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return [player_impact_payload(p) for _, p in ranked[: max(0, int(limit))]]
+
+
 def story_payload(story, state: LiveState | None = None) -> dict[str, Any]:
     row = story.to_dict() if hasattr(story, "to_dict") else dict(story)
     image_url = ""
@@ -725,6 +759,9 @@ def story_payload(story, state: LiveState | None = None) -> dict[str, Any]:
         if impact:
             image_url = impact.image_url
     row["image_url"] = image_url
+    row["source_gw"] = nint(row.get("source_event") or row.get("source_gw"))
+    row["source_fixture"] = nint(row.get("source_fixture"))
+    row["updated_at"] = row.get("updated_at") or row.get("created_at")
     return row
 
 

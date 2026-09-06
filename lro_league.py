@@ -7,7 +7,7 @@ import pandas as pd
 from lro_analysis import manager_form_from_histories, nint
 from lro_fpl import current_event_id, month_phases, season_label
 from lro_history import HistoryStore, normalize_text
-from lro_live import LiveState, ManagerLiveState
+from lro_live import LiveState, ManagerLiveState, inferred_fixture_status
 
 
 def manager_options(managers: list[dict]) -> list[tuple[int, str]]:
@@ -125,7 +125,7 @@ def auto_monthly_rows(client: Any, history: HistoryStore, league_id: int, bootst
 
 def fixture_scoreline(state: LiveState, bootstrap: dict) -> str:
     teams = {nint(t.get("id")):str(t.get("short_name") or t.get("name") or "") for t in bootstrap.get("teams",[]) or []}
-    active = [f for f in state.fixtures if bool(f.get("started")) and not bool(f.get("finished"))]
+    active = [f for f in state.fixtures if inferred_fixture_status(f) in {"live", "pause"}]
     parts=[]
     for f in active[:4]:
         h=teams.get(nint(f.get("team_h")),"H") ; a=teams.get(nint(f.get("team_a")),"B")

@@ -201,6 +201,8 @@ def diff_live_states(old: LiveState | None, new: LiveState | None, snapshot_id: 
             kind = _classify_stat_change(old_picks.get(element), new_picks.get(element)) or "player_points_changed"
         else:
             continue
+        if impact.fixture_status not in {"live", "pause"}:
+            continue
         events.append(
             _event(
                 kind=kind,

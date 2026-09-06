@@ -6,7 +6,7 @@ from typing import Any
 
 import pandas as pd
 
-from lro_analysis import apply_provisional_autosubs, build_ownership, nfloat, nint, refresh_ownership_live
+from lro_analysis import apply_provisional_autosubs, build_ownership, nfloat, nint, remaining_from_picks, refresh_ownership_live
 from lro_fpl import FPLClient, current_event_id, current_month_phase, player_catalog
 from lro_history import HistoryStore, normalize_text
 
@@ -247,10 +247,10 @@ def _count_player_states(picks: list[dict], team_states: dict[int, str]) -> tupl
     # on that XI, including a confirmed bench arrival who has not played yet.
     relevant = [p for p in picks if nint(p.get("multiplier")) > 0]
     statuses = [team_states.get(nint(p.get("team_id")), "not_started") for p in relevant]
-    started = sum(1 for s in statuses if s in {"live", "finished"})
+    started = sum(1 for s in statuses if s in {"live", "pause", "finished"})
     finished = sum(1 for s in statuses if s == "finished")
-    live = sum(1 for s in statuses if s == "live")
-    remaining = sum(1 for s in statuses if s == "not_started")
+    live = sum(1 for s in statuses if s in {"live", "pause"})
+    remaining = remaining_from_picks(picks, team_states)
     return started, finished, live, remaining
 
 

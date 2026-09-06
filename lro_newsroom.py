@@ -9,6 +9,7 @@ import pandas as pd
 from lro_analysis import nint
 from lro_history import HistoryStore, normalize_text
 from lro_live import LiveState
+from lro_status import story_is_current_gw
 
 
 @dataclass(frozen=True)
@@ -24,19 +25,27 @@ class Story:
     created_at: datetime
     expires_at: datetime
     source_event: int = 0
+    source_fixture: int = 0
     manager_entry: int = 0
     player_element: int = 0
     supersedes: str = ""
+    updated_at: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out = asdict(self)
         out["created_at"] = self.created_at.isoformat()
         out["expires_at"] = self.expires_at.isoformat()
+        updated = self.updated_at or self.created_at
+        out["updated_at"] = updated.isoformat()
+        out["source_gw"] = int(self.source_event or 0)
         return out
 
     @classmethod
     def from_dict(cls, row: dict[str, Any]) -> "Story" | None:
         try:
+            created = datetime.fromisoformat(str(row.get("created_at")))
+            updated_raw = row.get("updated_at")
+            updated = datetime.fromisoformat(str(updated_raw)) if updated_raw else created
             return cls(
                 key=str(row.get("key") or ""),
                 category=str(row.get("category") or ""),
@@ -46,12 +55,14 @@ class Story:
                 freshness=int(row.get("freshness") or 0),
                 status=str(row.get("status") or ""),
                 confidence=int(row.get("confidence") or 0),
-                created_at=datetime.fromisoformat(str(row.get("created_at"))),
+                created_at=created,
                 expires_at=datetime.fromisoformat(str(row.get("expires_at"))),
-                source_event=int(row.get("source_event") or 0),
+                source_event=int(row.get("source_event") or row.get("source_gw") or 0),
+                source_fixture=int(row.get("source_fixture") or 0),
                 manager_entry=int(row.get("manager_entry") or 0),
                 player_element=int(row.get("player_element") or 0),
                 supersedes=str(row.get("supersedes") or ""),
+                updated_at=updated,
             )
         except Exception:
             return None
@@ -72,6 +83,7 @@ def _story(
     *,
     confidence: int = 100,
     source_event: int = 0,
+    source_fixture: int = 0,
     manager_entry: int = 0,
     player_element: int = 0,
     freshness: int = 100,
@@ -90,9 +102,11 @@ def _story(
         created_at=now,
         expires_at=now + timedelta(minutes=max(1, int(ttl_minutes))),
         source_event=int(source_event),
+        source_fixture=int(source_fixture),
         manager_entry=int(manager_entry),
         player_element=int(player_element),
         supersedes=supersedes,
+        updated_at=now,
     )
 
 
@@ -143,7 +157,7 @@ def _finished_event(bootstrap: dict) -> int:
 
 def desk_score(story: Story, event_id: int) -> tuple:
     """Prefer this GW's live pulse over leftover previous-round drama."""
-    current = (not story.source_event) or int(story.source_event) == int(event_id)
+    current = story_is_current_gw(story.source_event, event_id)
     tier = {
         "live": 10,
         "leader": 9,
@@ -157,6 +171,8 @@ def desk_score(story: Story, event_id: int) -> tuple:
         "ownership": 0,
         "context": 0,
     }.get(story.category, 3)
+    if story.category == "live" and story.status != "live":
+        tier = min(tier, 5)
     importance = story.importance
     freshness = story.freshness
     if not current:
@@ -193,19 +209,20 @@ def generate_candidates(
     if this_round:
         live_impacts = [
             p for p in state.player_impacts
-            if p.fixture_status in {"live", "finished"} and p.event_points != 0
+            if p.fixture_status in {"live", "pause", "finished"} and p.event_points != 0
         ]
         if live_impacts:
-            p = live_impacts[0]
+            playing = [p for p in live_impacts if p.fixture_status in {"live", "pause"}]
+            p = playing[0] if playing else live_impacts[0]
             if p.event_points >= 8 or p.captain_count or p.triple_captain_count:
                 imp = 94 if p.event_points >= 10 else 84
                 caps = p.captain_count
                 cap_text = f" · {caps} kaptein" if caps == 1 else f" · {caps} kapteiner" if caps else ""
-                verb = "herjer" if p.fixture_status == "live" else "leverte"
+                verb = "herjer" if p.fixture_status in {"live", "pause"} else "leverte"
                 candidates.append(_story(
                     f"live-player-{state.event_id}-{p.element}", "live",
                     f"{p.player} {verb}: {p.event_points} poeng",
-                    f"{p.ownership_count} eiere{cap_text}", imp, "live" if p.fixture_status == "live" else "settled", 25,
+                    f"{p.ownership_count} eiere{cap_text}", imp, "live" if p.fixture_status in {"live", "pause"} else "settled", 25,
                     source_event=state.event_id, player_element=p.element,
                 ))
 

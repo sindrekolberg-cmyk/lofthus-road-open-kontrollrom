@@ -29,11 +29,13 @@ from api.serialize import (
     season_from_bootstrap,
     status_payload,
     story_payload,
+    talkers_payload,
 )
 from lro_analysis import nint
 from lro_league import manager_name
 from lro_membership import load_membership, membership_for
 from lro_rival import auto_rivals, compare_managers
+from lro_status import homepage_hero_story
 
 
 def _sse_frame(event: str, data: dict[str, Any]) -> str:
@@ -462,21 +464,14 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
                 continue
             seen.add(key)
             unique_stories.append(row)
-        hero_story = unique_stories[0] if unique_stories else None
+        hero_story = homepage_hero_story(unique_stories, st.get("event_id") or 0)
         hero_player = None
         if s.state and hero_story and nint(hero_story.get("player_element")):
             impact = s.state.player(nint(hero_story.get("player_element")))
             if impact:
                 hero_player = player_impact_payload(impact)
         month_table = [manager_payload(m) for m in (s.state.month_ranking()[:5] if s.state else [])]
-        popular = []
-        if s.state:
-            ranked = sorted(
-                s.state.player_impacts,
-                key=lambda p: (p.ownership_count, p.captain_count, p.event_points),
-                reverse=True,
-            )
-            popular = [player_impact_payload(p) for p in ranked[:6]]
+        popular = talkers_payload(s.state, s.bootstrap) if s.state else []
         options = []
         by_live = {m.entry: m for m in states}
         for m in s.managers:
