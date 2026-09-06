@@ -157,7 +157,7 @@ def generate_candidates(
         if state.is_live and leader.previous_rank and leader.previous_rank != 1:
             candidates.append(_story(
                 f"live-leader-{state.event_id}-{leader.entry}", "leader",
-                f"{leader.manager} har tatt over tabelltoppen live",
+                f"{leader.manager} leder live",
                 f"{leader.live_total_points} poeng · foreløpig opp {max(0, leader.live_rank_change)} plasser",
                 97, "live", 45, source_event=state.event_id, manager_entry=leader.entry,
             ))
@@ -327,20 +327,6 @@ def generate_candidates(
                 source_event=nint(previous.get("event")), manager_entry=nint(winner.get("entry")), freshness=65,
             ))
 
-    # Ownership is a fallback story, never strong enough to push out genuine drama.
-    if state.player_impacts:
-        most_owned = max(state.player_impacts, key=lambda p: (p.ownership_count, p.captain_count, -p.element))
-        loaded = max(1, nint(state.data_quality.get("loaded_managers"), state.league_size))
-        without = max(0, loaded - most_owned.ownership_count)
-        if most_owned.ownership_pct >= 75:
-            candidates.append(_story(
-                f"ownership-{state.event_id}-{most_owned.element}", "ownership",
-                f"Bare {without} av {loaded} går uten {most_owned.player}",
-                f"{most_owned.ownership_pct:.0f} % eierskap i Lofthus", 58, "context", 180,
-                source_event=state.event_id, player_element=most_owned.element, freshness=55,
-            ))
-
-    # Deduplicate category + subject deterministically.
     best: dict[str, Story] = {}
     for story in candidates:
         old = best.get(story.key)

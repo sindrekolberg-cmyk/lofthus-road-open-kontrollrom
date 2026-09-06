@@ -135,7 +135,7 @@ class FPLClient:
         return data if isinstance(data, list) else []
 
     def event_live(self, event_id: int) -> dict:
-        data = self.get_json(f"/event/{int(event_id)}/live/", ttl=22, stale_if_error=300)
+        data = self.get_json(f"/event/{int(event_id)}/live/", ttl=10, stale_if_error=300)
         return data if isinstance(data, dict) else {}
 
     def entry_picks(self, entry_id: int, event_id: int, force: bool = False) -> dict:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -15,6 +16,7 @@ from lro_history import HistoryStore
 from lro_league import auto_monthly_rows, effective_states
 from lro_live import LiveState, build_live_state
 from lro_newsroom import generate_candidates, merge_persistent_stories
+from lro_pulse import PulseHub, diff_live_states
 
 
 APP_VERSION = "lofthus-road-open-api-v2"
@@ -31,6 +33,7 @@ class RequestSnapshot:
     histories: dict[int, dict] | None
     snapshot_id: str
     generated_at: str
+    seq: int = 0
 
     def meta(self) -> dict[str, Any]:
         return {
@@ -40,6 +43,8 @@ class RequestSnapshot:
             "phase": self.state.event_status if self.state else "pre",
             "is_live": bool(self.state and self.state.is_live),
             "is_finished": bool(self.state and self.state.is_finished),
+            "source_updated_at": self.state.fetched_at.isoformat() if self.state else None,
+            "seq": self.seq,
         }
 
 
@@ -52,7 +57,7 @@ class AppEngine:
         client: FPLClient | None = None,
         *,
         eager: bool = False,
-        refresh_seconds: int = 22,
+        refresh_seconds: int = 10,
     ):
         self.config = config or load_config()
         self.client = client or FPLClient(timeout=12)
@@ -74,6 +79,8 @@ class AppEngine:
         self._newsroom: list[dict[str, Any]] = []
         self._month_rows: list[dict] | None = None
         self._month_rows_key: tuple | None = None
+        self.pulse = PulseHub()
+        self._pulse_thread: threading.Thread | None = None
 
     def load_shell(self, ttl: float = 90.0) -> tuple[dict, list[dict], list[str]]:
         now = datetime.now(timezone.utc).timestamp()
@@ -159,6 +166,70 @@ class AppEngine:
                 return refreshed
         return refreshed
 
+    def _signature(self, state: LiveState | None) -> tuple:
+        if not state:
+            return ()
+        managers = tuple(
+            (m.entry, m.live_total_points, m.live_rank, m.live_gw_points, m.players_remaining, m.captain_element)
+            for m in sorted(state.manager_live, key=lambda row: row.entry)
+        )
+        players = tuple((p.element, p.event_points, p.fixture_status) for p in state.player_impacts[:80])
+        fixtures = tuple(
+            (
+                int(f.get("id") or 0),
+                int(f.get("team_h_score") or 0),
+                int(f.get("team_a_score") or 0),
+                int(f.get("minutes") or 0),
+                bool(f.get("started")),
+                bool(f.get("finished")),
+            )
+            for f in (state.fixtures or [])
+        )
+        return (state.event_id, state.event_status, managers, players, fixtures)
+
+    def _adopt_live(self, state: LiveState | None) -> None:
+        if state is None:
+            return
+        old = self._live_state
+        if old is not None and self._signature(old) == self._signature(state):
+            self._live_state = state
+            return
+        stamp = state.fetched_at.isoformat()
+        snapshot_id = f"{stamp}:{len(state.manager_live)}:{state.event_id}:{self.pulse.seq + 1}"
+        events = diff_live_states(old, state, snapshot_id)
+        self._live_state = state
+        self.pulse.publish(
+            {
+                "type": "snapshot_updated",
+                "snapshot_id": snapshot_id,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "source_updated_at": stamp,
+                "gw": state.event_id,
+                "phase": state.event_status,
+                "is_live": state.is_live,
+                "stale": False,
+            },
+            events,
+        )
+
+    def start_pulse(self) -> None:
+        if self._pulse_thread and self._pulse_thread.is_alive():
+            return
+        self._pulse_thread = threading.Thread(target=self._pulse_loop, name="lro-pulse", daemon=True)
+        self._pulse_thread.start()
+
+    def _pulse_loop(self) -> None:
+        while True:
+            try:
+                state = self.live_state()
+                delay = 8 if state and state.is_live else 40
+            except Exception:
+                delay = 20
+            time.sleep(delay)
+
+    def wait_pulse(self, last_seq: int, timeout: float = 15.0) -> tuple[int, dict[str, Any] | None]:
+        return self.pulse.wait(last_seq, timeout)
+
     def live_state(self) -> LiveState | None:
         bootstrap, managers, _ = self.load_shell()
         if not managers or not bootstrap:
@@ -166,7 +237,7 @@ class AppEngine:
         if self.eager:
             with self._lock:
                 if self._live_state is None:
-                    self._live_state = self._build_full_live(managers, bootstrap)
+                    self._adopt_live(self._build_full_live(managers, bootstrap))
                 return self._live_state
         key = self._live_cache_key(managers, bootstrap)
         with self._lock:
@@ -177,7 +248,7 @@ class AppEngine:
             future = self._live_future
             if future is not None and future.done():
                 try:
-                    self._live_state = future.result()
+                    self._adopt_live(future.result())
                 except Exception:
                     pass
                 self._live_future = None
@@ -187,7 +258,8 @@ class AppEngine:
                     self._live_future = self._pool.submit(self._build_full_live, [dict(m) for m in managers], dict(bootstrap))
                 return None
             age = (datetime.now(timezone.utc) - state.fetched_at).total_seconds()
-            if age >= max(10, int(self.refresh_seconds)) and self._live_future is None:
+            cadence = 8 if state.is_live else max(10, int(self.refresh_seconds))
+            if age >= cadence and self._live_future is None:
                 self._live_future = self._pool.submit(
                     self._refresh_live, [dict(m) for m in managers], dict(bootstrap), state
                 )
@@ -246,14 +318,16 @@ class AppEngine:
         histories = self.histories()
         generated = datetime.now(timezone.utc).isoformat()
         stamp = state.fetched_at.isoformat() if state else "none"
+        seq = self.pulse.seq
         return RequestSnapshot(
             bootstrap=bootstrap,
             managers=managers,
             errors=list(errors),
             state=state,
             histories=histories,
-            snapshot_id=f"{stamp}:{len(managers)}:{state.event_id if state else 0}",
+            snapshot_id=f"{stamp}:{len(managers)}:{state.event_id if state else 0}:{seq}",
             generated_at=generated,
+            seq=seq,
         )
 
     def manager_states(self, snap: RequestSnapshot | None = None):
@@ -298,12 +372,14 @@ class AppEngine:
             self._month_rows = None
             self._month_rows_key = None
             self.eager = True
+            self.pulse = PulseHub()
 
     def warmup(self) -> None:
         self.load_shell()
         if not self.eager:
             self.live_state()
             self.histories()
+        self.start_pulse()
 
 
 _ENGINE: AppEngine | None = None

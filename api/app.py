@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import threading
 from contextlib import asynccontextmanager
@@ -7,6 +8,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 from api.engine import AppEngine, RequestSnapshot, get_engine
 from api.serialize import (
@@ -32,6 +34,10 @@ from lro_analysis import nint
 from lro_league import manager_name
 from lro_membership import load_membership, membership_for
 from lro_rival import auto_rivals, compare_managers
+
+
+def _sse_frame(event: str, data: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 def _cors_origins() -> list[str]:
@@ -63,8 +69,14 @@ def _safe_warmup() -> None:
 def create_app(engine: AppEngine | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        eng = engine or get_engine()
         if os.getenv("LRO_API_WARMUP", "1") == "1" and engine is None:
             threading.Thread(target=_safe_warmup, name="lro-warmup", daemon=True).start()
+        else:
+            try:
+                eng.start_pulse()
+            except Exception:
+                pass
         yield
 
     app = FastAPI(title="Lofthus Road Open API", version="2.0.0", lifespan=lifespan)
@@ -100,6 +112,26 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
     def find_manager(s: RequestSnapshot, entry_id: int):
         return next((m for m in engine_dep().manager_states(s) if m.entry == int(entry_id)), None)
 
+    def live_dict(s: RequestSnapshot) -> dict[str, Any]:
+        st = status_from(s)
+        if not s.state:
+            return {
+                "status": st,
+                "table": [manager_payload(m) for m in engine_dep().manager_states(s)],
+                "gw_ranking": [],
+                "fixtures": [],
+                "player_impacts": [],
+                "live_ready": False,
+            }
+        return {
+            "status": st,
+            "table": [manager_payload(m) for m in s.state.managers_by_rank()],
+            "gw_ranking": [manager_payload(m) for m in s.state.gw_ranking()],
+            "fixtures": live_events_payload(s.state, s.bootstrap),
+            "player_impacts": [player_impact_payload(p) for p in s.state.player_impacts[:40]],
+            "live_ready": True,
+        }
+
     @app.get("/api/health")
     def health() -> dict[str, Any]:
         return {"ok": True, "service": "lofthus-road-open"}
@@ -119,25 +151,57 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
 
     @app.get("/api/live")
     def live() -> dict[str, Any]:
+        return live_dict(snap())
+
+    @app.get("/api/live/pulse")
+    def live_pulse() -> dict[str, Any]:
         s = snap()
-        st = status_from(s)
-        if not s.state:
-            return {
-                "status": st,
-                "table": [manager_payload(m) for m in engine_dep().manager_states(s)],
-                "gw_ranking": [],
-                "fixtures": [],
-                "player_impacts": [],
-                "live_ready": False,
-            }
+        last = engine_dep().pulse.last_payload or {}
         return {
-            "status": st,
-            "table": [manager_payload(m) for m in s.state.managers_by_rank()],
-            "gw_ranking": [manager_payload(m) for m in s.state.gw_ranking()],
-            "fixtures": live_events_payload(s.state, s.bootstrap),
-            "player_impacts": [player_impact_payload(p) for p in s.state.player_impacts[:40]],
-            "live_ready": True,
+            "status": status_from(s),
+            "seq": s.seq,
+            "snapshot_id": s.snapshot_id,
+            "events": last.get("events") or [],
+            "event_history": list(engine_dep().pulse.history),
         }
+
+    @app.get("/api/stream")
+    def stream():
+        eng = engine_dep()
+
+        def frames():
+            s = snap()
+            yield _sse_frame(
+                "hello",
+                {
+                    "ok": True,
+                    "seq": s.seq,
+                    "snapshot_id": s.snapshot_id,
+                    "is_live": bool(s.state and s.state.is_live),
+                },
+            )
+            last = s.seq
+            while True:
+                nxt, payload = eng.wait_pulse(last, timeout=15)
+                if not payload or nxt <= last:
+                    yield ": ping\n\n"
+                    continue
+                last = nxt
+                current = snap()
+                body = dict(payload)
+                body["live"] = live_dict(current)
+                body["snapshot_id"] = current.snapshot_id
+                yield _sse_frame("snapshot_updated", body)
+
+        return StreamingResponse(
+            frames(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @app.get("/api/live/matches/{fixture_id}")
     def match_detail(fixture_id: int) -> dict[str, Any]:

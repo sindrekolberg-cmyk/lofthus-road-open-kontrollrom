@@ -11,6 +11,7 @@ from lro_fpl import season_label
 from lro_history import HistoryStore
 from lro_league import form_rows, player_status_map, profile_story
 from lro_live import LiveState, ManagerLiveState, PlayerImpact, inferred_fixture_status, manager_swing_for_player
+from lro_pulse import is_stale, round_kicker, source_updated_at
 from lro_rival import RivalDuel, RivalPlayerEdge
 
 
@@ -50,9 +51,11 @@ def records(df: pd.DataFrame | None) -> list[dict[str, Any]]:
 
 def fixture_status_label(status: str) -> str:
     return {
-        "live": "pågår",
-        "finished": "ferdig",
-        "not_started": "ikke spilt",
+        "live": "Pågår",
+        "pause": "Pause",
+        "finished": "Ferdig",
+        "not_started": "Ikke startet",
+        "postponed": "Utsatt",
     }.get(str(status or ""), str(status or "ukjent"))
 
 
@@ -137,11 +140,14 @@ def status_payload(
         "event_id": event_id,
         "event_status": event_status,
         "event_status_label": event_status_label(event_status, is_live, is_finished),
+        "round_kicker": round_kicker(event_id, is_live, is_finished, event_status),
         "is_live": is_live,
         "is_finished": is_finished,
         "provisional": bool(state and not state.is_finished),
         "month_name": state.month_name if state else "",
         "fetched_at": state.fetched_at.isoformat() if state else None,
+        "source_updated_at": source_updated_at(state),
+        "stale": is_stale(state),
         "league_size": len(managers),
         "live_ready": live_ready,
         "histories_ready": histories_ready,
@@ -289,7 +295,7 @@ def edge_payload(edge: RivalPlayerEdge, rival_name: str, state: LiveState | None
     swing = edge.live_swing
     event_kind = _player_event_kind(state, edge.element) if state else ""
     if swing == 0:
-        headline = f"{edge.player} kan svinge duellen mot {rival_name}"
+        headline = f"{edge.player} kan avgjøre duellen mot {rival_name}"
     elif event_kind:
         headline = f"{edge.player} {event_kind}: {swing:+d} mot {rival_name}"
     else:

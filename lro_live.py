@@ -143,11 +143,15 @@ def inferred_fixture_status(f: dict, now: datetime | None = None) -> str:
     kickoff = _parse_kickoff(f.get("kickoff_time") or f.get("kickoff"))
     now = now or datetime.now(timezone.utc)
     window = timedelta(minutes=135)
+    if bool(f.get("provisional_start_time")) and not started:
+        return "postponed"
     if started:
         if kickoff and now >= kickoff + window:
             return "finished"
         if minutes >= 90 and kickoff and now >= kickoff + timedelta(minutes=105):
             return "finished"
+        if minutes == 45:
+            return "pause"
         return "live"
     if kickoff and now >= kickoff + window:
         return "finished"
@@ -156,7 +160,7 @@ def inferred_fixture_status(f: dict, now: datetime | None = None) -> str:
 
 def _event_status(meta: dict, fixtures: list[dict]) -> tuple[str, bool, bool]:
     finished = bool(meta.get("finished"))
-    active = any(inferred_fixture_status(f) == "live" for f in fixtures)
+    active = any(inferred_fixture_status(f) in {"live", "pause"} for f in fixtures)
     if active:
         return "live", True, False
     if finished:
@@ -181,7 +185,7 @@ def _fixture_team_states(fixtures: list[dict]) -> dict[int, str]:
                 states.setdefault(team, []).append(status)
     out: dict[int, str] = {}
     for team, values in states.items():
-        if "live" in values:
+        if "live" in values or "pause" in values:
             out[team] = "live"
         elif "not_started" in values:
             out[team] = "not_started"

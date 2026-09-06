@@ -1025,9 +1025,8 @@ def stories(managers: list[dict], ownership: dict | None, history: HistoryStore)
     if ownership and not ownership.get("players", pd.DataFrame()).empty:
         top = ownership["players"].sort_values(["ownership_count", "player"], ascending=[False, True]).iloc[0]
         loaded = nint(ownership.get("loaded_managers"))
-        without = max(0, loaded - nint(top.get("ownership_count")))
         if loaded:
-            categories.append(("ownership", f"Bare {without} av {loaded} går uten {top['player']}."))
+            categories.append(("ownership", f"{top['player']} er i de fleste Lofthus-lagene."))
 
     # 5) Leader only fills a hole; the top table already makes this obvious.
     leader = move.get("leader") or {}
