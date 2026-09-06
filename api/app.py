@@ -179,6 +179,7 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
                 "gw": live.live_gw_points if live else nint(m.get("event_total")),
                 "total": live.live_total_points if live else nint(m.get("total")),
                 "rank_change": live.live_rank_change if live else 0,
+                "players_remaining": live.players_remaining if live else 0,
             })
         out.sort(key=lambda r: (r["rank"] or 10**9, r["manager"]))
         return {"managers": out, "status": status_from(s)}
@@ -427,6 +428,7 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
                 "gw": live.live_gw_points if live else nint(m.get("event_total")),
                 "total": live.live_total_points if live else nint(m.get("total")),
                 "rank_change": live.live_rank_change if live else 0,
+                "players_remaining": live.players_remaining if live else 0,
             })
         options.sort(key=lambda r: r["manager"])
         events = live_events_payload(s.state, s.bootstrap) if s.state else []

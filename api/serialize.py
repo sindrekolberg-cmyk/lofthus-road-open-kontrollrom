@@ -207,7 +207,9 @@ def squad_payload(state: LiveState, entry: int) -> dict[str, Any]:
             "image_url": str(r.get("image_url") or ""),
             "minutes": nint(r.get("live_minutes")),
             "autosub_in": bool(r.get("autosub_in")),
+            "autosub_status": str(r.get("autosub_status") or ""),
             "replaced_player": str(r.get("replaced_player") or ""),
+            "captain_fallback": bool(r.get("captain_fallback")),
         })
     xi = [p for p in rows if not p["on_bench"]]
     bench = [p for p in rows if p["on_bench"]]

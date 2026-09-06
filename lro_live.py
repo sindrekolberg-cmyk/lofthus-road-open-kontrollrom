@@ -239,8 +239,8 @@ def _manager_event_map(ownership: dict) -> dict[int, dict]:
 
 
 def _count_player_states(picks: list[dict], team_states: dict[int, str]) -> tuple[int, int, int, int]:
-    # `multiplier > 0` reflects the currently scoring XI and Bench Boost. A player
-    # with multiplier 0 is bench cover and should not inflate "players remaining".
+    # Effective XI after autosubs: multiplier > 0. Remaining is later kickoffs
+    # on that XI, including a confirmed bench arrival who has not played yet.
     relevant = [p for p in picks if nint(p.get("multiplier")) > 0]
     statuses = [team_states.get(nint(p.get("team_id")), "not_started") for p in relevant]
     started = sum(1 for s in statuses if s in {"live", "finished"})

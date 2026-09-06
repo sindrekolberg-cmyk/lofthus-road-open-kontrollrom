@@ -302,7 +302,7 @@ FORMATION_MIN = {1: 1, 2: 3, 3: 2, 4: 1}
 
 def _valid_xi(rows: list[dict]) -> bool:
     counts = {1: 0, 2: 0, 3: 0, 4: 0}
-    xi = [r for r in rows if not bool(r.get("on_bench"))]
+    xi = [r for r in rows if nint(r.get("multiplier")) > 0]
     if len(xi) != 11:
         return False
     for r in xi:
@@ -312,78 +312,218 @@ def _valid_xi(rows: list[dict]) -> bool:
     return all(counts[p] >= FORMATION_MIN[p] for p in FORMATION_MIN)
 
 
-def apply_provisional_autosubs(ownership: dict, team_states: dict[int, str]) -> dict:
-    """Best-effort autosubs while FPL still has blank starters after a finished fixture.
+def _team_status(row: dict, team_states: dict[int, str]) -> str:
+    return team_states.get(nint(row.get("team_id")), "not_started")
 
-    Does not invent FPL events. Only promotes a bench player when the starter's
-    match is finished with 0 minutes, the bench player has minutes or is live,
-    and the formation stays legal. Bench Boost is left untouched.
+
+def _confirmed_dnp(row: dict, team_states: dict[int, str]) -> bool:
+    return nint(row.get("live_minutes")) == 0 and _team_status(row, team_states) == "finished"
+
+
+def _pending_blank(row: dict, team_states: dict[int, str]) -> bool:
+    return nint(row.get("live_minutes")) == 0 and _team_status(row, team_states) == "live"
+
+
+def _clone_rows(rows: list[dict]) -> list[dict]:
+    out = []
+    for raw in rows:
+        row = dict(raw)
+        row.setdefault("autosub_in", False)
+        row.setdefault("autosub_status", "")
+        row.setdefault("replaced_player", "")
+        row.setdefault("captain_fallback", False)
+        out.append(row)
+    return out
+
+
+def _active_chip(rows: list[dict]) -> str:
+    return str(rows[0].get("active_chip") or "") if rows else ""
+
+
+def _fpl_applied_autosub(rows: list[dict]) -> bool:
+    if _active_chip(rows) == "Bench Boost":
+        return False
+    return any(nint(r.get("multiplier")) > 0 and nint(r.get("squad_position")) > 11 for r in rows)
+
+
+def _set_out(row: dict) -> None:
+    row["on_bench"] = True
+    row["multiplier"] = 0
+    row["gw_contribution"] = 0
+
+
+def _set_in(row: dict, *, replaced: str, confirmed: bool) -> None:
+    row["on_bench"] = False
+    row["multiplier"] = max(1, nint(row.get("multiplier")))
+    row["gw_contribution"] = nint(row.get("event_points")) * max(1, nint(row.get("multiplier")))
+    row["autosub_in"] = confirmed
+    row["autosub_status"] = "confirmed" if confirmed else "pending"
+    row["replaced_player"] = replaced
+
+
+def _swap(rows: list[dict], outgoing_element: int, incoming_element: int, replaced: str) -> list[dict]:
+    trial = _clone_rows(rows)
+    for row in trial:
+        if nint(row.get("element")) == outgoing_element:
+            _set_out(row)
+        elif nint(row.get("element")) == incoming_element:
+            _set_in(row, replaced=replaced, confirmed=True)
+    return trial
+
+
+def _apply_bench_autosubs(rows: list[dict], team_states: dict[int, str]) -> list[dict]:
+    current = _clone_rows(rows)
+    for row in current:
+        row["autosub_in"] = False
+        row["autosub_status"] = ""
+        row["replaced_player"] = ""
+        row["captain_fallback"] = False
+        if nint(row.get("squad_position")) <= 11:
+            row["on_bench"] = False
+            if nint(row.get("multiplier")) <= 0:
+                row["multiplier"] = 1
+        else:
+            row["on_bench"] = True
+            row["multiplier"] = 0
+    bench_order = sorted(
+        [r for r in current if nint(r.get("squad_position")) > 11],
+        key=lambda r: nint(r.get("squad_position")),
+    )
+    for sub in bench_order:
+        if _confirmed_dnp(sub, team_states):
+            continue
+        live_sub = next(r for r in current if nint(r.get("element")) == nint(sub.get("element")))
+        if live_sub.get("autosub_in"):
+            continue
+        starters = [
+            r for r in current
+            if nint(r.get("squad_position")) <= 11 and nint(r.get("multiplier")) > 0
+        ]
+        blanks = sorted(
+            [r for r in starters if _confirmed_dnp(r, team_states)],
+            key=lambda r: nint(r.get("squad_position")),
+        )
+        for blank in blanks:
+            trial = _swap(current, nint(blank.get("element")), nint(sub.get("element")), str(blank.get("player") or ""))
+            if _valid_xi(trial):
+                current = trial
+                break
+    for row in current:
+        if nint(row.get("multiplier")) > 0 and _pending_blank(row, team_states):
+            bench_left = sorted(
+                [
+                    r for r in current
+                    if nint(r.get("squad_position")) > 11 and not r.get("autosub_in") and not _confirmed_dnp(r, team_states)
+                ],
+                key=lambda r: nint(r.get("squad_position")),
+            )
+            for sub in bench_left:
+                trial = _swap(current, nint(row.get("element")), nint(sub.get("element")), str(row.get("player") or ""))
+                if _valid_xi(trial):
+                    for marked in current:
+                        if nint(marked.get("element")) == nint(sub.get("element")):
+                            marked["autosub_status"] = "pending"
+                            marked["replaced_player"] = str(row.get("player") or "")
+                            marked["autosub_in"] = False
+                    break
+            break
+    return current
+
+
+def _sync_from_fpl_multipliers(rows: list[dict]) -> list[dict]:
+    current = _clone_rows(rows)
+    outgoing_names = [
+        str(r.get("player") or "")
+        for r in current
+        if nint(r.get("squad_position")) <= 11 and nint(r.get("multiplier")) <= 0
+    ]
+    replaced = outgoing_names[0] if outgoing_names else ""
+    for row in current:
+        if nint(row.get("multiplier")) > 0:
+            row["on_bench"] = False
+            if nint(row.get("squad_position")) > 11:
+                row["autosub_in"] = True
+                row["autosub_status"] = "confirmed"
+                row["replaced_player"] = replaced
+        else:
+            row["on_bench"] = True
+            row["autosub_in"] = False
+    return current
+
+
+def _apply_captain_fallback(rows: list[dict], team_states: dict[int, str]) -> list[dict]:
+    current = _clone_rows(rows)
+    cap = next((r for r in current if bool(r.get("is_captain"))), None)
+    vice = next((r for r in current if bool(r.get("is_vice_captain"))), None)
+    if not cap:
+        return current
+    captain_out = _confirmed_dnp(cap, team_states) or nint(cap.get("multiplier")) <= 0
+    if not captain_out:
+        return current
+    cap["multiplier"] = 0
+    cap["gw_contribution"] = 0
+    if not vice:
+        return current
+    vice_available = nint(vice.get("multiplier")) > 0 and not _confirmed_dnp(vice, team_states)
+    if vice_available:
+        vice["multiplier"] = 2
+        vice["captain_fallback"] = True
+        vice["is_triple_captain"] = False
+        vice["gw_contribution"] = nint(vice.get("event_points")) * 2
+    else:
+        vice["multiplier"] = min(nint(vice.get("multiplier")), 1) if nint(vice.get("multiplier")) > 0 else nint(vice.get("multiplier"))
+    return current
+
+
+def _refresh_contributions(rows: list[dict]) -> list[dict]:
+    for row in rows:
+        row["gw_contribution"] = nint(row.get("event_points")) * max(0, nint(row.get("multiplier")))
+    return rows
+
+
+def resolve_effective_picks(rows: list[dict], team_states: dict[int, str]) -> list[dict]:
+    """Return one manager's picks after confirmed autosubs and captain fallback.
+
+    Pending blanks (live, 0 minutes) are annotated but not swapped in.
     """
+    if not rows:
+        return []
+    chip = _active_chip(rows)
+    if chip == "Bench Boost":
+        current = _clone_rows(rows)
+        for row in current:
+            row["on_bench"] = nint(row.get("squad_position")) > 11
+            if nint(row.get("multiplier")) <= 0:
+                row["multiplier"] = 1
+        return _refresh_contributions(_apply_captain_fallback(current, team_states))
+    if _fpl_applied_autosub(rows):
+        current = _sync_from_fpl_multipliers(rows)
+    else:
+        current = _apply_bench_autosubs(rows, team_states)
+    return _refresh_contributions(_apply_captain_fallback(current, team_states))
+
+
+def remaining_from_picks(rows: list[dict], team_states: dict[int, str]) -> int:
+    resolved = resolve_effective_picks(rows, team_states)
+    return sum(
+        1
+        for row in resolved
+        if nint(row.get("multiplier")) > 0 and _team_status(row, team_states) == "not_started"
+    )
+
+
+def apply_provisional_autosubs(ownership: dict, team_states: dict[int, str]) -> dict:
+    """Apply confirmed autosubs to ownership picks. Same source as remaining counts."""
     if not ownership:
         return ownership or {}
     picks = ownership.get("picks", pd.DataFrame())
     if picks is None or picks.empty:
         return ownership
-    if "autosub_in" not in picks.columns:
-        picks = picks.copy()
-        picks["autosub_in"] = False
-        picks["replaced_player"] = ""
-    changed = False
     blocks = []
-    for entry, block in picks.groupby("entry", sort=False):
-        rows = block.to_dict("records")
-        chip = str(rows[0].get("active_chip") or "") if rows else ""
-        if chip == "Bench Boost":
-            blocks.append(block)
-            continue
-        already = any(nint(r.get("multiplier")) > 0 and bool(r.get("on_bench")) for r in rows)
-        if already:
-            blocks.append(block)
-            continue
-        for r in rows:
-            r["autosub_in"] = bool(r.get("autosub_in"))
-            r["replaced_player"] = str(r.get("replaced_player") or "")
-        blanks = [
-            r for r in rows
-            if not bool(r.get("on_bench"))
-            and nint(r.get("live_minutes")) == 0
-            and team_states.get(nint(r.get("team_id")), "not_started") == "finished"
-        ]
-        bench = sorted(
-            [r for r in rows if bool(r.get("on_bench"))],
-            key=lambda r: nint(r.get("squad_position")),
-        )
-        for blank in blanks:
-            for sub in bench:
-                if nint(sub.get("live_minutes")) <= 0 and team_states.get(nint(sub.get("team_id")), "") != "live":
-                    continue
-                if bool(sub.get("autosub_in")):
-                    continue
-                trial = []
-                for r in rows:
-                    row = dict(r)
-                    if nint(row.get("element")) == nint(blank.get("element")):
-                        row["on_bench"] = True
-                        row["multiplier"] = 0
-                        row["gw_contribution"] = 0
-                    elif nint(row.get("element")) == nint(sub.get("element")):
-                        row["on_bench"] = False
-                        row["multiplier"] = max(1, nint(row.get("multiplier")))
-                        row["gw_contribution"] = nint(row.get("event_points")) * max(1, nint(row.get("multiplier")))
-                        row["autosub_in"] = True
-                        row["replaced_player"] = str(blank.get("player") or "")
-                    trial.append(row)
-                if _valid_xi(trial):
-                    rows = trial
-                    changed = True
-                    bench = [r for r in rows if bool(r.get("on_bench"))]
-                    break
-        blocks.append(pd.DataFrame(rows))
-    if not changed:
-        out = dict(ownership)
-        out["picks"] = picks
-        return out
-    new_picks = pd.concat(blocks, ignore_index=True)
+    for _entry, block in picks.groupby("entry", sort=False):
+        resolved = resolve_effective_picks(block.to_dict("records"), team_states)
+        blocks.append(pd.DataFrame(resolved))
+    new_picks = pd.concat(blocks, ignore_index=True) if blocks else picks
     out = dict(ownership)
     out["picks"] = new_picks
     live_by_entry = new_picks.groupby("entry", as_index=False)["gw_contribution"].sum().rename(columns={"gw_contribution": "live_gw_gross"})
