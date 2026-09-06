@@ -96,13 +96,24 @@ class PulseTests(unittest.TestCase):
         self.assertIn("Haaland", events[0].label)
 
     def test_goal_only_when_stat_increases(self):
-        old_picks = pd.DataFrame([{"element": 20, "player": "Haaland", "club": "MCI", "live_goals": 0, "event_points": 2}])
-        new_picks = pd.DataFrame([{"element": 20, "player": "Haaland", "club": "MCI", "live_goals": 1, "event_points": 8}])
+        old_picks = pd.DataFrame([{"element": 20, "player": "Haaland", "club": "MCI", "team_id": 2, "live_goals": 0, "event_points": 2}])
+        new_picks = pd.DataFrame([{"element": 20, "player": "Haaland", "club": "MCI", "team_id": 2, "live_goals": 1, "event_points": 8}])
         old = state([impact(event_points=2)], [manager()], old_picks)
         new = state([impact(event_points=8)], [manager(live_gw_points=8, live_total_points=108)], new_picks)
         events = diff_live_states(old, new, "snap-2")
         self.assertEqual(events[0].event_type, "goal")
         self.assertEqual(events[0].banner, "Mål")
+        self.assertEqual(events[0].fixture_id, 1)
+
+    def test_clean_sheet_not_emitted_at_minute_12(self):
+        old_picks = pd.DataFrame([{"element": 20, "player": "Haaland", "club": "MCI", "team_id": 2, "live_cs": 0, "live_minutes": 12, "event_points": 2}])
+        new_picks = pd.DataFrame([{"element": 20, "player": "Haaland", "club": "MCI", "team_id": 2, "live_cs": 1, "live_minutes": 12, "event_points": 6}])
+        old = state([impact(event_points=2)], [manager()], old_picks)
+        new = state([impact(event_points=6)], [manager(live_gw_points=6, live_total_points=106)], new_picks)
+        events = diff_live_states(old, new, "snap-cs")
+        self.assertTrue(events)
+        self.assertEqual(events[0].event_type, "player_points_changed")
+        self.assertEqual(events[0].fixture_id, 1)
 
     def test_autosub_event(self):
         old_picks = pd.DataFrame([{"element": 30, "player": "Mendy", "club": "CRY", "autosub_in": False, "event_points": 0}])

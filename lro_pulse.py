@@ -8,7 +8,7 @@ from typing import Any
 import pandas as pd
 
 from lro_analysis import nint
-from lro_live import LiveState, PlayerImpact
+from lro_live import LiveState, PlayerImpact, inferred_fixture_status
 
 
 STALE_LIVE_SECONDS = 90.0
@@ -92,10 +92,11 @@ def _player_map(state: LiveState | None) -> dict[int, PlayerImpact]:
 def _classify_stat_change(old_row: dict[str, Any] | None, new_row: dict[str, Any] | None) -> str:
     old_row = old_row or {}
     new_row = new_row or {}
+    points_up = nint(new_row.get("event_points")) > nint(old_row.get("event_points"))
+    minutes = nint(new_row.get("live_minutes"))
     checks = (
         ("live_goals", "goal"),
         ("live_assists", "assist"),
-        ("live_cs", "clean_sheet"),
         ("live_yc", "yellow_card"),
         ("live_rc", "red_card"),
         ("live_saves", "saves"),
@@ -106,8 +107,12 @@ def _classify_stat_change(old_row: dict[str, Any] | None, new_row: dict[str, Any
     for field, kind in checks:
         if nint(new_row.get(field)) > nint(old_row.get(field)):
             hits.append(kind)
-        if field == "live_cs" and nint(old_row.get(field)) and not nint(new_row.get(field)):
-            hits.append("clean_sheet_lost")
+    cs_new = nint(new_row.get("live_cs"))
+    cs_old = nint(old_row.get("live_cs"))
+    if cs_old and not cs_new and points_up is False:
+        hits.append("clean_sheet_lost")
+    if cs_new > cs_old and points_up and minutes >= 60:
+        hits.append("clean_sheet")
     if "goal" in hits:
         return "goal"
     if "assist" in hits:
@@ -127,6 +132,28 @@ def _classify_stat_change(old_row: dict[str, Any] | None, new_row: dict[str, Any
     if "minutes" in hits:
         return "minutes"
     return ""
+
+
+def _fixture_id_for_player(state: LiveState, element: int, pick_row: dict[str, Any] | None = None) -> int:
+    team_id = nint((pick_row or {}).get("team_id"))
+    if not team_id:
+        picks = (state.ownership or {}).get("picks")
+        if isinstance(picks, pd.DataFrame) and not picks.empty:
+            block = picks[picks["element"].map(nint) == int(element)]
+            if not block.empty:
+                team_id = nint(block.iloc[0].get("team_id"))
+    matches = [
+        f for f in (state.fixtures or [])
+        if team_id and team_id in {nint(f.get("team_h")), nint(f.get("team_a"))}
+    ]
+    if not matches:
+        return 0
+    live_first = [
+        f for f in matches
+        if inferred_fixture_status(f) in {"live", "pause"}
+    ]
+    chosen = live_first[0] if live_first else matches[0]
+    return nint(chosen.get("id"))
 
 
 def _banner(event_type: str, player: str, club: str, delta: int) -> tuple[str, str]:
@@ -213,6 +240,7 @@ def diff_live_states(old: LiveState | None, new: LiveState | None, snapshot_id: 
                 new_points=impact.event_points,
                 snapshot_id=snapshot_id,
                 stamp=stamp,
+                fixture_id=_fixture_id_for_player(new, element, new_picks.get(element)),
             )
         )
 
@@ -241,6 +269,7 @@ def diff_live_states(old: LiveState | None, new: LiveState | None, snapshot_id: 
                 new_points=nint(row.get("event_points")),
                 snapshot_id=snapshot_id,
                 stamp=stamp,
+                fixture_id=_fixture_id_for_player(new, element, row),
             )
         )
 

@@ -61,6 +61,9 @@ def form_rows(managers: list[dict], histories: dict[int, dict] | None, entry: in
     histories = histories or {}
     form = manager_form_from_histories(managers, histories, int(entry), last_n)
     rows = form.to_dict("records") if not form.empty else []
+    expected = len(managers or [])
+    loaded = len(histories)
+    histories_complete = bool(expected and loaded >= expected)
     if state and not state.is_finished:
         m = state.manager(int(entry))
         if m:
@@ -68,10 +71,15 @@ def form_rows(managers: list[dict], histories: dict[int, dict] | None, entry: in
             live = {
                 "entry": int(entry), "event": state.event_id, "points": m.live_gw_points,
                 "total_points": m.live_total_points, "round_rank": live_round_rank,
-                "league_rank": m.live_rank, "is_live": True,
+                "league_rank": m.live_rank, "is_live": True, "rank_complete": True,
             }
             rows = [r for r in rows if nint(r.get("event")) != state.event_id] + [live]
-    rows = sorted(rows,key=lambda r:nint(r.get("event")))[-last_n:]
+    rows = sorted(rows, key=lambda r: nint(r.get("event")))[-last_n:]
+    for row in rows:
+        if "rank_complete" not in row:
+            row["rank_complete"] = histories_complete
+            if not histories_complete:
+                row["round_rank"] = 0
     return rows
 
 

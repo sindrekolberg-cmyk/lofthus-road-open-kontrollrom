@@ -459,6 +459,9 @@ def live_stats_map(payload: dict) -> dict[int, dict]:
             "assists": _int(stats.get("assists")),
             "clean_sheets": _int(stats.get("clean_sheets")),
             "bonus": _int(stats.get("bonus")),
+            "yellow_cards": _int(stats.get("yellow_cards")),
+            "red_cards": _int(stats.get("red_cards")),
+            "saves": _int(stats.get("saves")),
         }
     return out
 

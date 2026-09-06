@@ -178,6 +178,14 @@ class AutosubTests(unittest.TestCase):
         vice = next(r for r in resolved if r["player"] == "VC")
         self.assertEqual(vice["multiplier"], 2)
         self.assertFalse(vice["is_triple_captain"])
+        from lro_live import _pick_meta
+        import pandas as pd
+        meta, _ = _pick_meta({"picks": pd.DataFrame(resolved)}, {})
+        self.assertTrue(meta[1]["captain_fallback"])
+        self.assertEqual(meta[1]["original_captain"], "Kaptein")
+        self.assertIn("VC", meta[1]["captain"])
+        self.assertNotIn("TC", meta[1]["captain"])
+        self.assertEqual(meta[1]["captain_element"], vice["element"])
 
 
 if __name__ == "__main__":

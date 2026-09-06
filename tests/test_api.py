@@ -75,9 +75,9 @@ def ownership():
         {"entry": 3, "manager": "C", "team": "Charlie", "rank": 3, "element": 10, "player": "Isak", "club": "NEW", "team_id": 1, "position_id": 4, "position": "Angrep", "squad_position": 1, "multiplier": 3, "is_captain": True, "is_vice_captain": False, "on_bench": False, "active_chip": "Triple Captain", "is_triple_captain": True, "event_points": 0, "gw_contribution": 0, "image_url": ""},
     ])
     events = pd.DataFrame([
-        {"entry": 1, "manager": "A", "team": "Alpha", "event_transfers_cost": 0, "team_value": 100.0, "bank": 0.0, "active_chip": ""},
-        {"entry": 2, "manager": "B", "team": "Bravo", "event_transfers_cost": 4, "team_value": 100.0, "bank": 0.0, "active_chip": ""},
-        {"entry": 3, "manager": "C", "team": "Charlie", "event_transfers_cost": 0, "team_value": 100.0, "bank": 0.0, "active_chip": "Triple Captain"},
+        {"entry": 1, "manager": "A", "team": "Alpha", "event_transfers_cost": 0, "event_transfers": 0, "team_value": 100.0, "bank": 0.0, "active_chip": ""},
+        {"entry": 2, "manager": "B", "team": "Bravo", "event_transfers_cost": 4, "event_transfers": 2, "team_value": 100.0, "bank": 0.0, "active_chip": ""},
+        {"entry": 3, "manager": "C", "team": "Charlie", "event_transfers_cost": 0, "event_transfers": 1, "team_value": 100.0, "bank": 0.0, "active_chip": "Triple Captain"},
     ])
     players = pd.DataFrame([
         {"element": 10, "player": "Isak", "club": "NEW", "team_id": 1, "ownership_count": 2, "ownership_pct": 66.7, "captain_count": 2, "captain_pct": 66.7, "triple_captain_count": 1, "effective_ownership_pct": 166.7, "live_minutes": 0, "event_points": 0, "image_url": ""},
@@ -155,6 +155,9 @@ class ApiTests(unittest.TestCase):
         self.assertIn("cheer_for", body)
         self.assertIn("hope_blank", body)
         self.assertIn("live_gap", body)
+        self.assertIn("pre_gw_gap", body)
+        self.assertNotEqual(body["pre_gw_gap"], body["gw_gap"])
+        self.assertEqual(body["live_gap"], body["pre_gw_gap"] + body["gw_gap"])
         self.assertIn(body["strategy"]["context"], {"defend", "chase", "neutral"})
         self.assertTrue(body["strategy"]["text"])
 
@@ -350,6 +353,41 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/analysis/captain").status_code, 200)
         self.assertEqual(self.client.get("/api/analysis/chips").status_code, 200)
         self.assertEqual(self.client.get("/api/month").status_code, 200)
+
+    def test_month_counts_current_gw_once(self):
+        month = {row["entry"]: row for row in self.client.get("/api/month").json()["table"]}
+        live = {row["entry"]: row for row in self.client.get("/api/live").json()["table"]}
+        self.assertEqual(month[1]["month_points"], 20 + live[1]["gw"])
+        self.assertEqual(month[2]["month_points"], 10 + live[2]["gw"])
+        self.assertEqual(month[3]["month_points"], 5 + live[3]["gw"])
+
+    def test_same_snapshot_manager_totals(self):
+        live = {row["entry"]: row for row in self.client.get("/api/live").json()["table"]}
+        league = {row["entry"]: row for row in self.client.get("/api/league").json()["table"]}
+        for entry in (1, 2, 3):
+            profile = self.client.get(f"/api/managers/{entry}").json()["manager"]
+            self.assertEqual(live[entry]["total"], league[entry]["total"])
+            self.assertEqual(live[entry]["total"], profile["total"])
+            self.assertEqual(live[entry]["gw"], profile["gw"])
+            self.assertEqual(live[entry]["rank"], profile["rank"])
+            self.assertEqual(live[entry]["captain_element"], profile["effective_captain_element"])
+            self.assertEqual(live[entry]["players_remaining"], profile["players_remaining"])
+
+    def test_transfer_cost_is_not_transfer_count(self):
+        row = {r["entry"]: r for r in self.client.get("/api/live").json()["table"]}[2]
+        self.assertEqual(row["transfer_cost"], 4)
+        self.assertEqual(row["hits"], 4)
+        self.assertEqual(row["transfer_count"], 2)
+        self.assertNotEqual(row["transfer_cost"], row["transfer_count"])
+
+    def test_ownership_count_matches_owner_list(self):
+        body = self.client.get("/api/analysis/ownership").json()
+        self.assertTrue(body["complete"])
+        for p in body["players"]:
+            self.assertEqual(p["ownership_count"], len(p["owners"]))
+            self.assertEqual(p["ownership_pct"], round(p["ownership_count"] / body["league_size"] * 100, 1))
+            self.assertEqual(p["captain_count"], sum(1 for o in p["owners"] if o["is_captain"]))
+            self.assertEqual(p["triple_captain_count"], sum(1 for o in p["owners"] if o["is_triple_captain"]))
 
     def test_ownership_is_league_membership_and_lists_owners(self):
         body = self.client.get("/api/analysis/ownership").json()

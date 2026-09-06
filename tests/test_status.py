@@ -223,6 +223,13 @@ class StatusModelTests(unittest.TestCase):
         feed = homepage_feed([old, move, chip, month, weak], 3, limit=5)
         self.assertEqual([s["key"] for s in feed], ["isak-cap", "month"])
 
+    def test_homepage_feed_keeps_one_armband_story(self):
+        from lro_newsroom import homepage_feed
+        tc = {"key": "tc-3-9", "category": "chip", "source_event": 3, "importance": 98, "headline": "Triple Captain-smell", "manager_entry": 9, "player_element": 10}
+        cap = {"key": "capfail-3-9", "category": "captain", "source_event": 3, "importance": 90, "headline": "Kapteinsmell", "manager_entry": 9, "player_element": 10}
+        feed = homepage_feed([tc, cap], 3, limit=5)
+        self.assertEqual([s["key"] for s in feed], ["tc-3-9"])
+
     def test_stale_story_cannot_become_homepage_live_lead(self):
         old = {"source_event": 2, "headline": "falt 43 plasser forrige runde", "key": "old"}
         live = {"source_event": 3, "headline": "Isak herjer", "key": "now"}

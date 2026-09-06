@@ -275,16 +275,16 @@ def generate_candidates(
                     worst["_impact"] = impact
             if worst is not None:
                 impact = worst["_impact"]
-                tc = bool(worst.get("is_triple_captain"))
-                label = "Triple Captain-smell" if tc else "Kapteinsmell"
-                candidates.append(_story(
-                    f"capfail-{state.event_id}-{nint(worst.get('entry'))}", "captain",
-                    f"{label} for {worst.get('manager')}",
-                    f"{impact.player} endte på {nint(worst.get('event_points'))} poeng",
-                    90 if tc else 82, "settled", 12 * 60,
-                    source_event=state.event_id, manager_entry=nint(worst.get("entry")),
-                    player_element=impact.element,
-                ))
+                tc = nint(worst.get("multiplier")) >= 3 or bool(worst.get("is_triple_captain"))
+                if not tc:
+                    candidates.append(_story(
+                        f"capfail-{state.event_id}-{nint(worst.get('entry'))}", "captain",
+                        f"Kapteinsmell for {worst.get('manager')}",
+                        f"{impact.player} endte på {nint(worst.get('event_points'))} poeng",
+                        82, "settled", 12 * 60,
+                        source_event=state.event_id, manager_entry=nint(worst.get("entry")),
+                        player_element=impact.element,
+                    ))
             best_cap = None
             for row in caps.to_dict("records"):
                 impact = state.player(nint(row.get("element")))
@@ -298,16 +298,16 @@ def generate_candidates(
                     best_cap["_impact"] = impact
             if best_cap is not None:
                 impact = best_cap["_impact"]
-                tc = bool(best_cap.get("is_triple_captain"))
-                label = "Triple Captain-fulltreffer" if tc else "Kapteinen leverte"
-                candidates.append(_story(
-                    f"caphit-{state.event_id}-{nint(best_cap.get('entry'))}", "captain",
-                    f"{label} for {best_cap.get('manager')}",
-                    f"{impact.player} endte på {nint(best_cap.get('event_points'))} poeng",
-                    88 if tc else 80, "settled", 12 * 60,
-                    source_event=state.event_id, manager_entry=nint(best_cap.get("entry")),
-                    player_element=impact.element,
-                ))
+                tc = nint(best_cap.get("multiplier")) >= 3 or bool(best_cap.get("is_triple_captain"))
+                if not tc:
+                    candidates.append(_story(
+                        f"caphit-{state.event_id}-{nint(best_cap.get('entry'))}", "captain",
+                        f"Kapteinen leverte for {best_cap.get('manager')}",
+                        f"{impact.player} endte på {nint(best_cap.get('event_points'))} poeng",
+                        80, "settled", 12 * 60,
+                        source_event=state.event_id, manager_entry=nint(best_cap.get("entry")),
+                        player_element=impact.element,
+                    ))
         if "autosub_in" in picks.columns:
             subs = picks[picks["autosub_in"].astype(bool)]
             if not subs.empty:
@@ -507,6 +507,11 @@ def merge_persistent_stories(
             if family in seen_once:
                 continue
             seen_once.add(family)
+        if family in {"captain", "chip"} and story.manager_entry and story.player_element:
+            arm = f"armband:{story.manager_entry}:{story.player_element}"
+            if arm in seen_once:
+                continue
+            seen_once.add(arm)
         result.append(story)
         if len(result) >= max(1, int(limit)):
             break
@@ -519,6 +524,7 @@ _HOMEPAGE_MAJOR = {"live", "leader", "chip", "captain", "differential", "autosub
 def homepage_feed(stories: list[Any], event_id: int, limit: int = 5) -> list[Any]:
     """Homepage Snakkiser: current, strong stories only. Never pad with leftovers."""
     out: list[Any] = []
+    seen_armband: set[str] = set()
     for story in stories:
         if isinstance(story, dict):
             category = str(story.get("category") or "")
@@ -534,6 +540,13 @@ def homepage_feed(stories: list[Any], event_id: int, limit: int = 5) -> list[Any
             continue
         if importance < 72:
             continue
+        entry = int(story.get("manager_entry") or 0) if isinstance(story, dict) else int(getattr(story, "manager_entry", 0) or 0)
+        player = int(story.get("player_element") or 0) if isinstance(story, dict) else int(getattr(story, "player_element", 0) or 0)
+        if category in {"captain", "chip"} and entry and player:
+            arm = f"{entry}:{player}"
+            if arm in seen_armband:
+                continue
+            seen_armband.add(arm)
         out.append(story)
         if len(out) >= max(1, int(limit)):
             break

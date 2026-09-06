@@ -79,8 +79,10 @@ def owners_by_element(state: LiveState) -> dict[int, list[dict[str, Any]]]:
             "entry": entry,
             "manager": str((manager.manager if manager else row.get("manager")) or ""),
             "team": str((manager.team if manager else row.get("team")) or ""),
-            "is_captain": bool(row.get("is_captain")),
-            "is_triple_captain": bool(row.get("is_triple_captain")),
+            "is_captain": bool(row.get("captain_fallback")) or (bool(row.get("is_captain")) and nint(row.get("multiplier")) >= 2),
+            "is_original_captain": bool(row.get("is_captain")),
+            "is_triple_captain": nint(row.get("multiplier")) >= 3,
+            "captain_fallback": bool(row.get("captain_fallback")),
             "on_bench": bool(row.get("on_bench")) or nint(row.get("multiplier")) == 0,
         })
     for rows in out.values():
@@ -110,11 +112,18 @@ def manager_payload(m: ManagerLiveState) -> dict[str, Any]:
         "rank_change": m.live_rank_change,
         "captain": m.captain,
         "captain_element": m.captain_element,
+        "original_captain": m.original_captain,
+        "original_captain_element": m.original_captain_element,
+        "effective_captain": m.captain,
+        "effective_captain_element": m.captain_element,
+        "captain_fallback": m.captain_fallback,
         "vice_captain": m.vice_captain,
         "vice_element": m.vice_element,
         "gw": m.live_gw_points,
         "gw_gross": m.live_gw_gross,
         "hits": m.transfer_hits,
+        "transfer_cost": m.transfer_hits,
+        "transfer_count": m.transfer_count,
         "total": m.live_total_points,
         "official_total": m.official_total,
         "official_gw": m.official_event_points,
@@ -236,9 +245,10 @@ def squad_payload(state: LiveState, entry: int) -> dict[str, Any]:
             "event_points": nint(r.get("event_points")),
             "gw_contribution": nint(r.get("gw_contribution")),
             "multiplier": nint(r.get("multiplier")),
-            "is_captain": bool(r.get("is_captain")),
+            "is_captain": bool(r.get("captain_fallback")) or (bool(r.get("is_captain")) and nint(r.get("multiplier")) >= 2),
+            "is_original_captain": bool(r.get("is_captain")),
             "is_vice_captain": bool(r.get("is_vice_captain")),
-            "is_triple_captain": bool(r.get("is_triple_captain")),
+            "is_triple_captain": nint(r.get("multiplier")) >= 3,
             "on_bench": bool(r.get("on_bench")),
             "fixture_status": status,
             "fixture_status_label": fixture_status_label(status),
@@ -367,12 +377,16 @@ def _player_event_kind(state: LiveState, element: int) -> str:
 def rival_payload(duel: RivalDuel, state: LiveState | None = None) -> dict[str, Any]:
     me = manager_payload(duel.me)
     rival = manager_payload(duel.rival)
+    pre_gw_gap = duel.me.official_total_before_gw - duel.rival.official_total_before_gw
+    gw_gap = duel.me.live_gw_points - duel.rival.live_gw_points
+    live_gap = duel.me.live_total_points - duel.rival.live_total_points
     return {
         "me": me,
         "rival": rival,
-        "live_gap": duel.live_gap,
-        "total_gap": duel.live_gap,
-        "gw_gap": duel.me.live_gw_points - duel.rival.live_gw_points,
+        "pre_gw_gap": pre_gw_gap,
+        "gw_gap": gw_gap,
+        "live_gap": live_gap,
+        "total_gap": live_gap,
         "common_players": duel.common_players,
         "captains": {"me": duel.me.captain, "rival": duel.rival.captain},
         "players_remaining": {"me": duel.me.players_remaining, "rival": duel.rival.players_remaining},
@@ -604,6 +618,8 @@ def analysis_from_state(state: LiveState) -> dict[str, Any]:
         "captain": captains[:25],
         "ownership": ownership,
         "league_size": league_size,
+        "loaded_managers": nint((state.ownership or {}).get("loaded_managers"), league_size),
+        "complete": bool((state.data_quality or {}).get("complete", True)),
         "differentials": diffs[:25],
         "chips": chips,
     }
@@ -740,8 +756,10 @@ def match_impact_payload(
                     "manager": str(r.get("manager") or ""),
                     "team": str(r.get("team") or ""),
                     "multiplier": nint(r.get("multiplier")),
-                    "is_captain": bool(r.get("is_captain")),
-                    "is_triple_captain": bool(r.get("is_triple_captain")),
+                    "is_captain": bool(r.get("captain_fallback")) or (bool(r.get("is_captain")) and nint(r.get("multiplier")) >= 2),
+                    "is_original_captain": bool(r.get("is_captain")),
+                    "is_triple_captain": nint(r.get("multiplier")) >= 3,
+                    "captain_fallback": bool(r.get("captain_fallback")),
                     "on_bench": bool(r.get("on_bench")) or nint(r.get("multiplier")) == 0,
                 })
             owners.sort(key=lambda o: (-o["multiplier"], o["manager"]))

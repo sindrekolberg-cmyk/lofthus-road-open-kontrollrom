@@ -69,6 +69,83 @@ def _empty_ownership(event_id: int | None, league_size: int, errors: list | None
     }
 
 
+def is_effective_captain(row: dict) -> bool:
+    """Live captain after VC fallback. Original DNP captains with multiplier 0 are not live captains."""
+    if bool(row.get("captain_fallback")):
+        return True
+    return bool(row.get("is_captain")) and nint(row.get("multiplier")) >= 2
+
+
+def is_effective_triple_captain(row: dict) -> bool:
+    """TC only while the armband still carries x3. VC fallback is never Triple Captain."""
+    return nint(row.get("multiplier")) >= 3
+
+
+def aggregate_players_from_picks(
+    picks_df: pd.DataFrame,
+    members: int,
+    catalog: dict[int, dict] | None = None,
+) -> pd.DataFrame:
+    """Rebuild player ownership/captain/EO rows from effective picks."""
+    catalog = catalog or {}
+    if picks_df is None or picks_df.empty:
+        return pd.DataFrame()
+    members = max(int(members or 0), 1)
+    player_rows = []
+    for element, block in picks_df.groupby("element", sort=False):
+        first = block.iloc[0]
+        records = block.to_dict("records")
+        captains = [r for r in records if is_effective_captain(r)]
+        triples = [r for r in records if is_effective_triple_captain(r)]
+        owners = sorted({str(r.get("manager") or "") for r in records}, key=normalize_text)
+        captain_names = sorted({str(r.get("manager") or "") for r in captains}, key=normalize_text)
+        tc_names = sorted({str(r.get("manager") or "") for r in triples}, key=normalize_text)
+        benched = sorted(
+            {str(r.get("manager") or "") for r in records if bool(r.get("on_bench")) or nint(r.get("multiplier")) <= 0},
+            key=normalize_text,
+        )
+        owner_count = int(block["entry"].nunique())
+        captain_count = len({nint(r.get("entry")) for r in captains})
+        tc_count = len({nint(r.get("entry")) for r in triples})
+        eo_count = int(pd.to_numeric(block["multiplier"], errors="coerce").fillna(0).clip(lower=0).sum())
+        meta = catalog.get(int(element), {})
+        player_rows.append({
+            "element": int(element),
+            "player": str(first.get("player") or ""),
+            "full_name": str(first.get("full_name") or ""),
+            "image_url": str(first.get("image_url") or ""),
+            "club": str(first.get("club") or ""),
+            "team_id": nint(first.get("team_id")),
+            "position_id": nint(first.get("position_id")),
+            "position": str(first.get("position") or ""),
+            "current_price": first.get("current_price"),
+            "fpl_ownership_pct": nfloat(meta.get("selected_by_pct"), nfloat(first.get("fpl_ownership_pct"))),
+            "ownership_count": owner_count,
+            "ownership_pct": round(owner_count / members * 100, 1) if members else 0.0,
+            "captain_count": captain_count,
+            "captain_pct": round(captain_count / members * 100, 1) if members else 0.0,
+            "triple_captain_count": tc_count,
+            "bench_count": len(benched),
+            "vice_count": int(block[block["is_vice_captain"]]["entry"].nunique()) if "is_vice_captain" in block.columns else 0,
+            "effective_ownership_count": eo_count,
+            "effective_ownership_pct": round(eo_count / members * 100, 1) if members else 0.0,
+            "event_points": nint(first.get("event_points")),
+            "live_minutes": nint(first.get("live_minutes")),
+            "season_points": nint(first.get("season_points")),
+            "form": nfloat(first.get("form")),
+            "status": str(first.get("status") or "a"),
+            "news": str(first.get("news") or ""),
+            "owners": owners,
+            "captains": captain_names,
+            "triple_captains": tc_names,
+            "benched_by": benched,
+        })
+    return pd.DataFrame(player_rows).sort_values(
+        ["ownership_count", "captain_count", "season_points", "player"],
+        ascending=[False, False, False, True],
+    ).reset_index(drop=True)
+
+
 def build_ownership(
     client: FPLClient,
     managers: list[dict],
@@ -178,53 +255,7 @@ def build_ownership(
 
     loaded = int(picks_df["entry"].nunique())
     members = max(len(entries), 1)
-    player_rows = []
-    for element, block in picks_df.groupby("element", sort=False):
-        first = block.iloc[0]
-        captains = block[block["is_captain"]]
-        triples = block[block["is_triple_captain"]]
-        owners = sorted(block["manager"].astype(str).unique().tolist(), key=normalize_text)
-        captain_names = sorted(captains["manager"].astype(str).unique().tolist(), key=normalize_text)
-        tc_names = sorted(triples["manager"].astype(str).unique().tolist(), key=normalize_text)
-        benched = sorted(block[block["on_bench"]]["manager"].astype(str).unique().tolist(), key=normalize_text)
-        owner_count = int(block["entry"].nunique())
-        captain_count = int(captains["entry"].nunique())
-        tc_count = int(triples["entry"].nunique())
-        eo_count = int(block["multiplier"].clip(lower=0).sum())
-        player_rows.append({
-            "element": int(element),
-            "player": str(first.get("player") or ""),
-            "full_name": str(first.get("full_name") or ""),
-            "image_url": str(first.get("image_url") or ""),
-            "club": str(first.get("club") or ""),
-            "team_id": nint(first.get("team_id")),
-            "position_id": nint(first.get("position_id")),
-            "position": str(first.get("position") or ""),
-            "current_price": first.get("current_price"),
-            "fpl_ownership_pct": nfloat(catalog.get(int(element), {}).get("selected_by_pct"), 0.0),
-            "ownership_count": owner_count,
-            "ownership_pct": round(owner_count / members * 100, 1) if members else 0.0,
-            "captain_count": captain_count,
-            "captain_pct": round(captain_count / members * 100, 1) if members else 0.0,
-            "triple_captain_count": tc_count,
-            "bench_count": len(benched),
-            "vice_count": int(block[block["is_vice_captain"]]["entry"].nunique()),
-            "effective_ownership_count": eo_count,
-            "effective_ownership_pct": round(eo_count / members * 100, 1) if members else 0.0,
-            "event_points": nint(first.get("event_points")),
-            "live_minutes": nint(first.get("live_minutes")),
-            "season_points": nint(first.get("season_points")),
-            "form": nfloat(first.get("form")),
-            "status": str(first.get("status") or "a"),
-            "news": str(first.get("news") or ""),
-            "owners": owners,
-            "captains": captain_names,
-            "triple_captains": tc_names,
-            "benched_by": benched,
-        })
-    players_df = pd.DataFrame(player_rows).sort_values(
-        ["ownership_count", "captain_count", "season_points", "player"], ascending=[False, False, False, True]
-    ).reset_index(drop=True)
+    players_df = aggregate_players_from_picks(picks_df, members, catalog)
     return {
         "event": int(event_id),
         "players": players_df,
@@ -261,6 +292,10 @@ def refresh_ownership_live(ownership: dict, live_payload: dict) -> dict:
         picks["live_goals"] = picks["element"].map(lambda pid: nint(live.get(nint(pid), {}).get("goals")))
         picks["live_assists"] = picks["element"].map(lambda pid: nint(live.get(nint(pid), {}).get("assists")))
         picks["live_bonus"] = picks["element"].map(lambda pid: nint(live.get(nint(pid), {}).get("bonus")))
+        picks["live_cs"] = picks["element"].map(lambda pid: nint(live.get(nint(pid), {}).get("clean_sheets")))
+        picks["live_yc"] = picks["element"].map(lambda pid: nint(live.get(nint(pid), {}).get("yellow_cards")))
+        picks["live_rc"] = picks["element"].map(lambda pid: nint(live.get(nint(pid), {}).get("red_cards")))
+        picks["live_saves"] = picks["element"].map(lambda pid: nint(live.get(nint(pid), {}).get("saves")))
         # FPL's multiplier already captures captaincy, Triple Captain and Bench
         # Boost. Defensively keep BB bench players at x1 if an old payload says 0.
         mult = pd.to_numeric(picks.get("multiplier", 0), errors="coerce").fillna(0).astype(int)
@@ -278,6 +313,10 @@ def refresh_ownership_live(ownership: dict, live_payload: dict) -> dict:
             ("live_goals", "goals"),
             ("live_assists", "assists"),
             ("live_bonus", "bonus"),
+            ("live_cs", "clean_sheets"),
+            ("live_yc", "yellow_cards"),
+            ("live_rc", "red_cards"),
+            ("live_saves", "saves"),
         ]:
             players[col] = players["element"].map(lambda pid, k=key: nint(live.get(nint(pid), {}).get(k)))
         out["players"] = players
@@ -539,6 +578,8 @@ def apply_provisional_autosubs(ownership: dict, team_states: dict[int, str]) -> 
     costs = pd.to_numeric(manager_events.get("event_transfers_cost", 0), errors="coerce").fillna(0).astype(int)
     manager_events["live_gw_points"] = manager_events["live_gw_gross"] - costs
     out["manager_events"] = manager_events
+    members = max(nint(out.get("league_size")), int(new_picks["entry"].nunique()), 1)
+    out["players"] = aggregate_players_from_picks(new_picks, members)
     return out
 
 

@@ -39,6 +39,10 @@ class ManagerLiveState:
     month_rank: int
     team_value: float
     bank: float
+    transfer_count: int = 0
+    original_captain: str = ""
+    original_captain_element: int = 0
+    captain_fallback: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -219,20 +223,35 @@ def _pick_meta(ownership: dict, catalog: dict[int, dict]) -> tuple[dict[int, dic
     for entry, block in picks.groupby("entry"):
         records = block.to_dict("records")
         rows_by_entry[int(entry)] = records
-        cap = next((r for r in records if bool(r.get("is_captain"))), None)
+        original = next((r for r in records if bool(r.get("is_captain"))), None)
         vice = next((r for r in records if bool(r.get("is_vice_captain"))), None)
+        effective = next((r for r in records if bool(r.get("captain_fallback"))), None)
+        if effective is None and original is not None and nint(original.get("multiplier")) > 0:
+            effective = original
+        elif effective is None:
+            effective = original
         active_chip = str(records[0].get("active_chip") or "") if records else ""
-        cap_name = str(cap.get("player") or "") if cap else ""
+        cap_name = str(effective.get("player") or "") if effective else ""
+        orig_name = str(original.get("player") or "") if original else ""
         vice_name = str(vice.get("player") or "") if vice else ""
-        if cap and cap_name:
-            is_tc = bool(cap.get("is_triple_captain")) or nint(cap.get("multiplier")) >= 3 or active_chip == "Triple Captain"
+        if cap_name:
+            is_tc = nint(effective.get("multiplier")) >= 3 if effective else False
             cap_label = f"{cap_name} ({'TC' if is_tc else 'C'})"
         else:
             cap_label = "–"
+        fallback = bool(
+            original
+            and effective
+            and nint(original.get("element"))
+            and nint(original.get("element")) != nint(effective.get("element"))
+        )
         by_entry[int(entry)] = {
             "captain": cap_label,
             "captain_name": cap_name,
-            "captain_element": nint(cap.get("element")) if cap else 0,
+            "captain_element": nint(effective.get("element")) if effective else 0,
+            "original_captain": orig_name,
+            "original_captain_element": nint(original.get("element")) if original else 0,
+            "captain_fallback": fallback,
             "vice": vice_name,
             "vice_element": nint(vice.get("element")) if vice else 0,
             "chip": active_chip,
@@ -383,9 +402,13 @@ def build_live_state(
             live_gw_points=live_gw.get(entry, 0),
             live_gw_gross=nint(ev.get("live_gw_gross"), live_gw.get(entry, 0) + nint(ev.get("event_transfers_cost"))),
             transfer_hits=nint(ev.get("event_transfers_cost")),
+            transfer_count=nint(ev.get("event_transfers")),
             live_total_points=live_totals.get(entry, nint(m.get("total"))),
             captain=str(pm.get("captain") or "–"),
             captain_element=nint(pm.get("captain_element")),
+            original_captain=str(pm.get("original_captain") or ""),
+            original_captain_element=nint(pm.get("original_captain_element")),
+            captain_fallback=bool(pm.get("captain_fallback")),
             vice_captain=str(pm.get("vice") or ""),
             vice_element=nint(pm.get("vice_element")),
             active_chip=str(pm.get("chip") or ""),

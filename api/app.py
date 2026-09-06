@@ -454,7 +454,7 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
         if not s.state:
             return {"players": []}
         payload = analysis_from_state(s.state)
-        return {"players": payload["ownership"], "league_size": payload["league_size"]}
+        return {"players": payload["ownership"], "league_size": payload["league_size"], "loaded_managers": payload.get("loaded_managers"), "complete": payload.get("complete", True)}
 
     @app.get("/api/analysis/chips")
     def analysis_chips() -> dict[str, Any]:
