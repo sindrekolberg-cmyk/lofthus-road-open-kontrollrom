@@ -216,11 +216,12 @@ class StatusModelTests(unittest.TestCase):
     def test_homepage_feed_drops_previous_round_ordinary_story(self):
         from lro_newsroom import homepage_feed
         old = {"key": "thomas", "category": "movement", "source_event": 2, "importance": 96, "headline": "falt 43 plasser forrige runde"}
-        now = {"key": "lokas", "category": "movement_live", "source_event": 3, "importance": 88, "headline": "opp 20 plasser"}
+        move = {"key": "lokas", "category": "movement_live", "source_event": 3, "importance": 88, "headline": "opp 20 plasser"}
+        chip = {"key": "isak-cap", "category": "captain", "source_event": 3, "importance": 93, "headline": "Isak-gambleren flyr"}
         month = {"key": "month", "category": "month", "source_event": 3, "importance": 79, "headline": "leder september"}
         weak = {"key": "own", "category": "ownership", "source_event": 3, "importance": 45, "headline": "eierskap"}
-        feed = homepage_feed([old, now, month, weak], 3, limit=5)
-        self.assertEqual([s["key"] for s in feed], ["lokas", "month"])
+        feed = homepage_feed([old, move, chip, month, weak], 3, limit=5)
+        self.assertEqual([s["key"] for s in feed], ["isak-cap", "month"])
 
     def test_stale_story_cannot_become_homepage_live_lead(self):
         old = {"source_event": 2, "headline": "falt 43 plasser forrige runde", "key": "old"}
@@ -282,6 +283,16 @@ class StatusModelTests(unittest.TestCase):
         now = _story("now-live", "live", "Isak herjer: 10 poeng", "", 84, "live", 25, source_event=3)
         merged = merge_persistent_stories([now], [old.to_dict()], state, limit=4)
         self.assertEqual(homepage_hero_story([s.to_dict() for s in merged], 3)["key"], "now-live")
+
+    def test_candidates_skip_pure_rank_movement(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        history = HistoryStore(Path(tmp.name))
+        state = build_live_state(FakeClient({10: 10, 20: 0}), managers(), history, 25220, bootstrap=BOOTSTRAP, ownership=ownership())
+        from lro_newsroom import generate_candidates
+        stories = generate_candidates(state, managers(), BOOTSTRAP, history, {})
+        self.assertFalse(any(s.category == "movement_live" for s in stories))
+        self.assertFalse(any("plasser" in s.headline and s.category in {"movement", "movement_live"} for s in stories))
 
 
 class StatusApiTests(unittest.TestCase):

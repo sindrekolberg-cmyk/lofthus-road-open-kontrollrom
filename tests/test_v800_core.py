@@ -120,9 +120,7 @@ class V800CoreTests(unittest.TestCase):
     def test_live_movement_language_is_provisional(self):
         state = build_live_state(FakeClient({10: 10, 20: 0}), managers(), self.history, 25220, bootstrap=BOOTSTRAP, ownership=ownership())
         stories = generate_candidates(state, managers(), BOOTSTRAP, self.history, histories={})
-        movement = [s for s in stories if s.category == "movement_live"]
-        for story in movement:
-            self.assertIn("foreløpig", story.headline.casefold())
+        self.assertFalse(any(s.category == "movement_live" for s in stories))
 
     def test_newsroom_keeps_stronger_existing_story(self):
         state = build_live_state(FakeClient({10: 10, 20: 0}), managers(), self.history, 25220, bootstrap=BOOTSTRAP, ownership=ownership())

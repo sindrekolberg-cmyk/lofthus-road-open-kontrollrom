@@ -161,10 +161,12 @@ def desk_score(story: Story, event_id: int) -> tuple:
     tier = {
         "live": 10,
         "leader": 9,
-        "movement_live": 8,
+        "captain": 8,
         "chip": 7,
         "differential": 6,
         "autosub": 6,
+        "bench": 6,
+        "unique": 6,
         "month": 4,
         "movement": 2,
         "round": 1,
@@ -190,6 +192,7 @@ def generate_candidates(
     histories: dict[int, dict] | None = None,
 ) -> list[Story]:
     candidates: list[Story] = []
+    picks = state.ownership.get("picks", pd.DataFrame())
 
     # A live leader change is major news. The language explicitly remains provisional.
     top = state.top(1)
@@ -238,27 +241,24 @@ def generate_candidates(
                 f"Bare {p.ownership_pct:.0f} % eierskap i Lofthus", 86, "live" if state.is_live else "settled", 40,
                 source_event=state.event_id, player_element=p.element,
             ))
-
-    # Extreme provisional movement is valid while the round is open.
-    if this_round and state.manager_live:
-        climber = max(state.manager_live, key=lambda m: m.live_rank_change)
-        faller = min(state.manager_live, key=lambda m: m.live_rank_change)
-        if climber.live_rank_change >= 8:
+        uniques = [p for p in live_impacts if p.ownership_count == 1 and p.event_points >= 10]
+        if uniques:
+            p = uniques[0]
+            owner_name = ""
+            if picks is not None and not picks.empty:
+                block = picks[picks["element"].map(nint) == p.element]
+                if not block.empty:
+                    owner_name = str(block.iloc[0].get("manager") or "")
             candidates.append(_story(
-                f"live-climb-{state.event_id}-{climber.entry}", "movement_live",
-                f"{climber.manager} er foreløpig opp {climber.live_rank_change} plasser",
-                f"GW{state.event_id}: {climber.live_gw_points} poeng", min(91, 72 + climber.live_rank_change), "live", 35,
-                source_event=state.event_id, manager_entry=climber.entry,
-            ))
-        if faller.entry != climber.entry and faller.live_rank_change <= -8:
-            candidates.append(_story(
-                f"live-fall-{state.event_id}-{faller.entry}", "movement_live",
-                f"{faller.manager} er foreløpig ned {abs(faller.live_rank_change)} plasser",
-                f"GW{state.event_id}: {faller.live_gw_points} poeng", min(88, 70 + abs(faller.live_rank_change)), "live", 35,
-                source_event=state.event_id, manager_entry=faller.entry,
+                f"unique-{state.event_id}-{p.element}", "unique",
+                f"{p.player} er unik i Lofthus: {p.event_points} poeng",
+                f"{owner_name or 'Én manager'} er eneste eier".strip(),
+                85, "live" if p.fixture_status in {"live", "pause"} else "settled", 40,
+                source_event=state.event_id, player_element=p.element,
             ))
 
-    picks = state.ownership.get("picks", pd.DataFrame())
+    candidates.extend(_decision_stories(state, this_round))
+
     if this_round and picks is not None and not picks.empty:
         if "is_captain" in picks.columns:
             caps = picks[picks["is_captain"].astype(bool)]
@@ -278,7 +278,7 @@ def generate_candidates(
                 tc = bool(worst.get("is_triple_captain"))
                 label = "Triple Captain-smell" if tc else "Kapteinsmell"
                 candidates.append(_story(
-                    f"capfail-{state.event_id}-{nint(worst.get('entry'))}", "chip",
+                    f"capfail-{state.event_id}-{nint(worst.get('entry'))}", "captain",
                     f"{label} for {worst.get('manager')}",
                     f"{impact.player} endte på {nint(worst.get('event_points'))} poeng",
                     90 if tc else 82, "settled", 12 * 60,
@@ -301,7 +301,7 @@ def generate_candidates(
                 tc = bool(best_cap.get("is_triple_captain"))
                 label = "Triple Captain-fulltreffer" if tc else "Kapteinen leverte"
                 candidates.append(_story(
-                    f"caphit-{state.event_id}-{nint(best_cap.get('entry'))}", "chip",
+                    f"caphit-{state.event_id}-{nint(best_cap.get('entry'))}", "captain",
                     f"{label} for {best_cap.get('manager')}",
                     f"{impact.player} endte på {nint(best_cap.get('event_points'))} poeng",
                     88 if tc else 80, "settled", 12 * 60,
@@ -390,6 +390,89 @@ def generate_candidates(
     return sorted(best.values(), key=lambda s: desk_score(s, state.event_id), reverse=True)
 
 
+def _decision_stories(state: LiveState, this_round: bool) -> list[Story]:
+    """Snakkiser about decisions/drama. Pure rank movement belongs in Største utslag."""
+    if not this_round:
+        return []
+    out: list[Story] = []
+    picks = state.ownership.get("picks", pd.DataFrame())
+    live_by_entry = {m.entry: m for m in state.manager_live}
+    if picks is None or picks.empty:
+        return out
+    if "is_captain" in picks.columns:
+        caps = picks[picks["is_captain"].astype(bool)]
+        by_el: dict[int, list[dict[str, Any]]] = {}
+        for cap_row in caps.to_dict("records"):
+            by_el.setdefault(nint(cap_row.get("element")), []).append(cap_row)
+        for element, rows in by_el.items():
+            impact = state.player(element)
+            if not impact or impact.event_points < 8:
+                continue
+            if impact.fixture_status not in {"live", "pause", "finished"}:
+                continue
+            top20 = [
+                cap_row for cap_row in rows
+                if live_by_entry.get(nint(cap_row.get("entry"))) and live_by_entry[nint(cap_row.get("entry"))].live_rank <= 20
+            ]
+            if len(top20) != 1:
+                continue
+            cap_row = top20[0]
+            mgr = live_by_entry[nint(cap_row.get("entry"))]
+            climb = max(0, mgr.live_rank_change)
+            if climb >= 8:
+                headline = f"{impact.player}-gambleren flyr"
+                meta = (
+                    f"{mgr.manager} er eneste {impact.player}-kaptein i topp 20 "
+                    f"og går {climb} plasser opp"
+                )
+            else:
+                headline = f"Eneste {impact.player}-kaptein i topp 20"
+                meta = f"{mgr.manager} tok {impact.player} · {impact.event_points} poeng"
+            out.append(_story(
+                f"capgamble-{state.event_id}-{mgr.entry}", "captain",
+                headline, meta, 93 if climb >= 8 else 84,
+                "live" if impact.fixture_status in {"live", "pause"} else "settled", 40,
+                source_event=state.event_id, manager_entry=mgr.entry, player_element=impact.element,
+            ))
+    if "multiplier" in picks.columns:
+        for entry, group in picks.groupby(picks["entry"].map(nint)):
+            bench_mask = group["multiplier"].map(nint) == 0
+            if "on_bench" in group.columns:
+                bench_mask = bench_mask | group["on_bench"].astype(bool)
+            bench = group[bench_mask]
+            pts = 0
+            best_name = ""
+            best_pts = -1
+            for bench_row in bench.to_dict("records"):
+                value = nint(bench_row.get("gw_contribution") or bench_row.get("event_points"))
+                pts += value
+                if value > best_pts:
+                    best_pts = value
+                    best_name = str(bench_row.get("player") or "")
+            if pts < 10:
+                continue
+            mgr = live_by_entry.get(int(entry))
+            manager_name = mgr.manager if mgr else str(group.iloc[0].get("manager") or "")
+            out.append(_story(
+                f"bench-{state.event_id}-{int(entry)}", "bench",
+                f"{pts} poeng fra benken",
+                f"{manager_name} · {best_name}" if best_name else manager_name,
+                81, "live" if state.is_live else "settled", 60,
+                source_event=state.event_id, manager_entry=int(entry),
+            ))
+    for mgr in state.manager_live:
+        chip = str(mgr.active_chip or "")
+        if chip in {"Free Hit", "Wildcard", "Bench Boost"} and mgr.live_gw_points >= 55 and mgr.live_rank_change >= 5:
+            out.append(_story(
+                f"chipplay-{state.event_id}-{mgr.entry}", "chip",
+                f"{mgr.manager} kjører {chip}",
+                f"{mgr.live_gw_points} poeng · {mgr.live_rank_change} plasser opp",
+                87, "live" if state.is_live else "settled", 90,
+                source_event=state.event_id, manager_entry=mgr.entry,
+            ))
+    return out
+
+
 def merge_persistent_stories(
     candidates: list[Story],
     previous_serialized: list[dict[str, Any]] | None,
@@ -430,7 +513,7 @@ def merge_persistent_stories(
     return result
 
 
-_HOMEPAGE_MAJOR = {"live", "leader", "movement_live", "chip", "differential", "autosub", "month"}
+_HOMEPAGE_MAJOR = {"live", "leader", "chip", "captain", "differential", "autosub", "bench", "unique", "month"}
 
 
 def homepage_feed(stories: list[Any], event_id: int, limit: int = 5) -> list[Any]:
