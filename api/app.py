@@ -16,6 +16,7 @@ from api.serialize import (
     hall_records_payload,
     history_store_payload,
     live_events_payload,
+    match_impact_payload,
     manager_payload,
     manager_profile_payload,
     movers_payload,
@@ -137,6 +138,17 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
             "player_impacts": [player_impact_payload(p) for p in s.state.player_impacts[:40]],
             "live_ready": True,
         }
+
+    @app.get("/api/live/matches/{fixture_id}")
+    def match_detail(fixture_id: int) -> dict[str, Any]:
+        s = snap()
+        if not s.state:
+            raise HTTPException(status_code=503, detail="Live-data er ikke klare ennå.")
+        body = match_impact_payload(s.state, s.bootstrap, fixture_id)
+        if not body:
+            raise HTTPException(status_code=404, detail="Kampen finnes ikke i denne runden.")
+        body["status"] = status_from(s)
+        return body
 
     @app.get("/api/month")
     def month() -> dict[str, Any]:

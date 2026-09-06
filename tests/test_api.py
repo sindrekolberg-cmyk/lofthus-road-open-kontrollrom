@@ -26,7 +26,7 @@ class FakeClient:
         return BOOTSTRAP
 
     def fixtures(self, event_id):
-        return [{"event": event_id, "team_h": 1, "team_a": 2, "started": True, "finished": False, "team_h_score": 1, "team_a_score": 0}]
+        return [{"id": 1, "event": event_id, "team_h": 1, "team_a": 2, "started": True, "finished": False, "team_h_score": 1, "team_a_score": 0}]
 
     def event_live(self, event_id):
         return {
@@ -244,6 +244,16 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("rows", r.json())
         self.assertIn("ready", r.json())
+
+    def test_match_impact_uses_live_state(self):
+        r = self.client.get("/api/live/matches/1")
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["biggest_winner"]["manager"], "C")
+        self.assertEqual(body["biggest_loser"]["manager"], "A")
+        self.assertTrue(any(p["player"] == "Isak" for p in body["players"]))
+        missing = self.client.get("/api/live/matches/999")
+        self.assertEqual(missing.status_code, 404)
 
     def test_hall_records(self):
         r = self.client.get("/api/hall-of-fame")

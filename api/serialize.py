@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime
 from typing import Any
 
@@ -642,6 +643,74 @@ def live_events_payload(state: LiveState, bootstrap: dict) -> list[dict[str, Any
             "lofthus_loser": loser,
         })
     return out
+
+
+def _fixture_clubs(fixture: dict[str, Any]) -> set[str]:
+    return {
+        str(fixture.get("home") or ""),
+        str(fixture.get("away") or ""),
+        str(fixture.get("home_name") or ""),
+        str(fixture.get("away_name") or ""),
+    }
+
+
+def match_impact_payload(state: LiveState, bootstrap: dict, fixture_id: int) -> dict[str, Any] | None:
+    fixtures = fixture_payload(state, bootstrap)
+    fixture = next((f for f in fixtures if nint(f.get("id")) == int(fixture_id)), None)
+    if not fixture:
+        return None
+    clubs = _fixture_clubs(fixture)
+    picks = state.ownership.get("picks", pd.DataFrame())
+    players = [p for p in state.player_impacts if p.club in clubs and p.ownership_count]
+    players.sort(key=lambda p: (-p.event_points, -p.captain_count, -p.ownership_count, p.player))
+    totals: dict[int, dict[str, Any]] = defaultdict(lambda: {"entry": 0, "manager": "", "swing": 0.0})
+    relevant = []
+    for impact in players:
+        swings = manager_swing_for_player(state, impact.element)
+        owners = []
+        if picks is not None and not picks.empty:
+            block = picks[picks["element"].map(nint) == impact.element]
+            for r in block.to_dict("records"):
+                if nint(r.get("multiplier")) <= 0:
+                    continue
+                owners.append({
+                    "entry": nint(r.get("entry")),
+                    "manager": str(r.get("manager") or ""),
+                    "multiplier": nint(r.get("multiplier")),
+                    "is_captain": bool(r.get("is_captain")),
+                    "is_triple_captain": bool(r.get("is_triple_captain")),
+                })
+            owners.sort(key=lambda o: (-o["multiplier"], o["manager"]))
+        for row in swings:
+            bucket = totals[row["entry"]]
+            bucket["entry"] = row["entry"]
+            bucket["manager"] = row["manager"]
+            bucket["swing"] = round(bucket["swing"] + float(row["swing"]), 2)
+        relevant.append({
+            **player_impact_payload(impact),
+            "owners": owners,
+            "differential": impact.ownership_pct <= 12 and impact.event_points > 0,
+        })
+    ranked = sorted(totals.values(), key=lambda r: (-r["swing"], r["manager"]))
+    winners = [r for r in ranked if r["swing"] > 0.05][:8]
+    losers = [r for r in reversed(ranked) if r["swing"] < -0.05][:8]
+    biggest_winner = winners[0] if winners else None
+    biggest_loser = losers[0] if losers else None
+    owner_entries = {o["entry"] for p in relevant for o in p.get("owners") or []}
+    captain_count = sum(1 for p in relevant for o in p.get("owners") or [] if o.get("is_captain"))
+    return {
+        "fixture": fixture,
+        "players": relevant,
+        "winners": winners,
+        "losers": losers,
+        "biggest_winner": biggest_winner,
+        "biggest_loser": biggest_loser,
+        "owners": len(owner_entries),
+        "captains": captain_count,
+        "provisional": not state.is_finished,
+        "is_live": state.is_live,
+        "event_id": state.event_id,
+    }
 
 
 def story_payload(story, state: LiveState | None = None) -> dict[str, Any]:
