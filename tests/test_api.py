@@ -25,8 +25,8 @@ class FakeClient:
     def bootstrap(self):
         return BOOTSTRAP
 
-    def fixtures(self, event_id):
-        return [{"id": 1, "event": event_id, "team_h": 1, "team_a": 2, "started": True, "finished": False, "team_h_score": 1, "team_a_score": 0}]
+    def fixtures(self, event_id=None):
+        return [{"id": 1, "event": event_id or 3, "team_h": 1, "team_a": 2, "started": True, "finished": False, "team_h_score": 1, "team_a_score": 0}]
 
     def event_live(self, event_id):
         return {

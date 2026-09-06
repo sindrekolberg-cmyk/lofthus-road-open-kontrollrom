@@ -32,6 +32,7 @@ from api.serialize import (
     talkers_payload,
 )
 from lro_analysis import nint
+from lro_transfer_strategy import build_transfer_strategy
 from lro_league import manager_name
 from lro_membership import load_membership, membership_for
 from lro_rival import auto_rivals, compare_managers
@@ -450,6 +451,44 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
         if not s.state:
             return {"players": []}
         return {"players": analysis_from_state(s.state)["differentials"]}
+
+    @app.get("/api/analysis/transfers")
+    def analysis_transfers(
+        entry_id: int = Query(...),
+        strategy: str = Query("balanced"),
+        risk: int = Query(50),
+        horizon: int = Query(3),
+        target: str = Query(""),
+        rival_id: int = Query(0),
+        position: str = Query("all"),
+    ) -> dict[str, Any]:
+        s = snap()
+        if not s.state:
+            raise HTTPException(status_code=503, detail="Live-data er ikke klare ennå.")
+        eng = engine_dep()
+        fixtures: list[dict[str, Any]] = []
+        try:
+            fixtures = list(eng.client.fixtures() or [])
+        except Exception:
+            fixtures = []
+        if not fixtures:
+            fixtures = list(s.state.fixtures or [])
+        body = build_transfer_strategy(
+            state=s.state,
+            bootstrap=s.bootstrap,
+            fixtures=fixtures,
+            entry_id=entry_id,
+            strategy=strategy,
+            risk=risk,
+            horizon=horizon,
+            target=target,
+            rival_id=rival_id,
+            position=position,
+        )
+        if not body.get("ok"):
+            raise HTTPException(status_code=404, detail=body.get("error") or "Manageren finnes ikke i ligaen.")
+        body["status"] = status_from(s)
+        return body
 
     @app.get("/api/home")
     def home() -> dict[str, Any]:
