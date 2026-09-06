@@ -156,6 +156,52 @@ class StatusModelTests(unittest.TestCase):
         ordered = ordered_pulse_fixtures([stale, UPCOMING, LIVE], now=NOW)
         self.assertEqual([f["id"] for f in ordered], [103, 102])
 
+    def test_todays_finished_fixture_may_remain(self):
+        today_done = {
+            "id": 201,
+            "kickoff_time": TODAY_KO,
+            "started": True,
+            "finished": True,
+            "minutes": 90,
+            "team_h": 3,
+            "team_a": 4,
+        }
+        ordered = ordered_pulse_fixtures([YESTERDAY, today_done], now=NOW)
+        ids = [f["id"] for f in ordered]
+        self.assertEqual(ids, [201])
+        self.assertEqual(inferred_fixture_status(today_done, now=NOW), "finished")
+        self.assertEqual(fixture_status_label("finished"), "Ferdig")
+
+    def test_next_upcoming_when_today_is_empty(self):
+        later = {
+            "id": 202,
+            "kickoff_time": (NOW + timedelta(days=3)).strftime("%Y-%m-%dT16:30:00Z"),
+            "started": False,
+            "finished": False,
+            "minutes": 0,
+            "team_h": 3,
+            "team_a": 4,
+        }
+        ordered = ordered_pulse_fixtures([YESTERDAY, later], now=NOW)
+        self.assertEqual([f["id"] for f in ordered], [202])
+
+    def test_later_upcoming_hidden_while_live_exists(self):
+        later = {
+            "id": 202,
+            "kickoff_time": (NOW + timedelta(days=3)).strftime("%Y-%m-%dT16:30:00Z"),
+            "started": False,
+            "finished": False,
+            "minutes": 0,
+            "team_h": 3,
+            "team_a": 4,
+        }
+        ordered = ordered_pulse_fixtures([LIVE, later], now=NOW)
+        self.assertEqual([f["id"] for f in ordered], [103])
+
+    def test_upcoming_today_visible_without_live(self):
+        ordered = ordered_pulse_fixtures([YESTERDAY, UPCOMING], now=NOW)
+        self.assertEqual([f["id"] for f in ordered], [102])
+
     def test_live_fixture_appears(self):
         ordered = ordered_pulse_fixtures([LIVE], now=NOW)
         self.assertEqual(ordered[0]["id"], 103)

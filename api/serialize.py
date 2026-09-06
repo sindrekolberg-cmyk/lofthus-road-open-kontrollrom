@@ -666,10 +666,14 @@ def live_events_payload(state: LiveState, bootstrap: dict, now: datetime | None 
         related = [player_impact_payload(p) for p in related_impacts[:2]]
         lead = related_impacts[0] if related_impacts else None
         kind = _player_event_kind(state, lead.element) if lead else ""
+        status = str(f.get("status") or "")
         headline = ""
         winner = loser = None
-        if is_fixture_live(str(f.get("status") or "")) and lead:
-            headline = f"{lead.player} {kind}".strip() if kind else f"{lead.player}: +{lead.event_points}"
+        if lead and status != "not_started":
+            if is_fixture_live(status):
+                headline = f"{lead.player} {kind}".strip() if kind else f"{lead.player}: +{lead.event_points}"
+            else:
+                headline = f"{lead.player}" + (f" {lead.event_points} p" if lead.event_points else "")
             swings = manager_swing_for_player(state, lead.element)
             gainers = [r for r in swings if r["swing"] > 0.05]
             losers = [r for r in swings if r["swing"] < -0.05]
@@ -717,14 +721,14 @@ def match_impact_payload(state: LiveState, bootstrap: dict, fixture_id: int) -> 
         if picks is not None and not picks.empty:
             block = picks[picks["element"].map(nint) == impact.element]
             for r in block.to_dict("records"):
-                if nint(r.get("multiplier")) <= 0:
-                    continue
                 owners.append({
                     "entry": nint(r.get("entry")),
                     "manager": str(r.get("manager") or ""),
+                    "team": str(r.get("team") or ""),
                     "multiplier": nint(r.get("multiplier")),
                     "is_captain": bool(r.get("is_captain")),
                     "is_triple_captain": bool(r.get("is_triple_captain")),
+                    "on_bench": bool(r.get("on_bench")) or nint(r.get("multiplier")) == 0,
                 })
             owners.sort(key=lambda o: (-o["multiplier"], o["manager"]))
         for row in swings:
@@ -744,6 +748,8 @@ def match_impact_payload(state: LiveState, bootstrap: dict, fixture_id: int) -> 
     biggest_loser = losers[0] if losers else None
     owner_entries = {o["entry"] for p in relevant for o in p.get("owners") or []}
     captain_count = sum(1 for p in relevant for o in p.get("owners") or [] if o.get("is_captain"))
+    tc_count = sum(1 for p in relevant for o in p.get("owners") or [] if o.get("is_triple_captain"))
+    fixture_live = is_fixture_live(str(fixture.get("status") or ""))
     return {
         "fixture": fixture,
         "players": relevant,
@@ -753,8 +759,9 @@ def match_impact_payload(state: LiveState, bootstrap: dict, fixture_id: int) -> 
         "biggest_loser": biggest_loser,
         "owners": len(owner_entries),
         "captains": captain_count,
+        "triple_captains": tc_count,
         "provisional": not state.is_finished,
-        "is_live": state.is_live,
+        "is_live": fixture_live,
         "event_id": state.event_id,
     }
 

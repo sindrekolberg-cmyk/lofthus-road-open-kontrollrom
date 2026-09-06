@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from lro_live import _parse_kickoff, inferred_fixture_status
+
+DISPLAY_TZ = ZoneInfo("Europe/Oslo")
 
 
 FIXTURE_LIVE = "live"
@@ -69,53 +72,78 @@ def homepage_hero_story(stories: list[Any], event_id: int) -> Any | None:
     return None
 
 
-def _kickoff_date(raw: dict[str, Any] | None) -> Any:
+def _local_date(value: datetime | None) -> Any:
+    if not value:
+        return None
+    return value.astimezone(DISPLAY_TZ).date()
+
+
+def _kickoff_dt(raw: dict[str, Any] | None):
     if not raw:
         return None
-    kickoff = _parse_kickoff(raw.get("kickoff_time") or raw.get("kickoff"))
-    if not kickoff:
-        return None
-    return kickoff.astimezone(timezone.utc).date()
+    return _parse_kickoff(raw.get("kickoff_time") or raw.get("kickoff"))
+
+
+def _kickoff_date(raw: dict[str, Any] | None) -> Any:
+    return _local_date(_kickoff_dt(raw))
 
 
 def keep_in_pulse_strip(raw: dict[str, Any], now: datetime | None = None) -> bool:
-    now = now or datetime.now(timezone.utc)
-    today = now.astimezone(timezone.utc).date()
-    kickoff_day = _kickoff_date(raw)
-    if kickoff_day and kickoff_day < today:
-        return False
-    status = fixture_status(raw, now)
-    if is_fixture_live(status) or is_fixture_upcoming(status):
-        return True
-    if is_fixture_finished(status):
-        return kickoff_day == today
-    return False
+    """True if this fixture can appear in the current-match pulse (not the GW archive)."""
+    return raw in ordered_pulse_fixtures([raw] if raw else [], now=now)
 
 
 def ordered_pulse_fixtures(raw_fixtures: list[dict[str, Any]], now: datetime | None = None) -> list[dict[str, Any]]:
+    """Homepage/header pulse: live today, then upcoming today, then today's finished, else next matchday.
+
+    Ordinary finished fixtures from a previous local calendar day (Europe/Oslo) are excluded.
+    Fixture status stays canonical: a visible finished match is still Ferdig.
+    """
     now = now or datetime.now(timezone.utc)
-    kept = [f for f in raw_fixtures or [] if keep_in_pulse_strip(f, now)]
-    kept.sort(
-        key=lambda f: (
-            _STRIP_RANK.get(fixture_status(f, now), 9),
-            str(f.get("kickoff_time") or f.get("kickoff") or ""),
-        )
-    )
-    return kept
+    today = _local_date(now)
+    rows: list[tuple[dict[str, Any], str, Any, Any]] = []
+    for raw in raw_fixtures or []:
+        status = fixture_status(raw, now)
+        kickoff = _kickoff_dt(raw)
+        day = _local_date(kickoff)
+        rows.append((raw, status, day, kickoff))
+
+    live = [r for r in rows if is_fixture_live(r[1])]
+    today_up = [r for r in rows if is_fixture_upcoming(r[1]) and r[2] == today]
+    today_fin = [r for r in rows if is_fixture_finished(r[1]) and r[2] == today]
+    later_up = [r for r in rows if is_fixture_upcoming(r[1]) and r[2] is not None and r[2] > today]
+    later_up_undated = [r for r in rows if is_fixture_upcoming(r[1]) and r[2] is None]
+
+    def kick_stamp(row: tuple[dict[str, Any], str, Any, Any]) -> str:
+        kickoff = row[3]
+        if kickoff:
+            return kickoff.isoformat()
+        return str(row[0].get("kickoff_time") or row[0].get("kickoff") or "")
+
+    if live:
+        picked = live + today_up
+        picked.sort(key=lambda r: (_STRIP_RANK.get(r[1], 9), kick_stamp(r)))
+    elif today_up:
+        picked = sorted(today_up, key=kick_stamp)
+    elif today_fin:
+        picked = sorted(today_fin, key=lambda r: r[3] or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+    else:
+        picked = sorted(later_up or later_up_undated, key=kick_stamp)[:6]
+    return [r[0] for r in picked]
 
 
 def talker_tier(player_fixture_status: str, kickoff: datetime | None, now: datetime | None = None) -> int | None:
     """Current relevance: playing, then upcoming, then today's finished haul. Yesterday is out."""
     now = now or datetime.now(timezone.utc)
-    today = now.astimezone(timezone.utc).date()
-    if kickoff and kickoff.astimezone(timezone.utc).date() < today:
+    today = _local_date(now)
+    if kickoff and _local_date(kickoff) and _local_date(kickoff) < today:
         return None
     if is_player_playing(player_fixture_status):
         return 3
     if is_player_upcoming(player_fixture_status):
         return 2
     if is_player_finished(player_fixture_status):
-        if kickoff and kickoff.astimezone(timezone.utc).date() == now.astimezone(timezone.utc).date():
+        if kickoff and _local_date(kickoff) == today:
             return 1
         return None
     return None
