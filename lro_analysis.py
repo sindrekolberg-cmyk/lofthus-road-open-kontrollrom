@@ -297,6 +297,110 @@ def refresh_ownership_live(ownership: dict, live_payload: dict) -> dict:
     return out
 
 
+FORMATION_MIN = {1: 1, 2: 3, 3: 2, 4: 1}
+
+
+def _valid_xi(rows: list[dict]) -> bool:
+    counts = {1: 0, 2: 0, 3: 0, 4: 0}
+    xi = [r for r in rows if not bool(r.get("on_bench"))]
+    if len(xi) != 11:
+        return False
+    for r in xi:
+        pos = nint(r.get("position_id"))
+        if pos in counts:
+            counts[pos] += 1
+    return all(counts[p] >= FORMATION_MIN[p] for p in FORMATION_MIN)
+
+
+def apply_provisional_autosubs(ownership: dict, team_states: dict[int, str]) -> dict:
+    """Best-effort autosubs while FPL still has blank starters after a finished fixture.
+
+    Does not invent FPL events. Only promotes a bench player when the starter's
+    match is finished with 0 minutes, the bench player has minutes or is live,
+    and the formation stays legal. Bench Boost is left untouched.
+    """
+    if not ownership:
+        return ownership or {}
+    picks = ownership.get("picks", pd.DataFrame())
+    if picks is None or picks.empty:
+        return ownership
+    if "autosub_in" not in picks.columns:
+        picks = picks.copy()
+        picks["autosub_in"] = False
+        picks["replaced_player"] = ""
+    changed = False
+    blocks = []
+    for entry, block in picks.groupby("entry", sort=False):
+        rows = block.to_dict("records")
+        chip = str(rows[0].get("active_chip") or "") if rows else ""
+        if chip == "Bench Boost":
+            blocks.append(block)
+            continue
+        already = any(nint(r.get("multiplier")) > 0 and bool(r.get("on_bench")) for r in rows)
+        if already:
+            blocks.append(block)
+            continue
+        for r in rows:
+            r["autosub_in"] = bool(r.get("autosub_in"))
+            r["replaced_player"] = str(r.get("replaced_player") or "")
+        blanks = [
+            r for r in rows
+            if not bool(r.get("on_bench"))
+            and nint(r.get("live_minutes")) == 0
+            and team_states.get(nint(r.get("team_id")), "not_started") == "finished"
+        ]
+        bench = sorted(
+            [r for r in rows if bool(r.get("on_bench"))],
+            key=lambda r: nint(r.get("squad_position")),
+        )
+        for blank in blanks:
+            for sub in bench:
+                if nint(sub.get("live_minutes")) <= 0 and team_states.get(nint(sub.get("team_id")), "") != "live":
+                    continue
+                if bool(sub.get("autosub_in")):
+                    continue
+                trial = []
+                for r in rows:
+                    row = dict(r)
+                    if nint(row.get("element")) == nint(blank.get("element")):
+                        row["on_bench"] = True
+                        row["multiplier"] = 0
+                        row["gw_contribution"] = 0
+                    elif nint(row.get("element")) == nint(sub.get("element")):
+                        row["on_bench"] = False
+                        row["multiplier"] = max(1, nint(row.get("multiplier")))
+                        row["gw_contribution"] = nint(row.get("event_points")) * max(1, nint(row.get("multiplier")))
+                        row["autosub_in"] = True
+                        row["replaced_player"] = str(blank.get("player") or "")
+                    trial.append(row)
+                if _valid_xi(trial):
+                    rows = trial
+                    changed = True
+                    bench = [r for r in rows if bool(r.get("on_bench"))]
+                    break
+        blocks.append(pd.DataFrame(rows))
+    if not changed:
+        out = dict(ownership)
+        out["picks"] = picks
+        return out
+    new_picks = pd.concat(blocks, ignore_index=True)
+    out = dict(ownership)
+    out["picks"] = new_picks
+    live_by_entry = new_picks.groupby("entry", as_index=False)["gw_contribution"].sum().rename(columns={"gw_contribution": "live_gw_gross"})
+    manager_events = ownership.get("manager_events", pd.DataFrame())
+    if manager_events is None or manager_events.empty:
+        manager_events = live_by_entry.copy()
+        manager_events["event_transfers_cost"] = 0
+    else:
+        manager_events = manager_events.copy().drop(columns=[c for c in ["live_gw_gross", "live_gw_points"] if c in manager_events.columns])
+        manager_events = manager_events.merge(live_by_entry, on="entry", how="left")
+    manager_events["live_gw_gross"] = pd.to_numeric(manager_events.get("live_gw_gross", 0), errors="coerce").fillna(0).astype(int)
+    costs = pd.to_numeric(manager_events.get("event_transfers_cost", 0), errors="coerce").fillna(0).astype(int)
+    manager_events["live_gw_points"] = manager_events["live_gw_gross"] - costs
+    out["manager_events"] = manager_events
+    return out
+
+
 def manager_squad(ownership: dict, entry: int) -> pd.DataFrame:
     picks = ownership.get("picks", pd.DataFrame())
     if picks is None or picks.empty:

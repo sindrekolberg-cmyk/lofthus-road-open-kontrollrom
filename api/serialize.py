@@ -10,7 +10,7 @@ from lro_analysis import chip_label, manager_squad, nint
 from lro_fpl import season_label
 from lro_history import HistoryStore
 from lro_league import form_rows, player_status_map, profile_story
-from lro_live import LiveState, ManagerLiveState, PlayerImpact, manager_swing_for_player
+from lro_live import LiveState, ManagerLiveState, PlayerImpact, inferred_fixture_status, manager_swing_for_player
 from lro_rival import RivalDuel, RivalPlayerEdge
 
 
@@ -160,14 +160,8 @@ def fixture_payload(state: LiveState, bootstrap: dict) -> list[dict[str, Any]]:
     }
     out = []
     for f in state.fixtures or []:
-        started = bool(f.get("started"))
-        finished = bool(f.get("finished"))
-        if started and not finished:
-            status = "live"
-        elif finished:
-            status = "finished"
-        else:
-            status = "not_started"
+        status = inferred_fixture_status(f)
+        started = status != "not_started"
         hid = nint(f.get("team_h"))
         aid = nint(f.get("team_a"))
         out.append({
@@ -180,8 +174,8 @@ def fixture_payload(state: LiveState, bootstrap: dict) -> list[dict[str, Any]]:
             "away": teams.get(aid, {}).get("short") or str(aid),
             "home_name": teams.get(hid, {}).get("name") or "",
             "away_name": teams.get(aid, {}).get("name") or "",
-            "home_score": nint(f.get("team_h_score")) if started or finished else None,
-            "away_score": nint(f.get("team_a_score")) if started or finished else None,
+            "home_score": nint(f.get("team_h_score")) if started else None,
+            "away_score": nint(f.get("team_a_score")) if started else None,
         })
     return out
 
@@ -212,6 +206,8 @@ def squad_payload(state: LiveState, entry: int) -> dict[str, Any]:
             "fixture_status_label": fixture_status_label(status),
             "image_url": str(r.get("image_url") or ""),
             "minutes": nint(r.get("live_minutes")),
+            "autosub_in": bool(r.get("autosub_in")),
+            "replaced_player": str(r.get("replaced_player") or ""),
         })
     xi = [p for p in rows if not p["on_bench"]]
     bench = [p for p in rows if p["on_bench"]]

@@ -388,7 +388,7 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
         eng = engine_dep()
         st = status_from(s)
         states = eng.manager_states(s)
-        stories = [story_payload(item, s.state) for item in eng.news(limit=4, snap=s)]
+        stories = [story_payload(item, s.state) for item in eng.news(limit=8, snap=s)]
         seen: set[str] = set()
         unique_stories = []
         for row in stories:

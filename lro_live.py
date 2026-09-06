@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pandas as pd
 
-from lro_analysis import build_ownership, nfloat, nint, refresh_ownership_live
+from lro_analysis import apply_provisional_autosubs, build_ownership, nfloat, nint, refresh_ownership_live
 from lro_fpl import FPLClient, current_event_id, current_month_phase, player_catalog
 from lro_history import HistoryStore, normalize_text
 
@@ -121,9 +121,42 @@ def _event_meta(bootstrap: dict, event_id: int) -> dict:
     return next((dict(e) for e in bootstrap.get("events", []) or [] if nint(e.get("id")) == int(event_id)), {})
 
 
+def _parse_kickoff(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def inferred_fixture_status(f: dict, now: datetime | None = None) -> str:
+    """FPL often leaves started=True/finished=False after 90'. Don't call that live."""
+    if bool(f.get("finished")):
+        return "finished"
+    started = bool(f.get("started"))
+    minutes = nint(f.get("minutes"))
+    kickoff = _parse_kickoff(f.get("kickoff_time") or f.get("kickoff"))
+    now = now or datetime.now(timezone.utc)
+    window = timedelta(minutes=135)
+    if started:
+        if kickoff and now >= kickoff + window:
+            return "finished"
+        if minutes >= 90 and kickoff and now >= kickoff + timedelta(minutes=105):
+            return "finished"
+        return "live"
+    if kickoff and now >= kickoff + window:
+        return "finished"
+    return "not_started"
+
+
 def _event_status(meta: dict, fixtures: list[dict]) -> tuple[str, bool, bool]:
     finished = bool(meta.get("finished"))
-    active = any(bool(f.get("started")) and not bool(f.get("finished")) for f in fixtures)
+    active = any(inferred_fixture_status(f) == "live" for f in fixtures)
     if active:
         return "live", True, False
     if finished:
@@ -141,12 +174,7 @@ def _fixture_team_states(fixtures: list[dict]) -> dict[int, str]:
     """
     states: dict[int, list[str]] = {}
     for f in fixtures:
-        if bool(f.get("started")) and not bool(f.get("finished")):
-            status = "live"
-        elif bool(f.get("finished")):
-            status = "finished"
-        else:
-            status = "not_started"
+        status = inferred_fixture_status(f)
         for key in ("team_h", "team_a"):
             team = nint(f.get(key))
             if team:
@@ -287,10 +315,15 @@ def build_live_state(
     except Exception:
         ownership = ownership or {}
 
+    team_states = _fixture_team_states(fixtures)
+    try:
+        ownership = apply_provisional_autosubs(ownership, team_states)
+    except Exception:
+        pass
+
     catalog = player_catalog(bootstrap)
     pick_meta, pick_rows = _pick_meta(ownership, catalog)
     event_map = _manager_event_map(ownership)
-    team_states = _fixture_team_states(fixtures)
     phase, month_base = _month_base(client, int(league_id), bootstrap)
 
     live_gw: dict[int, int] = {}

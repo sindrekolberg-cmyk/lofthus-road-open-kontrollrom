@@ -162,37 +162,105 @@ def generate_candidates(
                 97, "live", 45, source_event=state.event_id, manager_entry=leader.entry,
             ))
 
-    # The player with the biggest real live effect. No unplayed zero can enter here.
-    if state.is_live:
-        live_impacts = [p for p in state.player_impacts if p.fixture_status == "live" and p.event_points != 0]
+    this_round = not state.is_finished
+
+    # The player with the biggest real live/this-round effect. No unplayed zero can enter here.
+    if this_round:
+        live_impacts = [
+            p for p in state.player_impacts
+            if p.fixture_status in {"live", "finished"} and p.event_points != 0
+        ]
         if live_impacts:
             p = live_impacts[0]
             if p.event_points >= 8 or p.captain_count or p.triple_captain_count:
                 imp = 94 if p.event_points >= 10 else 84
                 caps = p.captain_count
                 cap_text = f" · {caps} kaptein" if caps == 1 else f" · {caps} kapteiner" if caps else ""
+                verb = "herjer" if p.fixture_status == "live" else "leverte"
                 candidates.append(_story(
                     f"live-player-{state.event_id}-{p.element}", "live",
-                    f"{p.player} herjer: {p.event_points} poeng live",
-                    f"{p.ownership_count} eiere{cap_text}", imp, "live", 25,
+                    f"{p.player} {verb}: {p.event_points} poeng",
+                    f"{p.ownership_count} eiere{cap_text}", imp, "live" if p.fixture_status == "live" else "settled", 25,
                     source_event=state.event_id, player_element=p.element,
                 ))
 
-    # Extreme provisional movement is valid live, but the verb must stay provisional.
-    if state.is_live and state.manager_live:
+        diffs = [
+            p for p in live_impacts
+            if p.ownership_pct <= 15 and p.event_points >= 8
+        ]
+        if diffs:
+            p = diffs[0]
+            candidates.append(_story(
+                f"diff-{state.event_id}-{p.element}", "differential",
+                f"{p.player} er runden sin differensial: {p.event_points} poeng",
+                f"Bare {p.ownership_pct:.0f} % eierskap i Lofthus", 86, "live" if state.is_live else "settled", 40,
+                source_event=state.event_id, player_element=p.element,
+            ))
+
+    # Extreme provisional movement is valid while the round is open.
+    if this_round and state.manager_live:
         mover = max(state.manager_live, key=lambda m: abs(m.live_rank_change))
         magnitude = abs(mover.live_rank_change)
-        if magnitude >= 10:
+        if magnitude >= 8:
             direction = f"opp {magnitude}" if mover.live_rank_change > 0 else f"ned {magnitude}"
             candidates.append(_story(
                 f"live-move-{state.event_id}-{mover.entry}", "movement_live",
                 f"{mover.manager} er foreløpig {direction} plasser",
-                f"GW{state.event_id}: {mover.live_gw_points} poeng live", min(91, 72 + magnitude), "live", 35,
+                f"GW{state.event_id}: {mover.live_gw_points} poeng", min(91, 72 + magnitude), "live", 35,
                 source_event=state.event_id, manager_entry=mover.entry,
             ))
+        faller = min(state.manager_live, key=lambda m: m.live_rank_change)
+        if faller.entry != mover.entry and faller.live_rank_change <= -8:
+            candidates.append(_story(
+                f"live-fall-{state.event_id}-{faller.entry}", "movement_live",
+                f"{faller.manager} er foreløpig ned {abs(faller.live_rank_change)} plasser",
+                f"GW{state.event_id}: {faller.live_gw_points} poeng", min(88, 70 + abs(faller.live_rank_change)), "live", 35,
+                source_event=state.event_id, manager_entry=faller.entry,
+            ))
+
+    picks = state.ownership.get("picks", pd.DataFrame())
+    if this_round and picks is not None and not picks.empty:
+        if "is_captain" in picks.columns:
+            caps = picks[picks["is_captain"].astype(bool)]
+            worst = None
+            for row in caps.to_dict("records"):
+                impact = state.player(nint(row.get("element")))
+                if not impact or impact.fixture_status != "finished":
+                    continue
+                pts = nint(row.get("event_points"))
+                if pts > 2:
+                    continue
+                if worst is None or pts < nint(worst.get("event_points")):
+                    worst = row
+                    worst["_impact"] = impact
+            if worst is not None:
+                impact = worst["_impact"]
+                tc = bool(worst.get("is_triple_captain"))
+                label = "Triple Captain-smell" if tc else "Kapteinsmell"
+                candidates.append(_story(
+                    f"capfail-{state.event_id}-{nint(worst.get('entry'))}", "chip",
+                    f"{label} for {worst.get('manager')}",
+                    f"{impact.player} endte på {nint(worst.get('event_points'))} poeng",
+                    90 if tc else 82, "settled", 12 * 60,
+                    source_event=state.event_id, manager_entry=nint(worst.get("entry")),
+                    player_element=impact.element,
+                ))
+        if "autosub_in" in picks.columns:
+            subs = picks[picks["autosub_in"].astype(bool)]
+            if not subs.empty:
+                best = max(subs.to_dict("records"), key=lambda r: nint(r.get("gw_contribution")))
+                if nint(best.get("gw_contribution")) >= 4:
+                    replaced = str(best.get("replaced_player") or "benken")
+                    candidates.append(_story(
+                        f"autosub-{state.event_id}-{nint(best.get('entry'))}", "autosub",
+                        f"{best.get('player')} inn for {replaced}",
+                        f"{best.get('manager')} henter {nint(best.get('gw_contribution'))} poeng fra benken",
+                        80, "live" if state.is_live else "settled", 90,
+                        source_event=state.event_id, manager_entry=nint(best.get("entry")),
+                        player_element=nint(best.get("element")),
+                    ))
 
     # Triple Captain is only judged after the captain's fixture is finished.
-    picks = state.ownership.get("picks", pd.DataFrame())
     if picks is not None and not picks.empty and "is_triple_captain" in picks.columns:
         tc = picks[picks["is_triple_captain"].astype(bool)]
         for row in tc.to_dict("records"):
@@ -228,9 +296,9 @@ def generate_candidates(
             "live" if state.is_live else "settled", 180, manager_entry=leader.entry, source_event=state.event_id,
         ))
 
-    # Finished-round facts can remain on the front page until a stronger story arrives.
+    # Last round only belongs on the desk after the current event is actually finished.
     previous = completed_round_summary(managers, histories, _finished_event(bootstrap), history)
-    if previous:
+    if previous and state.is_finished:
         fall = previous.get("biggest_fall") or {}
         climb = previous.get("best_climber") or {}
         fall_mag = abs(nint(fall.get("move"))) if nint(fall.get("move")) < 0 else 0
@@ -298,6 +366,8 @@ def merge_persistent_stories(
         # stories can persist into the next page load as intended.
         if old.status == "live" and (not state.is_live or (old.source_event and old.source_event != state.event_id)):
             continue
+        if not state.is_finished and old.source_event and old.source_event != state.event_id:
+            continue
         current = pool.get(old.key)
         if current is None:
             pool[old.key] = old
@@ -309,7 +379,7 @@ def merge_persistent_stories(
     result: list[Story] = []
     seen_categories: set[str] = set()
     for story in ordered:
-        family = "movement" if story.category in {"movement", "movement_live"} else story.category
+        family = story.category
         if family in seen_categories:
             continue
         seen_categories.add(family)

@@ -255,6 +255,25 @@ class ApiTests(unittest.TestCase):
         missing = self.client.get("/api/live/matches/999")
         self.assertEqual(missing.status_code, 404)
 
+    def test_stale_kickoff_is_not_called_live(self):
+        from datetime import datetime, timezone
+        from lro_live import inferred_fixture_status
+        stale = {
+            "started": True,
+            "finished": False,
+            "minutes": 90,
+            "kickoff_time": "2026-09-05T14:00:00Z",
+        }
+        now = datetime(2026, 9, 6, 6, 0, tzinfo=timezone.utc)
+        self.assertEqual(inferred_fixture_status(stale, now=now), "finished")
+        live = {
+            "started": True,
+            "finished": False,
+            "minutes": 67,
+            "kickoff_time": "2026-09-06T05:00:00Z",
+        }
+        self.assertEqual(inferred_fixture_status(live, now=now), "live")
+
     def test_hall_records(self):
         r = self.client.get("/api/hall-of-fame")
         records = r.json().get("records") or {}
