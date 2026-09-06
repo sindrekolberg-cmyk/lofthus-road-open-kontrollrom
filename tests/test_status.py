@@ -146,6 +146,15 @@ class StatusModelTests(unittest.TestCase):
         self.assertTrue(is_player_upcoming("not_started"))
         self.assertTrue(is_player_playing("pause"))
 
+    def test_homepage_feed_drops_previous_round_ordinary_story(self):
+        from lro_newsroom import homepage_feed
+        old = {"key": "thomas", "category": "movement", "source_event": 2, "importance": 96, "headline": "falt 43 plasser forrige runde"}
+        now = {"key": "lokas", "category": "movement_live", "source_event": 3, "importance": 88, "headline": "opp 20 plasser"}
+        month = {"key": "month", "category": "month", "source_event": 3, "importance": 79, "headline": "leder september"}
+        weak = {"key": "own", "category": "ownership", "source_event": 3, "importance": 45, "headline": "eierskap"}
+        feed = homepage_feed([old, now, month, weak], 3, limit=5)
+        self.assertEqual([s["key"] for s in feed], ["lokas", "month"])
+
     def test_stale_story_cannot_become_homepage_live_lead(self):
         old = {"source_event": 2, "headline": "falt 43 plasser forrige runde", "key": "old"}
         live = {"source_event": 3, "headline": "Isak herjer", "key": "now"}

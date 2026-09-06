@@ -156,7 +156,11 @@ class V800CoreTests(unittest.TestCase):
         )
         merged = merge_persistent_stories([live], [old.to_dict()], state, limit=4)
         self.assertEqual(merged[0].key, "live-player-3-10")
-        self.assertTrue(any(s.key == "finished-move-2-99" for s in merged))
+        self.assertFalse(any(s.key == "finished-move-2-99" for s in merged))
+        from lro_newsroom import homepage_feed
+        feed = homepage_feed([s.to_dict() for s in merged] + [old.to_dict()], 3, limit=5)
+        self.assertEqual(feed[0]["key"], "live-player-3-10")
+        self.assertFalse(any(s["key"] == "finished-move-2-99" for s in feed))
 
     def test_rasmus_2024_25_third_place_fills_only_missing_field(self):
         p = Path(self.temp.name) / "overall_results.csv"

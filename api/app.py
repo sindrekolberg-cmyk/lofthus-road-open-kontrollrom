@@ -36,6 +36,7 @@ from lro_league import manager_name
 from lro_membership import load_membership, membership_for
 from lro_rival import auto_rivals, compare_managers
 from lro_status import homepage_hero_story
+from lro_newsroom import homepage_feed
 
 
 def _sse_frame(event: str, data: dict[str, Any]) -> str:
@@ -464,7 +465,8 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
                 continue
             seen.add(key)
             unique_stories.append(row)
-        hero_story = homepage_hero_story(unique_stories, st.get("event_id") or 0)
+        feed = homepage_feed(unique_stories, st.get("event_id") or 0, limit=5)
+        hero_story = homepage_hero_story(feed, st.get("event_id") or 0)
         hero_player = None
         if s.state and hero_story and nint(hero_story.get("player_element")):
             impact = s.state.player(nint(hero_story.get("player_element")))
@@ -496,7 +498,7 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
             "hero": {"story": hero_story, "player": hero_player},
             "top5": [manager_payload(m) for m in states[:5]],
             "movers": movers_payload(states),
-            "news": unique_stories,
+            "news": feed,
             "popular": popular,
             "month": {"name": s.state.month_name if s.state else "", "table": month_table},
             "events": events,

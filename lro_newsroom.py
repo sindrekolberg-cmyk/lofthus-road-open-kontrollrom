@@ -241,18 +241,16 @@ def generate_candidates(
 
     # Extreme provisional movement is valid while the round is open.
     if this_round and state.manager_live:
-        mover = max(state.manager_live, key=lambda m: abs(m.live_rank_change))
-        magnitude = abs(mover.live_rank_change)
-        if magnitude >= 8:
-            direction = f"opp {magnitude}" if mover.live_rank_change > 0 else f"ned {magnitude}"
-            candidates.append(_story(
-                f"live-move-{state.event_id}-{mover.entry}", "movement_live",
-                f"{mover.manager} er foreløpig {direction} plasser",
-                f"GW{state.event_id}: {mover.live_gw_points} poeng", min(91, 72 + magnitude), "live", 35,
-                source_event=state.event_id, manager_entry=mover.entry,
-            ))
+        climber = max(state.manager_live, key=lambda m: m.live_rank_change)
         faller = min(state.manager_live, key=lambda m: m.live_rank_change)
-        if faller.entry != mover.entry and faller.live_rank_change <= -8:
+        if climber.live_rank_change >= 8:
+            candidates.append(_story(
+                f"live-climb-{state.event_id}-{climber.entry}", "movement_live",
+                f"{climber.manager} er foreløpig opp {climber.live_rank_change} plasser",
+                f"GW{state.event_id}: {climber.live_gw_points} poeng", min(91, 72 + climber.live_rank_change), "live", 35,
+                source_event=state.event_id, manager_entry=climber.entry,
+            ))
+        if faller.entry != climber.entry and faller.live_rank_change <= -8:
             candidates.append(_story(
                 f"live-fall-{state.event_id}-{faller.entry}", "movement_live",
                 f"{faller.manager} er foreløpig ned {abs(faller.live_rank_change)} plasser",
@@ -285,6 +283,29 @@ def generate_candidates(
                     f"{impact.player} endte på {nint(worst.get('event_points'))} poeng",
                     90 if tc else 82, "settled", 12 * 60,
                     source_event=state.event_id, manager_entry=nint(worst.get("entry")),
+                    player_element=impact.element,
+                ))
+            best_cap = None
+            for row in caps.to_dict("records"):
+                impact = state.player(nint(row.get("element")))
+                if not impact or impact.fixture_status != "finished":
+                    continue
+                pts = nint(row.get("event_points"))
+                if pts < 12:
+                    continue
+                if best_cap is None or pts > nint(best_cap.get("event_points")):
+                    best_cap = row
+                    best_cap["_impact"] = impact
+            if best_cap is not None:
+                impact = best_cap["_impact"]
+                tc = bool(best_cap.get("is_triple_captain"))
+                label = "Triple Captain-fulltreffer" if tc else "Kapteinen leverte"
+                candidates.append(_story(
+                    f"caphit-{state.event_id}-{nint(best_cap.get('entry'))}", "chip",
+                    f"{label} for {best_cap.get('manager')}",
+                    f"{impact.player} endte på {nint(best_cap.get('event_points'))} poeng",
+                    88 if tc else 80, "settled", 12 * 60,
+                    source_event=state.event_id, manager_entry=nint(best_cap.get("entry")),
                     player_element=impact.element,
                 ))
         if "autosub_in" in picks.columns:
@@ -338,36 +359,27 @@ def generate_candidates(
             "live" if state.is_live else "settled", 180, manager_entry=leader.entry, source_event=state.event_id,
         ))
 
-    # Last round can sit in Snakkiser as a small item, never as the desk lead
-    # while the current gameweek is still the story.
+    # Previous-round ordinary movement stays out of the homepage while this GW is open.
     previous = completed_round_summary(managers, histories, _finished_event(bootstrap), history)
-    if previous:
+    if previous and state.is_finished and nint(previous.get("event")) == int(state.event_id):
         fall = previous.get("biggest_fall") or {}
         climb = previous.get("best_climber") or {}
         fall_mag = abs(nint(fall.get("move"))) if nint(fall.get("move")) < 0 else 0
         climb_mag = max(0, nint(climb.get("move")))
-        if max(fall_mag, climb_mag) >= 8:
+        if max(fall_mag, climb_mag) >= 12:
             if fall_mag >= climb_mag:
                 subject = fall
-                headline = f"{fall.get('manager')} falt {fall_mag} plasser forrige runde"
+                headline = f"{fall.get('manager')} falt {fall_mag} plasser"
                 magnitude = fall_mag
             else:
                 subject = climb
-                headline = f"{climb.get('manager')} klatret {climb_mag} plasser forrige runde"
+                headline = f"{climb.get('manager')} klatret {climb_mag} plasser"
                 magnitude = climb_mag
             candidates.append(_story(
                 f"finished-move-{previous.get('event')}-{nint(subject.get('entry'))}", "movement",
                 headline, f"GW{previous.get('event')}: {nint(subject.get('gw'))} poeng",
-                min(40, 28 + magnitude // 4), "settled", 36 * 60, source_event=nint(previous.get("event")),
-                manager_entry=nint(subject.get("entry")), freshness=22,
-            ))
-        winner = previous.get("gw_winner") or {}
-        if nint(winner.get("gw")):
-            candidates.append(_story(
-                f"round-winner-{previous.get('event')}-{nint(winner.get('entry'))}", "round",
-                f"{winner.get('manager')} var best forrige runde",
-                f"{nint(winner.get('gw'))} poeng i GW{previous.get('event')}", 36, "settled", 30 * 60,
-                source_event=nint(previous.get("event")), manager_entry=nint(winner.get("entry")), freshness=20,
+                min(78, 60 + magnitude // 2), "settled", 8 * 60, source_event=nint(previous.get("event")),
+                manager_entry=nint(subject.get("entry")), freshness=40,
             ))
 
     best: dict[str, Story] = {}
@@ -395,10 +407,7 @@ def merge_persistent_stories(
         # stories can persist into the next page load as intended.
         if old.status == "live" and (not state.is_live or (old.source_event and old.source_event != state.event_id)):
             continue
-        if old.source_event and old.source_event != state.event_id and old.category in {"movement", "round"}:
-            # Keep as archive copy, but never let it outrank this GW after decay.
-            pass
-        elif not state.is_finished and old.source_event and old.source_event != state.event_id:
+        if old.source_event and old.source_event != state.event_id:
             continue
         current = pool.get(old.key)
         if current is None:
@@ -407,15 +416,42 @@ def merge_persistent_stories(
             pool[old.key] = old
 
     ordered = sorted(pool.values(), key=lambda s: desk_score(s, state.event_id), reverse=True)
-    # Avoid four versions of the same kind of story. One category slot is enough.
     result: list[Story] = []
-    seen_categories: set[str] = set()
+    seen_once: set[str] = set()
     for story in ordered:
         family = story.category
-        if family in seen_categories:
-            continue
-        seen_categories.add(family)
+        if family in {"leader", "month", "round", "movement"}:
+            if family in seen_once:
+                continue
+            seen_once.add(family)
         result.append(story)
         if len(result) >= max(1, int(limit)):
             break
     return result
+
+
+_HOMEPAGE_MAJOR = {"live", "leader", "movement_live", "chip", "differential", "autosub", "month"}
+
+
+def homepage_feed(stories: list[Any], event_id: int, limit: int = 5) -> list[Any]:
+    """Homepage Snakkiser: current, strong stories only. Never pad with leftovers."""
+    out: list[Any] = []
+    for story in stories:
+        if isinstance(story, dict):
+            category = str(story.get("category") or "")
+            source = int(story.get("source_event") or 0)
+            importance = int(story.get("importance") or 0)
+        else:
+            category = str(getattr(story, "category", "") or "")
+            source = int(getattr(story, "source_event", 0) or 0)
+            importance = int(getattr(story, "importance", 0) or 0)
+        if not story_is_current_gw(source, event_id) and category != "month":
+            continue
+        if category not in _HOMEPAGE_MAJOR:
+            continue
+        if importance < 72:
+            continue
+        out.append(story)
+        if len(out) >= max(1, int(limit)):
+            break
+    return out
