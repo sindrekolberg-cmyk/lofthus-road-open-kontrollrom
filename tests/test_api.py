@@ -222,9 +222,13 @@ class ApiTests(unittest.TestCase):
 
     def test_live_events_include_lofthus_consequence(self):
         home = self.client.get("/api/home").json()
-        events = home["events"]
+        events = home["pulse"]["fixtures"]
         self.assertTrue(events)
+        self.assertEqual(home["events"], [])
         lead = events[0]
+        self.assertIn("id", lead)
+        self.assertEqual(lead["id"], lead.get("fixture_id"))
+        self.assertIn("home", lead)
         self.assertIn("lofthus_headline", lead)
         self.assertEqual(lead["lofthus_winner"]["manager"], "C")
         self.assertEqual(lead["lofthus_loser"]["manager"], "A")
@@ -258,6 +262,35 @@ class ApiTests(unittest.TestCase):
         self.assertNotEqual(body["fixture"]["status_label"], "LIVE")
         missing = self.client.get("/api/live/matches/999")
         self.assertEqual(missing.status_code, 404)
+
+    def test_match_impact_resolves_fixture_outside_current_gw(self):
+        from api.serialize import match_impact_payload
+        extra = {
+            "id": 99,
+            "event": 4,
+            "team_h": 1,
+            "team_a": 2,
+            "kickoff_time": "2026-09-12T14:00:00Z",
+            "started": False,
+            "finished": False,
+            "minutes": 0,
+            "team_h_score": None,
+            "team_a_score": None,
+        }
+        snap = self.engine.snapshot()
+        body = match_impact_payload(
+            snap.state,
+            BOOTSTRAP,
+            99,
+            fixture_pool=list(snap.state.fixtures or []) + [extra],
+        )
+        self.assertIsNotNone(body)
+        self.assertEqual(body["fixture"]["id"], 99)
+        self.assertEqual(body["fixture"]["status_label"], "Ikke startet")
+        self.assertFalse(body["is_live"])
+        isak = next(p for p in body["players"] if p["player"] == "Isak")
+        self.assertEqual(isak["event_points"], 0)
+        self.assertTrue(any(o["is_captain"] for o in isak["owners"]))
 
     def test_stale_kickoff_is_not_called_live(self):
         from datetime import datetime, timezone

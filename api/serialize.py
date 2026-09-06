@@ -200,8 +200,10 @@ def fixture_payload(state: LiveState, bootstrap: dict, fixtures: list[dict] | No
         started = status != "not_started"
         hid = nint(f.get("team_h"))
         aid = nint(f.get("team_a"))
+        fixture_id = nint(f.get("id"))
         out.append({
-            "id": nint(f.get("id")),
+            "id": fixture_id,
+            "fixture_id": fixture_id,
             "kickoff": str(f.get("kickoff_time") or ""),
             "minutes": nint(f.get("minutes")),
             "status": status,
@@ -648,8 +650,14 @@ def movers_payload(rows: list[ManagerLiveState], limit: int = 3) -> dict[str, An
     }
 
 
-def live_events_payload(state: LiveState, bootstrap: dict, now: datetime | None = None) -> list[dict[str, Any]]:
-    fixtures = fixture_payload(state, bootstrap, fixtures=ordered_pulse_fixtures(state.fixtures or [], now=now), now=now)
+def live_events_payload(
+    state: LiveState,
+    bootstrap: dict,
+    now: datetime | None = None,
+    fixture_pool: list[dict] | None = None,
+) -> list[dict[str, Any]]:
+    raw = list(fixture_pool if fixture_pool is not None else state.fixtures or [])
+    fixtures = fixture_payload(state, bootstrap, fixtures=ordered_pulse_fixtures(raw, now=now), now=now)
     out = []
     for f in fixtures:
         clubs = {
@@ -704,19 +712,25 @@ def _fixture_clubs(fixture: dict[str, Any]) -> set[str]:
     }
 
 
-def match_impact_payload(state: LiveState, bootstrap: dict, fixture_id: int) -> dict[str, Any] | None:
-    fixtures = fixture_payload(state, bootstrap)
+def match_impact_payload(
+    state: LiveState,
+    bootstrap: dict,
+    fixture_id: int,
+    fixture_pool: list[dict] | None = None,
+) -> dict[str, Any] | None:
+    fixtures = fixture_payload(state, bootstrap, fixtures=fixture_pool if fixture_pool is not None else state.fixtures)
     fixture = next((f for f in fixtures if nint(f.get("id")) == int(fixture_id)), None)
     if not fixture:
         return None
     clubs = _fixture_clubs(fixture)
+    upcoming = str(fixture.get("status") or "") in {"not_started", "postponed"}
     picks = state.ownership.get("picks", pd.DataFrame())
     players = [p for p in state.player_impacts if p.club in clubs and p.ownership_count]
     players.sort(key=lambda p: (-p.event_points, -p.captain_count, -p.ownership_count, p.player))
     totals: dict[int, dict[str, Any]] = defaultdict(lambda: {"entry": 0, "manager": "", "swing": 0.0})
     relevant = []
     for impact in players:
-        swings = manager_swing_for_player(state, impact.element)
+        swings = [] if upcoming else manager_swing_for_player(state, impact.element)
         owners = []
         if picks is not None and not picks.empty:
             block = picks[picks["element"].map(nint) == impact.element]
@@ -736,10 +750,14 @@ def match_impact_payload(state: LiveState, bootstrap: dict, fixture_id: int) -> 
             bucket["entry"] = row["entry"]
             bucket["manager"] = row["manager"]
             bucket["swing"] = round(bucket["swing"] + float(row["swing"]), 2)
+        row = player_impact_payload(impact)
+        if upcoming:
+            row["fixture_status"] = str(fixture.get("status") or "not_started")
+            row["event_points"] = 0
         relevant.append({
-            **player_impact_payload(impact),
+            **row,
             "owners": owners,
-            "differential": impact.ownership_pct <= 12 and impact.event_points > 0,
+            "differential": False if upcoming else (impact.ownership_pct <= 12 and impact.event_points > 0),
         })
     ranked = sorted(totals.values(), key=lambda r: (-r["swing"], r["manager"]))
     winners = [r for r in ranked if r["swing"] > 0.05][:8]

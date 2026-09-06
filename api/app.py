@@ -116,6 +116,24 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
     def find_manager(s: RequestSnapshot, entry_id: int):
         return next((m for m in engine_dep().manager_states(s) if m.entry == int(entry_id)), None)
 
+    def raw_fixture_pool(s: RequestSnapshot) -> list[dict[str, Any]]:
+        extra: list[dict[str, Any]] = []
+        try:
+            extra = list(engine_dep().client.fixtures() or [])
+        except Exception:
+            extra = []
+        by_id: dict[int, dict[str, Any]] = {}
+        for row in list((s.state.fixtures if s.state else []) or []) + extra:
+            fid = nint(row.get("id"))
+            if fid:
+                by_id[fid] = row
+        return list(by_id.values())
+
+    def pulse_fixture_rows(s: RequestSnapshot) -> list[dict[str, Any]]:
+        if not s.state:
+            return []
+        return live_events_payload(s.state, s.bootstrap, fixture_pool=raw_fixture_pool(s))
+
     def live_dict(s: RequestSnapshot) -> dict[str, Any]:
         st = status_from(s)
         if not s.state:
@@ -131,7 +149,7 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
             "status": st,
             "table": [manager_payload(m) for m in s.state.managers_by_rank()],
             "gw_ranking": [manager_payload(m) for m in s.state.gw_ranking()],
-            "fixtures": live_events_payload(s.state, s.bootstrap),
+            "fixtures": pulse_fixture_rows(s),
             "player_impacts": [player_impact_payload(p) for p in s.state.player_impacts[:40]],
             "live_ready": True,
         }
@@ -212,9 +230,9 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
         s = snap()
         if not s.state:
             raise HTTPException(status_code=503, detail="Live-data er ikke klare ennå.")
-        body = match_impact_payload(s.state, s.bootstrap, fixture_id)
+        body = match_impact_payload(s.state, s.bootstrap, fixture_id, fixture_pool=raw_fixture_pool(s))
         if not body:
-            raise HTTPException(status_code=404, detail="Kampen finnes ikke i denne runden.")
+            raise HTTPException(status_code=404, detail="Kampen finnes ikke.")
         body["status"] = status_from(s)
         return body
 
@@ -532,7 +550,7 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
                 "players_remaining": live.players_remaining if live else 0,
             })
         options.sort(key=lambda r: r["manager"])
-        events = live_events_payload(s.state, s.bootstrap) if s.state else []
+        events = pulse_fixture_rows(s) if s.state else []
         return {
             "status": st,
             "hero": {"story": hero_story, "player": hero_player},
@@ -541,13 +559,13 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
             "news": feed,
             "popular": popular,
             "month": {"name": s.state.month_name if s.state else "", "table": month_table},
-            "events": events,
+            "events": [],
             "managers": options,
             "pulse": {
                 "gw": st.get("event_id") or 0,
                 "label": st.get("event_status_label") or "",
                 "is_live": bool(st.get("is_live")),
-                "fixtures": events[:6],
+                "fixtures": events,
             },
         }
 
