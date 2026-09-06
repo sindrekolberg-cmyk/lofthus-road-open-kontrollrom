@@ -110,6 +110,27 @@ class StatusModelTests(unittest.TestCase):
         self.assertEqual(status, "finished")
         self.assertNotIn("pågår", fixture_status_label(status).casefold())
 
+    def test_live_gw_does_not_make_finished_fixture_live(self):
+        stale = {
+            "started": True,
+            "finished": False,
+            "finished_provisional": True,
+            "minutes": 90,
+            "kickoff_time": YDAY,
+        }
+        self.assertEqual(inferred_fixture_status(stale, now=NOW), "finished")
+        self.assertEqual(fixture_status_label("finished"), "Ferdig")
+        self.assertEqual(fixture_status_label("live"), "Pågår")
+        self.assertEqual(fixture_status_label("not_started"), "Ikke startet")
+
+    def test_provisional_finish_is_ferdig(self):
+        raw = {"started": True, "finished": False, "finished_provisional": True, "minutes": 94, "kickoff_time": TODAY_KO}
+        self.assertEqual(inferred_fixture_status(raw, now=NOW), "finished")
+
+    def test_started_without_kickoff_cannot_stay_live_after_90(self):
+        raw = {"started": True, "finished": False, "minutes": 90}
+        self.assertEqual(inferred_fixture_status(raw, now=NOW), "finished")
+
     def test_yesterdays_finished_fixture_absent_from_header_pulse(self):
         ordered = ordered_pulse_fixtures([YESTERDAY, UPCOMING, LIVE], now=NOW)
         ids = [f["id"] for f in ordered]

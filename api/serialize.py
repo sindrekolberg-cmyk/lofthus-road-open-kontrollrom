@@ -65,6 +65,29 @@ def fixture_status_label(status: str) -> str:
     }.get(str(status or ""), str(status or "ukjent"))
 
 
+def owners_by_element(state: LiveState) -> dict[int, list[dict[str, Any]]]:
+    picks = state.ownership.get("picks", pd.DataFrame()) if state.ownership else None
+    out: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    if picks is None or not isinstance(picks, pd.DataFrame) or picks.empty:
+        return {}
+    by_entry = {m.entry: m for m in state.manager_live}
+    for row in picks.to_dict("records"):
+        element = nint(row.get("element"))
+        entry = nint(row.get("entry"))
+        manager = by_entry.get(entry)
+        out[element].append({
+            "entry": entry,
+            "manager": str((manager.manager if manager else row.get("manager")) or ""),
+            "team": str((manager.team if manager else row.get("team")) or ""),
+            "is_captain": bool(row.get("is_captain")),
+            "is_triple_captain": bool(row.get("is_triple_captain")),
+            "on_bench": bool(row.get("on_bench")) or nint(row.get("multiplier")) == 0,
+        })
+    for rows in out.values():
+        rows.sort(key=lambda item: (not item["is_captain"], not item["is_triple_captain"], str(item["manager"]).casefold()))
+    return dict(out)
+
+
 def event_status_label(status: str, is_live: bool, is_finished: bool) -> str:
     if is_live:
         return "pågår"
@@ -543,7 +566,18 @@ def pick_hero(state: LiveState | None) -> dict[str, Any] | None:
 
 
 def analysis_from_state(state: LiveState) -> dict[str, Any]:
-    players = [player_impact_payload(p) for p in state.player_impacts]
+    league_size = max(int(state.league_size or 0), nint((state.ownership or {}).get("league_size")), 1)
+    owners = owners_by_element(state)
+    players = []
+    for p in state.player_impacts:
+        row = player_impact_payload(p)
+        owned = owners.get(p.element) or []
+        count = len(owned) or nint(row.get("ownership_count"))
+        row["owners"] = owned
+        row["ownership_count"] = count
+        row["ownership_pct"] = round(count / league_size * 100, 1) if league_size else 0.0
+        row["league_size"] = league_size
+        players.append(row)
     captains = sorted(players, key=lambda p: (-p["captain_count"], -p["event_points"], p["player"]))
     ownership = sorted(players, key=lambda p: (-p["ownership_count"], -p["captain_count"], p["player"]))
     diffs = [
@@ -566,7 +600,8 @@ def analysis_from_state(state: LiveState) -> dict[str, Any]:
         chips.sort(key=lambda r: (r["chip"], r["manager"]))
     return {
         "captain": captains[:25],
-        "ownership": ownership[:40],
+        "ownership": ownership,
+        "league_size": league_size,
         "differentials": diffs[:25],
         "chips": chips,
     }

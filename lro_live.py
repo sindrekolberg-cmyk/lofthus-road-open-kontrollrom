@@ -135,8 +135,13 @@ def _parse_kickoff(value: Any) -> datetime | None:
 
 
 def inferred_fixture_status(f: dict, now: datetime | None = None) -> str:
-    """FPL often leaves started=True/finished=False after 90'. Don't call that live."""
-    if bool(f.get("finished")):
+    """Canonical fixture state. GW live does not make a finished match 'live'.
+
+    Trust FPL finished flags first. FPL often leaves started=True/finished=False
+    after 90'; a kickoff that has aged out of the match window is finished.
+    Never keep a started fixture live forever when kickoff is missing.
+    """
+    if bool(f.get("finished")) or bool(f.get("finished_provisional")):
         return "finished"
     started = bool(f.get("started"))
     minutes = nint(f.get("minutes"))
@@ -148,7 +153,7 @@ def inferred_fixture_status(f: dict, now: datetime | None = None) -> str:
     if started:
         if kickoff and now >= kickoff + window:
             return "finished"
-        if minutes >= 90 and kickoff and now >= kickoff + timedelta(minutes=105):
+        if minutes >= 90 and (not kickoff or now >= kickoff + timedelta(minutes=105)):
             return "finished"
         if minutes == 45:
             return "pause"

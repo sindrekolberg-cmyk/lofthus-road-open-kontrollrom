@@ -311,9 +311,23 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/archive").status_code, 200)
         self.assertEqual(self.client.get("/api/players/popular").status_code, 200)
         self.assertEqual(self.client.get("/api/analysis/captain").status_code, 200)
-        self.assertEqual(self.client.get("/api/analysis/ownership").status_code, 200)
         self.assertEqual(self.client.get("/api/analysis/chips").status_code, 200)
         self.assertEqual(self.client.get("/api/month").status_code, 200)
+
+    def test_ownership_is_league_membership_and_lists_owners(self):
+        body = self.client.get("/api/analysis/ownership").json()
+        self.assertEqual(body["league_size"], 3)
+        isak = next(p for p in body["players"] if p["player"] == "Isak")
+        haaland = next(p for p in body["players"] if p["player"] == "Haaland")
+        self.assertEqual(isak["ownership_count"], 2)
+        self.assertEqual(isak["ownership_pct"], 66.7)
+        self.assertEqual({o["manager"] for o in isak["owners"]}, {"B", "C"})
+        self.assertTrue(any(o["is_captain"] for o in isak["owners"]))
+        self.assertTrue(any(o["is_triple_captain"] for o in isak["owners"]))
+        self.assertEqual(haaland["ownership_count"], 1)
+        self.assertEqual(haaland["ownership_pct"], 33.3)
+        self.assertEqual([o["manager"] for o in haaland["owners"]], ["A"])
+        self.assertNotEqual(isak["fixture_status_label"], f"{isak['event_points']}{isak['fixture_status_label']}")
 
 
 if __name__ == "__main__":

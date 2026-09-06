@@ -177,6 +177,7 @@ def build_ownership(
         return {**_empty_ownership(event_id, len(entries), errors), "manager_events": manager_events}
 
     loaded = int(picks_df["entry"].nunique())
+    members = max(len(entries), 1)
     player_rows = []
     for element, block in picks_df.groupby("element", sort=False):
         first = block.iloc[0]
@@ -202,14 +203,14 @@ def build_ownership(
             "current_price": first.get("current_price"),
             "fpl_ownership_pct": nfloat(catalog.get(int(element), {}).get("selected_by_pct"), 0.0),
             "ownership_count": owner_count,
-            "ownership_pct": round(owner_count / loaded * 100, 1) if loaded else 0.0,
+            "ownership_pct": round(owner_count / members * 100, 1) if members else 0.0,
             "captain_count": captain_count,
-            "captain_pct": round(captain_count / loaded * 100, 1) if loaded else 0.0,
+            "captain_pct": round(captain_count / members * 100, 1) if members else 0.0,
             "triple_captain_count": tc_count,
             "bench_count": len(benched),
             "vice_count": int(block[block["is_vice_captain"]]["entry"].nunique()),
             "effective_ownership_count": eo_count,
-            "effective_ownership_pct": round(eo_count / loaded * 100, 1) if loaded else 0.0,
+            "effective_ownership_pct": round(eo_count / members * 100, 1) if members else 0.0,
             "event_points": nint(first.get("event_points")),
             "live_minutes": nint(first.get("live_minutes")),
             "season_points": nint(first.get("season_points")),
