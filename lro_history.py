@@ -73,6 +73,19 @@ def clean_cell(value: Any) -> str:
     return str(value).strip()
 
 
+def _join_tied_names(existing: str, name: str) -> str:
+    incoming = str(name or "").strip()
+    if not incoming:
+        return existing
+    current = str(existing or "").strip()
+    if not current:
+        return incoming
+    parts = [part.strip() for part in current.split(" / ") if part.strip()]
+    if incoming not in parts:
+        parts.append(incoming)
+    return " / ".join(parts)
+
+
 def hall_of_fame_sort_key(row: dict) -> tuple:
     """LRO Hall of Fame: league titles first, then Olympic medal logic."""
     def num(key: str) -> int:
@@ -241,7 +254,7 @@ class HistoryStore:
         df = df[df["place"].between(1, 3)].copy()
         df["manager"] = df["manager"].map(self.canonical)
         df["month_order"] = df["month"].map(MONTH_ORDER).fillna(99).astype(int)
-        return df.drop_duplicates(["season", "month", "place"], keep="last").sort_values(["season", "month_order", "place", "manager"]).reset_index(drop=True)
+        return df.drop_duplicates(["season", "month", "place", "manager"], keep="last").sort_values(["season", "month_order", "place", "manager"]).reset_index(drop=True)
 
     def monthly_medals(self, auto_rows: list[dict] | None = None, season: str | None = None) -> pd.DataFrame:
         df = self.monthly_podiums(auto_rows)
@@ -271,12 +284,13 @@ class HistoryStore:
             item = {"season": season_name, "month_order": order, "month": month, "winner": "", "runner_up": "", "third": ""}
             for r in block.to_dict("records"):
                 place = int(r["place"])
+                name = str(r.get("manager") or "").strip()
                 if place == 1:
-                    item["winner"] = r["manager"]
+                    item["winner"] = _join_tied_names(item["winner"], name)
                 elif place == 2:
-                    item["runner_up"] = r["manager"]
+                    item["runner_up"] = _join_tied_names(item["runner_up"], name)
                 elif place == 3:
-                    item["third"] = r["manager"]
+                    item["third"] = _join_tied_names(item["third"], name)
             rows.append(item)
         return pd.DataFrame(rows).sort_values(["season", "month_order"]).reset_index(drop=True)
 

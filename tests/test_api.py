@@ -319,6 +319,14 @@ class ApiTests(unittest.TestCase):
         records = r.json().get("records") or {}
         self.assertTrue(records.get("league_titles") or records.get("podiums"))
 
+    def test_monthly_calendar_keeps_joint_bronze(self):
+        r = self.client.get("/api/hall-of-fame")
+        monthly = r.json()["monthly"]
+        mars = next(row for row in monthly if row["season"] == "2020/21" and row["month"] == "Mars")
+        self.assertIn("Robin Andersen", mars["third"])
+        self.assertIn("Adrian Johansen", mars["third"])
+        self.assertNotIn("Robin Andersen", mars["runner_up"])
+
     def test_month_follows_current_event(self):
         from lro_fpl import current_month_phase
         august = {
