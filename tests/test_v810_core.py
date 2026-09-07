@@ -148,7 +148,8 @@ class V810CoreTests(unittest.TestCase):
     def test_player_catalog_exposes_premier_league_image_url(self):
         catalog = player_catalog(BOOTSTRAP)
         self.assertEqual(catalog[10]["code"], 123456)
-        self.assertTrue(catalog[10]["image_url"].endswith("/p123456.png"))
+        self.assertIn("/premierleague25/photos/players/500x500/", catalog[10]["image_url"])
+        self.assertTrue(catalog[10]["image_url"].endswith("/123456.png"))
 
     def test_routes_roundtrip_manager_and_backlink_shape(self):
         route = parse_route({"page": "Manager", "manager": "42", "me": "7"})

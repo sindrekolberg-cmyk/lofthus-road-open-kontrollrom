@@ -222,6 +222,7 @@ def fixture_payload(state: LiveState, bootstrap: dict, fixtures: list[dict] | No
         out.append({
             "id": fixture_id,
             "fixture_id": fixture_id,
+            "event": nint(f.get("event")),
             "kickoff": str(f.get("kickoff_time") or ""),
             "minutes": nint(f.get("minutes")),
             "status": status,
@@ -829,6 +830,10 @@ def talkers_payload(state: LiveState, bootstrap: dict, limit: int = 5, now: date
         fx = by_club.get(p.club)
         kickoff = _parse_kickoff((fx or {}).get("kickoff"))
         tier = talker_tier(p.fixture_status, kickoff, now)
+        if tier is None:
+            fx_event = nint((fx or {}).get("event"))
+            if fx_event == int(state.event_id) and p.ownership_count and (p.event_points >= 5 or p.captain_count):
+                tier = 0
         if tier is None:
             continue
         if tier == 3:
