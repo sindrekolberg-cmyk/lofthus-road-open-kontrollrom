@@ -54,7 +54,13 @@ def fallback_manager_states(managers: list[dict]) -> list[ManagerLiveState]:
 
 
 def effective_states(managers: list[dict], state: LiveState | None) -> list[ManagerLiveState]:
-    return state.manager_live if state and state.manager_live else fallback_manager_states(managers)
+    """Canonical league ordering for every consumer, including homepage snippets.
+
+    A raw LiveState keeps manager rows in build order. Returning that list directly
+    meant a sliced homepage top five could disagree with the full league table.
+    Always expose the same live-rank ordering everywhere.
+    """
+    return state.managers_by_rank() if state and state.manager_live else fallback_manager_states(managers)
 
 
 def form_rows(managers: list[dict], histories: dict[int, dict] | None, entry: int, state: LiveState | None, last_n: int = 5) -> list[dict[str, Any]]:
