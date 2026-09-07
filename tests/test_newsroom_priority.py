@@ -183,6 +183,96 @@ class NewsroomPriorityTests(unittest.TestCase):
         self.assertFalse(sum("kjører Free Hit" in h for h in headlines) >= 1)
 
 
+class TableAndMonthStoryTests(unittest.TestCase):
+    def test_big_live_climb_becomes_a_snakkis(self):
+        from lro_newsroom import _table_stories
+        state = _state([_mgr(entry=1, manager="Nils", previous_rank=20, live_rank=13, live_rank_change=7)], [], pd.DataFrame())
+        stories = _table_stories(state)
+        self.assertEqual(len(stories), 1)
+        self.assertEqual(stories[0].category, "table")
+        self.assertIn("klatrer kraftig", stories[0].headline)
+        self.assertIn("opp 7 plasser", stories[0].meta)
+
+    def test_taking_the_lead_is_the_bigger_story(self):
+        from lro_newsroom import _table_stories
+        state = _state([_mgr(entry=1, manager="Nils", previous_rank=8, live_rank=1, live_rank_change=7)], [], pd.DataFrame())
+        stories = _table_stories(state)
+        self.assertEqual(len(stories), 1)
+        self.assertIn("tar tabelltoppen", stories[0].headline)
+
+    def test_ordinary_rank_churn_is_not_a_snakkis(self):
+        from lro_newsroom import _table_stories
+        state = _state([_mgr(entry=1, previous_rank=6, live_rank=4, live_rank_change=2)], [], pd.DataFrame())
+        self.assertEqual(_table_stories(state), [])
+
+    def test_losing_the_lead_outranks_a_climb(self):
+        from lro_newsroom import _table_stories
+        state = _state(
+            [
+                _mgr(entry=1, manager="Ola", previous_rank=1, live_rank=4, live_rank_change=-3),
+                _mgr(entry=2, manager="Nils", previous_rank=9, live_rank=2, live_rank_change=7),
+            ],
+            [], pd.DataFrame(),
+        )
+        stories = sorted(_table_stories(state), key=lambda s: desk_score(s, 3), reverse=True)
+        self.assertIn("mister tabelltoppen", stories[0].headline)
+
+    def test_captain_drama_still_outranks_table_movement(self):
+        cap = _story("capfail-3-1", "captain", "Kapteinssmell for Ola", "O'Reilly endte på 0 poeng", 82, "settled", 60, source_event=3)
+        table = _story("table-up-3-2", "table", "Nils klatrer kraftig live", "Opp 7 plasser", 85, "live", 60, source_event=3)
+        self.assertGreater(desk_score(cap, 3), desk_score(table, 3))
+        self.assertEqual(homepage_feed([table, cap], 3, limit=4)[0].key, "capfail-3-1")
+
+    def test_month_race_ranks_below_differential(self):
+        month = _story("month-chase", "month", "Stian jager månedsseieren", "3 poeng bak", 80, "live", 60, source_event=3)
+        diff = _story("diff-3-9", "differential", "Mitchell er runden sin differensial: 15 poeng", "2 %", 86, "settled", 60, source_event=3)
+        feed = homepage_feed([month, diff], 3, limit=4)
+        self.assertEqual([s.key for s in feed], ["diff-3-9", "month-chase"])
+
+    def test_only_one_month_story_reaches_the_homepage(self):
+        lead = _story("month-lead", "month", "Andreas leder september", "88 poeng", 79, "live", 60, source_event=3)
+        chase = _story("month-chase", "month", "Stian jager månedsseieren", "3 poeng bak", 80, "live", 60, source_event=3)
+        feed = homepage_feed([lead, chase], 3, limit=4)
+        self.assertEqual([s.key for s in feed], ["month-chase"])
+
+    def test_thin_data_gives_fewer_stories_instead_of_filler(self):
+        weak = _story("own", "ownership", "Eierskap", "", 40, "settled", 60, source_event=3)
+        diff = _story("diff-3-9", "differential", "Mitchell 15 poeng", "2 %", 86, "settled", 60, source_event=3)
+        feed = homepage_feed([diff, weak], 3, limit=4)
+        self.assertEqual(len(feed), 1)
+
+    def test_hot_streak_needs_three_finished_rounds(self):
+        from lro_newsroom import _momentum_stories
+        state = _state([_mgr(entry=1, manager="Ola"), _mgr(entry=2, manager="Nils")], [], pd.DataFrame())
+        histories = {
+            1: {"current": [{"event": e, "points": 90} for e in (1, 2)]},
+            2: {"current": [{"event": e, "points": 40} for e in (1, 2)]},
+        }
+        self.assertEqual(_momentum_stories(state, histories), [])
+        histories[1]["current"].append({"event": 3, "points": 90})
+        histories[2]["current"].append({"event": 3, "points": 40})
+        state = _state([_mgr(entry=1, manager="Ola"), _mgr(entry=2, manager="Nils")], [], pd.DataFrame())
+        state.event_id = 4
+        stories = _momentum_stories(state, histories)
+        self.assertTrue(any("heit periode" in s.headline for s in stories))
+
+
+class CupHistoryTests(unittest.TestCase):
+    def test_robin_has_one_cup_gold_and_nickolai_won_2021_22(self):
+        from lro_config import LeagueConfig
+        config = LeagueConfig(
+            league_id=25220, name="Lofthus Road Open", season_fallback="2026/27",
+            data_dir=Path(__file__).resolve().parents[1] / "data",
+        )
+        store = HistoryStore(config.data_dir)
+        cup = store.cup_results()
+        by_season = {str(r.get("season")): str(r.get("winner")) for r in cup.to_dict("records")}
+        self.assertEqual(by_season.get("2021/22"), "Nickolai Macpherson")
+        self.assertEqual(sum(1 for w in by_season.values() if w == "Robin Andersen"), 1)
+        self.assertEqual(store.merits_for("Robin Andersen")["cup_gold"], 1)
+        self.assertEqual(store.merits_for("Nickolai Macpherson")["cup_gold"], 1)
+
+
 class CrestPayloadTests(unittest.TestCase):
     def test_hull_and_coventry_use_verified_pl_badge_codes(self):
         from api.serialize import fixture_payload

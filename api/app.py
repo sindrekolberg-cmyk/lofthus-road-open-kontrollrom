@@ -523,7 +523,7 @@ def create_app(engine: AppEngine | None = None) -> FastAPI:
                 continue
             seen.add(key)
             unique_stories.append(row)
-        feed = homepage_feed(unique_stories, st.get("event_id") or 0, limit=5)
+        feed = homepage_feed(unique_stories, st.get("event_id") or 0, limit=6)
         hero_story = homepage_hero_story(feed, st.get("event_id") or 0)
         hero_player = None
         if s.state and hero_story and nint(hero_story.get("player_element")):
