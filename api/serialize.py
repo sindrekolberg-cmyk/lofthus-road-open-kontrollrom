@@ -65,6 +65,12 @@ def fixture_status_label(status: str) -> str:
     }.get(str(status or ""), str(status or "ukjent"))
 
 
+def _club_badge_url(code: int) -> str:
+    if not code:
+        return ""
+    return f"https://resources.premierleague.com/premierleague/badges/70/t{int(code)}.png"
+
+
 def owners_by_element(state: LiveState) -> dict[int, list[dict[str, Any]]]:
     picks = state.ownership.get("picks", pd.DataFrame()) if state.ownership else None
     out: dict[int, list[dict[str, Any]]] = defaultdict(list)
@@ -200,6 +206,7 @@ def fixture_payload(state: LiveState, bootstrap: dict, fixtures: list[dict] | No
         nint(t.get("id")): {
             "name": str(t.get("name") or ""),
             "short": str(t.get("short_name") or t.get("name") or ""),
+            "code": nint(t.get("code")),
         }
         for t in bootstrap.get("teams", []) or []
     }
@@ -210,6 +217,8 @@ def fixture_payload(state: LiveState, bootstrap: dict, fixtures: list[dict] | No
         hid = nint(f.get("team_h"))
         aid = nint(f.get("team_a"))
         fixture_id = nint(f.get("id"))
+        home = teams.get(hid, {})
+        away = teams.get(aid, {})
         out.append({
             "id": fixture_id,
             "fixture_id": fixture_id,
@@ -217,10 +226,14 @@ def fixture_payload(state: LiveState, bootstrap: dict, fixtures: list[dict] | No
             "minutes": nint(f.get("minutes")),
             "status": status,
             "status_label": fixture_status_label(status),
-            "home": teams.get(hid, {}).get("short") or str(hid),
-            "away": teams.get(aid, {}).get("short") or str(aid),
-            "home_name": teams.get(hid, {}).get("name") or "",
-            "away_name": teams.get(aid, {}).get("name") or "",
+            "home": home.get("short") or str(hid),
+            "away": away.get("short") or str(aid),
+            "home_name": home.get("name") or "",
+            "away_name": away.get("name") or "",
+            "home_code": nint(home.get("code")),
+            "away_code": nint(away.get("code")),
+            "home_badge": _club_badge_url(nint(home.get("code"))),
+            "away_badge": _club_badge_url(nint(away.get("code"))),
             "home_score": nint(f.get("team_h_score")) if started else None,
             "away_score": nint(f.get("team_a_score")) if started else None,
         })

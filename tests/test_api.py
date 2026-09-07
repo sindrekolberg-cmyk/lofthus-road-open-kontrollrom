@@ -52,7 +52,10 @@ class FakeClient:
 BOOTSTRAP = {
     "events": [{"id": 3, "is_current": True, "is_next": False, "finished": False, "deadline_time": "2026-09-05T11:00:00Z"}],
     "phases": [{"id": 2, "name": "September", "start_event": 3, "stop_event": 6}],
-    "teams": [{"id": 1, "name": "Newcastle", "short_name": "NEW"}, {"id": 2, "name": "City", "short_name": "MCI"}],
+    "teams": [
+        {"id": 1, "name": "Newcastle", "short_name": "NEW", "code": 4},
+        {"id": 2, "name": "City", "short_name": "MCI", "code": 43},
+    ],
     "elements": [
         {"id": 10, "code": 123456, "web_name": "Isak", "first_name": "Alexander", "second_name": "Isak", "team": 1, "element_type": 4, "now_cost": 100, "total_points": 20, "selected_by_percent": "30.0"},
         {"id": 20, "code": 789012, "web_name": "Haaland", "first_name": "Erling", "second_name": "Haaland", "team": 2, "element_type": 4, "now_cost": 145, "total_points": 20, "selected_by_percent": "60.0"},
@@ -193,6 +196,11 @@ class ApiTests(unittest.TestCase):
         self.assertIn(last["entry"], {1, 2, 3})
         keys = [s["key"] for s in body["news"]]
         self.assertEqual(len(keys), len(set(keys)))
+        fixtures = body.get("pulse", {}).get("fixtures") or []
+        if fixtures:
+            self.assertTrue(fixtures[0].get("home_badge") or fixtures[0].get("home"))
+            if fixtures[0].get("home") == "NEW":
+                self.assertIn("t4.png", fixtures[0].get("home_badge") or "")
 
     def test_min_lofthus_manager_outside_top5(self):
         r = self.client.get("/api/managers")
