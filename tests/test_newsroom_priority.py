@@ -273,6 +273,26 @@ class CupHistoryTests(unittest.TestCase):
         self.assertEqual(store.merits_for("Nickolai Macpherson")["cup_gold"], 1)
 
 
+class HallOfFameHierarchyTests(unittest.TestCase):
+    def test_cup_gold_outranks_any_number_of_monthly_wins(self):
+        from lro_history import hall_of_fame_sort_key
+        cup = {"display_name": "Cup", "league_gold": 1, "cup_gold": 1}
+        months = {"display_name": "Months", "league_gold": 1, "monthly_gold": 12}
+        self.assertLess(hall_of_fame_sort_key(cup), hall_of_fame_sort_key(months))
+
+    def test_league_silver_outranks_monthly_gold(self):
+        from lro_history import hall_of_fame_sort_key
+        silver = {"display_name": "Silver", "league_silver": 1}
+        months = {"display_name": "Months", "monthly_gold": 5}
+        self.assertLess(hall_of_fame_sort_key(silver), hall_of_fame_sort_key(months))
+
+    def test_name_breaks_a_fully_equal_record(self):
+        from lro_history import hall_of_fame_sort_key
+        first = {"display_name": "Anders Berg", "league_gold": 1}
+        second = {"display_name": "Øyvind Berg", "league_gold": 1}
+        self.assertLess(hall_of_fame_sort_key(first), hall_of_fame_sort_key(second))
+
+
 class CrestPayloadTests(unittest.TestCase):
     def test_hull_and_coventry_use_verified_pl_badge_codes(self):
         from api.serialize import fixture_payload

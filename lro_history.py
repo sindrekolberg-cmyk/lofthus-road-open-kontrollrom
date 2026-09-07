@@ -86,27 +86,28 @@ def _join_tied_names(existing: str, name: str) -> str:
     return " / ".join(parts)
 
 
+HALL_OF_FAME_HIERARCHY = (
+    "league_gold",
+    "cup_gold",
+    "league_silver",
+    "league_bronze",
+    "monthly_gold",
+    "cup_silver",
+    "monthly_silver",
+    "monthly_bronze",
+)
+
+
 def hall_of_fame_sort_key(row: dict) -> tuple:
-    """LRO Hall of Fame: league titles first, then Olympic medal logic."""
+    """LRO prestige hierarchy. The mobile app mirrors this order exactly."""
     def num(key: str) -> int:
         try:
             return int(float(row.get(key) or 0))
         except Exception:
             return 0
 
-    # A league championship is the supreme honour. Once managers have the same
-    # number of league titles, actual wins must beat second/third places. That
-    # means cup + monthly golds are considered before all silvers and bronzes.
-    league_gold = num("league_gold")
-    other_gold = num("cup_gold") + num("monthly_gold")
-    total_silver = num("league_silver") + num("cup_silver") + num("monthly_silver")
-    total_bronze = num("league_bronze") + num("monthly_bronze")
-
     return (
-        -league_gold,
-        -other_gold,
-        -total_silver,
-        -total_bronze,
+        *(-num(key) for key in HALL_OF_FAME_HIERARCHY),
         normalize_text(row.get("display_name") or ""),
     )
 
@@ -381,10 +382,6 @@ class HistoryStore:
             })
         if not rows:
             return pd.DataFrame()
-        # Hall of Fame hierarchy: season championships are the premier honour.
-        # Cup wins and monthly wins separate managers after league titles, followed
-        # by the remaining podium record. This avoids treating every "gold" as
-        # equal and ensures the most successful league champions rank highest.
         # One shared deterministic hierarchy for data and UI.
         ordered_rows = sorted(rows, key=hall_of_fame_sort_key)
         df = pd.DataFrame(ordered_rows).reset_index(drop=True)

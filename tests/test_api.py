@@ -181,6 +181,27 @@ class ApiTests(unittest.TestCase):
         rasmus = next(row for row in rows if row["manager"] == "Rasmus Grytvik-Skoglund")
         self.assertGreaterEqual(rasmus["league_bronze"], 1)
 
+    def test_hall_of_fame_cup_payload_credits_nickolai_for_2021_22(self):
+        body = self.client.get("/api/hall-of-fame").json()
+        cup = {row["season"]: row["winner"] for row in body["cup"]}
+        self.assertEqual(cup["2021/22"], "Nickolai Macpherson")
+        self.assertEqual(sum(1 for winner in cup.values() if winner == "Robin Andersen"), 1)
+        rows = {row["manager"]: row for row in body["rows"]}
+        self.assertEqual(rows["Robin Andersen"]["cup_gold"], 1)
+        self.assertEqual(rows["Nickolai Macpherson"]["cup_gold"], 1)
+
+    def test_hall_of_fame_rows_follow_the_prestige_hierarchy(self):
+        from lro_history import HALL_OF_FAME_HIERARCHY, hall_of_fame_sort_key
+        rows = self.client.get("/api/hall-of-fame").json()["rows"]
+        self.assertEqual(
+            HALL_OF_FAME_HIERARCHY,
+            ("league_gold", "cup_gold", "league_silver", "league_bronze",
+             "monthly_gold", "cup_silver", "monthly_silver", "monthly_bronze"),
+        )
+        keys = [hall_of_fame_sort_key({**row, "display_name": row["manager"]}) for row in rows]
+        self.assertEqual(keys, sorted(keys))
+        self.assertEqual([row["rank"] for row in rows], list(range(1, len(rows) + 1)))
+
     def test_unknown_manager_404(self):
         r = self.client.get("/api/managers/999999")
         self.assertEqual(r.status_code, 404)
