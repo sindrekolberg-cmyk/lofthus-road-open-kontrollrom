@@ -1,0 +1,55 @@
+---
+description: Permanent deploy rule for integration-v2 — commit, push, wait, verify public
+alwaysApply: true
+---
+
+# Lofthus permanent deploy
+
+Applies to every implementation task unless the user says `do not deploy`.
+
+Branch: `integration-v2` only. Never merge `main` automatically.
+
+## Definition of done
+
+Not finished if it only works locally.
+
+1. Preserve legitimate local work (no reset/discard of newer local commits).
+2. Run relevant tests.
+3. Run production build when frontend changed.
+4. Commit completed changes.
+5. `git push origin integration-v2`
+6. Wait for deployment.
+7. Verify the **public** version.
+
+## Frontend
+
+Repo: `sindrekolberg-cmyk/lofthus-web`
+
+Canonical preview (always report this, never unique `*-xxxxx-genetic1` URLs):
+
+https://lofthus-road-open-kontrollrom-uvvh-git-integration-v2-genetic1.vercel.app/
+
+Vercel auto-deploys `integration-v2`. Localhost is not final QA.
+
+## Backend
+
+Repo: `sindrekolberg-cmyk/lofthus-road-open-kontrollrom`
+
+Public API: https://lofthus-road-open-api.onrender.com
+
+Render auto-deploys `integration-v2`. Push ≠ deployed. Probe the public API (e.g. new fields / `round_kicker`) until the new commit is live.
+
+## Full-stack
+
+Backend test → push backend → frontend test/build → push frontend → wait Render → wait Vercel → test canonical frontend against public API.
+
+Do not declare success if the frontend expects an API Render has not deployed.
+
+## Failure
+
+If Vercel or Render fails: do not pretend done. Report what succeeded, what failed, latest commit, deploy status.
+
+## Report shape
+
+DONE / TESTS / DEPLOY (frontend SHA, backend SHA if relevant, Vercel, Render, canonical URL).
+The user should normally need to do nothing manually.
