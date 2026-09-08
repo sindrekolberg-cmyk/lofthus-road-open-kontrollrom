@@ -8,8 +8,12 @@ from fastapi import Header, HTTPException
 
 from api.app import app
 from api.push import PushStore, is_expo_push_token, send_expo_push
+from api.push_monitor import PushMonitor
 
 push_store = PushStore()
+push_monitor = PushMonitor(push_store)
+if os.getenv("LRO_PUSH_MONITOR", "1") == "1":
+    push_monitor.start()
 
 
 def _token_from(payload: dict[str, Any]) -> str:
@@ -26,6 +30,7 @@ def push_status() -> dict[str, Any]:
         "subscribers": push_store.count(),
         "storage": "local-json",
         "durable": False,
+        "monitor": push_monitor.status(),
     }
 
 
