@@ -49,3 +49,23 @@ def test_waiter_timeout_does_not_start_second_builder():
 
     assert calls == 1
     assert cache.diagnostics()["wait_timeouts"] == 1
+
+
+def test_equivalent_refresh_timestamps_share_analysis_cache_generation():
+    cache = SingleFlightTTLCache()
+    calls = 0
+
+    def build():
+        nonlocal calls
+        calls += 1
+        return {"build": calls}
+
+    first = (25220, "2026-09-08T15:00:00+00:00:63:4:17", "transfer", 123)
+    refreshed = (25220, "2026-09-08T15:00:08+00:00:63:4:17", "transfer", 123)
+    changed = (25220, "2026-09-08T15:00:09+00:00:63:4:18", "transfer", 123)
+
+    assert cache.get_or_build(first, build, 300)["build"] == 1
+    assert cache.get_or_build(refreshed, build, 300)["build"] == 1
+    assert cache.get_or_build(changed, build, 300)["build"] == 2
+    assert calls == 2
+    assert cache.diagnostics()["semantic_key_collapses"] >= 3
