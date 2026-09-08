@@ -5,6 +5,7 @@ from typing import Any
 
 from api.engine import AppEngine, get_engine
 from api.league_intelligence_v2 import build_league_intelligence_v2
+from api.league_journal import league_journal
 from lro_analysis import nint
 
 
@@ -58,9 +59,9 @@ def _reveal(state: Any, entry_id: int, target_entries: list[int]) -> dict[str, A
     target_size = max(1, len(targets))
 
     captain_counts = Counter(
-        str(row.captain or "").replace(" (C)", "").replace(" (TC)", "")
+        str(row.original_captain or row.captain or "").replace(" (C)", "").replace(" (TC)", "")
         for row in targets
-        if row.captain
+        if row.original_captain or row.captain
     )
     target_captains = [
         {"player": player, "count": count, "pct": round(100.0 * count / target_size, 1)}
@@ -72,17 +73,14 @@ def _reveal(state: Any, entry_id: int, target_entries: list[int]) -> dict[str, A
     own_active = {nint(row.get("element")) for row in own_rows if nint(row.get("multiplier")) > 0}
     own_all = {nint(row.get("element")) for row in own_rows if nint(row.get("element"))}
     target_active: Counter[int] = Counter()
-    target_all: Counter[int] = Counter()
     player_names: dict[int, str] = {}
     for row in picks:
         element = nint(row.get("element"))
         if not element:
             continue
         player_names[element] = str(row.get("player") or f"Spiller {element}")
-        if nint(row.get("entry")) in target_ids:
-            target_all[element] += 1
-            if nint(row.get("multiplier")) > 0:
-                target_active[element] += 1
+        if nint(row.get("entry")) in target_ids and nint(row.get("multiplier")) > 0:
+            target_active[element] += 1
 
     my_differentials = [
         {
@@ -127,7 +125,7 @@ def _reveal(state: Any, entry_id: int, target_entries: list[int]) -> dict[str, A
     clone_scores.sort(key=lambda row: (-row["shared_players"], row["manager"]))
 
     return {
-        "my_captain": me.captain,
+        "my_captain": me.original_captain or me.captain,
         "my_chip": me.active_chip or "",
         "my_hits": nint(me.transfer_hits),
         "target_size": len(targets),
@@ -136,7 +134,7 @@ def _reveal(state: Any, entry_id: int, target_entries: list[int]) -> dict[str, A
                 "entry": row.entry,
                 "manager": row.manager,
                 "rank": row.live_rank,
-                "captain": row.captain,
+                "captain": row.original_captain or row.captain,
                 "chip": row.active_chip or "",
                 "hits": nint(row.transfer_hits),
             }
@@ -173,8 +171,18 @@ def build_league_experience_v2(
     snap = eng.snapshot()
     if not snap.state:
         return body
+
     target_entries = list((body.get("battle") or {}).get("target_entries") or [])
-    body["phase"] = _phase(snap.state)
+    phase = _phase(snap.state)
+    body["phase"] = phase
     body["reveal"] = _reveal(snap.state, int(entry_id), target_entries)
     body["experience_version"] = "league-loop-v2"
+
+    # Keep a compact season memory. The reveal row is first-write-wins, so the
+    # first post-deadline view is preserved instead of being rewritten later.
+    if phase in {"reveal", "live"}:
+        league_journal.record(eng, snap.state, "reveal")
+    if phase == "verdict":
+        league_journal.record(eng, snap.state, "verdict")
+    body["journal"] = league_journal.diagnostics()
     return body
