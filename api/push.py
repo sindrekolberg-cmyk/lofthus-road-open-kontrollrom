@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -23,12 +24,7 @@ def is_expo_push_token(token: str) -> bool:
 
 
 class PushStore:
-    """Push subscription store with Postgres-first persistence.
-
-    `DATABASE_URL` turns persistence on. If Postgres is unavailable the service
-    deliberately falls back to the previous local JSON store so push endpoints
-    keep functioning instead of taking the whole API down.
-    """
+    """Push subscription store with Postgres-first persistence."""
 
     def __init__(self, path: str | None = None, database_url: str | None = None):
         self.path = Path(
@@ -40,6 +36,7 @@ class PushStore:
         self._lock = threading.Lock()
         self._db_init_lock = threading.Lock()
         self._db_initialized = False
+        self._db_retry_after = 0.0
         self.last_db_error = ""
 
     def _connect(self):
@@ -47,7 +44,7 @@ class PushStore:
             raise RuntimeError("DATABASE_URL er ikke satt.")
         try:
             import psycopg
-        except ImportError as exc:  # pragma: no cover - deployment guard
+        except ImportError as exc:  # pragma: no cover
             raise RuntimeError("psycopg er ikke installert.") from exc
         return psycopg.connect(self.database_url, connect_timeout=5)
 
@@ -56,9 +53,13 @@ class PushStore:
             return False
         if self._db_initialized:
             return True
+        if time.monotonic() < self._db_retry_after:
+            return False
         with self._db_init_lock:
             if self._db_initialized:
                 return True
+            if time.monotonic() < self._db_retry_after:
+                return False
             try:
                 with self._connect() as conn:
                     with conn.cursor() as cur:
@@ -78,10 +79,12 @@ class PushStore:
                         )
                     conn.commit()
                 self._db_initialized = True
+                self._db_retry_after = 0.0
                 self.last_db_error = ""
                 return True
-            except Exception as exc:  # pragma: no cover - network/database guard
+            except Exception as exc:  # pragma: no cover
                 self.last_db_error = str(exc)[:500]
+                self._db_retry_after = time.monotonic() + 30.0
                 return False
 
     @property
@@ -104,10 +107,7 @@ class PushStore:
     def _write_unlocked(self, rows: list[dict[str, Any]]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        tmp.write_text(
-            json.dumps(rows, ensure_ascii=False, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
+        tmp.write_text(json.dumps(rows, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
         tmp.replace(self.path)
 
     @staticmethod
@@ -147,7 +147,7 @@ class PushStore:
                             """
                         )
                         return [self._row_from_db(row) for row in cur.fetchall()]
-            except Exception as exc:  # pragma: no cover - database guard
+            except Exception as exc:  # pragma: no cover
                 self.last_db_error = str(exc)[:500]
         with self._lock:
             return self._read_unlocked()
@@ -252,24 +252,103 @@ class PushStore:
             return record
 
     def remove(self, token: str) -> bool:
-        token = str(token or "").strip()
+        return self.remove_many([token]) > 0
+
+    def remove_many(self, tokens: list[str]) -> int:
+        clean = sorted({str(token or "").strip() for token in tokens if str(token or "").strip()})
+        if not clean:
+            return 0
         if self._ensure_db():
             try:
                 with self._connect() as conn:
                     with conn.cursor() as cur:
-                        cur.execute("DELETE FROM push_subscriptions WHERE expo_push_token = %s", (token,))
-                        changed = cur.rowcount > 0
+                        cur.execute("DELETE FROM push_subscriptions WHERE expo_push_token = ANY(%s)", (clean,))
+                        changed = int(cur.rowcount or 0)
                     conn.commit()
                 return changed
             except Exception as exc:  # pragma: no cover
                 self.last_db_error = str(exc)[:500]
+        token_set = set(clean)
         with self._lock:
             rows = self._read_unlocked()
-            kept = [row for row in rows if row.get("expo_push_token") != token]
-            changed = len(kept) != len(rows)
+            kept = [row for row in rows if str(row.get("expo_push_token") or "") not in token_set]
+            changed = len(rows) - len(kept)
             if changed:
                 self._write_unlocked(kept)
             return changed
+
+
+def _expo_headers() -> dict[str, str]:
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    access_token = os.getenv("EXPO_ACCESS_TOKEN", "").strip()
+    if access_token:
+        headers["Authorization"] = f"Bearer {access_token}"
+    return headers
+
+
+def send_expo_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Send individualized Expo messages in API-sized batches.
+
+    Results are annotated with `_token` so callers can prune invalid devices.
+    """
+    clean: list[dict[str, Any]] = []
+    for source in messages:
+        token = str(source.get("to") or "").strip()
+        if not is_expo_push_token(token):
+            continue
+        clean.append(
+            {
+                "to": token,
+                "sound": source.get("sound") or "default",
+                "title": str(source.get("title") or "")[:100],
+                "body": str(source.get("body") or "")[:1000],
+                "data": source.get("data") if isinstance(source.get("data"), dict) else {},
+            }
+        )
+    if not clean:
+        return []
+
+    output: list[dict[str, Any]] = []
+    for offset in range(0, len(clean), 100):
+        chunk = clean[offset : offset + 100]
+        req = urllib.request.Request(
+            EXPO_PUSH_URL,
+            data=json.dumps(chunk).encode("utf-8"),
+            headers=_expo_headers(),
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"Expo Push svarte {exc.code}: {detail[:300]}") from exc
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"Kunne ikke nå Expo Push: {exc}") from exc
+
+        result_rows = payload.get("data") if isinstance(payload, dict) else payload
+        if not isinstance(result_rows, list):
+            result_rows = [payload] if isinstance(payload, dict) else []
+        for index, result in enumerate(result_rows):
+            if not isinstance(result, dict):
+                continue
+            row = dict(result)
+            if index < len(chunk):
+                row["_token"] = chunk[index]["to"]
+            output.append(row)
+    return output
+
+
+def dead_expo_tokens(results: list[dict[str, Any]]) -> list[str]:
+    dead: list[str] = []
+    for row in results:
+        details = row.get("details") if isinstance(row.get("details"), dict) else {}
+        error = str(details.get("error") or "")
+        if error == "DeviceNotRegistered":
+            token = str(row.get("_token") or "").strip()
+            if token:
+                dead.append(token)
+    return list(dict.fromkeys(dead))
 
 
 def send_expo_push(
@@ -280,54 +359,9 @@ def send_expo_push(
     data: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     clean = list(dict.fromkeys(token for token in tokens if is_expo_push_token(token)))
-    if not clean:
-        return []
-
-    output: list[dict[str, Any]] = []
-    access_token = os.getenv("EXPO_ACCESS_TOKEN", "").strip()
-
-    for offset in range(0, len(clean), 100):
-        chunk = clean[offset : offset + 100]
-        messages = [
-            {
-                "to": token,
-                "sound": "default",
-                "title": title[:100],
-                "body": body[:1000],
-                "data": data or {},
-            }
-            for token in chunk
+    return send_expo_messages(
+        [
+            {"to": token, "sound": "default", "title": title, "body": body, "data": data or {}}
+            for token in clean
         ]
-        raw = json.dumps(messages).encode("utf-8")
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
-        if access_token:
-            headers["Authorization"] = f"Bearer {access_token}"
-
-        req = urllib.request.Request(
-            EXPO_PUSH_URL,
-            data=raw,
-            headers=headers,
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=15) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"Expo Push svarte {exc.code}: {detail[:300]}") from exc
-        except (urllib.error.URLError, TimeoutError) as exc:
-            raise RuntimeError(f"Kunne ikke nå Expo Push: {exc}") from exc
-
-        if isinstance(payload, dict):
-            result = payload.get("data")
-            if isinstance(result, list):
-                output.extend(row for row in result if isinstance(row, dict))
-            else:
-                output.append(payload)
-        elif isinstance(payload, list):
-            output.extend(row for row in payload if isinstance(row, dict))
-
-    return output
+    )
