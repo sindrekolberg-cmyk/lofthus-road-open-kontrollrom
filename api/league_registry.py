@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 import time
 from collections import OrderedDict
@@ -8,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from api.engine import AppEngine, get_engine
+from api.platform_store import platform_store
 from lro_config import LeagueConfig, load_config
 from lro_fpl import FPLClient, season_label
 
@@ -23,28 +25,49 @@ class LeagueRuntime:
 
 
 class LeagueRuntimeRegistry:
-    """Small in-process tenant registry for arbitrary FPL classic leagues.
+    """Process-local tenant manager for arbitrary FPL classic mini-leagues.
 
-    Lofthus keeps its existing engine and historical archive. Other leagues get a
-    clean current-season engine with no Lofthus historical files mixed in. The
-    shared FPL client lets bootstrap/fixture/player responses be cached across
-    leagues instead of multiplying identical public API traffic.
+    The registry shares immutable/global FPL calls across tenants, keeps each
+    mini-league's live ownership isolated, suppresses duplicate cold starts and
+    evicts idle runtimes before they turn a small service into a thread farm.
     """
 
-    def __init__(self, *, max_leagues: int = 8, idle_ttl_seconds: int = 3600):
+    def __init__(self, *, max_leagues: int | None = None, idle_ttl_seconds: int | None = None):
         self.default_config = load_config()
         self.default_league_id = int(self.default_config.league_id)
-        self.max_leagues = max(2, int(max_leagues))
-        self.idle_ttl_seconds = max(300, int(idle_ttl_seconds))
+        self.max_leagues = max(
+            2,
+            int(max_leagues or os.getenv("LRO_TENANT_MAX_LEAGUES", "12") or 12),
+        )
+        self.idle_ttl_seconds = max(
+            300,
+            int(idle_ttl_seconds or os.getenv("LRO_TENANT_IDLE_TTL_SECONDS", "3600") or 3600),
+        )
         self.client = FPLClient(timeout=15)
         self._lock = threading.RLock()
         self._items: OrderedDict[int, LeagueRuntime] = OrderedDict()
+        self._creating: dict[int, threading.Event] = {}
+        self._creation_errors: dict[int, str] = {}
+        self._created_total = 0
+        self._evicted_total = 0
+        self._default: LeagueRuntime | None = None
 
     def _tenant_data_dir(self, league_id: int) -> Path:
         root = Path(__file__).resolve().parents[1]
         return root / "data" / "_leagues" / str(int(league_id))
 
-    def _prune(self) -> None:
+    @staticmethod
+    def _close_runtime(runtime: LeagueRuntime) -> None:
+        # Tenant engines do not start their own endless pulse thread. Shutting
+        # down the worker pool is therefore enough to release futures/threads.
+        try:
+            pool = getattr(runtime.engine, "_pool", None)
+            if pool is not None:
+                pool.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
+
+    def _prune_locked(self) -> None:
         now = time.time()
         expired = [
             league_id
@@ -54,28 +77,72 @@ class LeagueRuntimeRegistry:
         for league_id in expired:
             runtime = self._items.pop(league_id, None)
             if runtime is not None:
-                try:
-                    runtime.engine.close()
-                except Exception:
-                    pass
+                self._close_runtime(runtime)
+                self._evicted_total += 1
 
         while len(self._items) >= self.max_leagues:
             _league_id, runtime = self._items.popitem(last=False)
-            try:
-                runtime.engine.close()
-            except Exception:
-                pass
+            self._close_runtime(runtime)
+            self._evicted_total += 1
 
     def _default_runtime(self) -> LeagueRuntime:
-        eng = get_engine()
-        now = time.time()
+        with self._lock:
+            if self._default is None:
+                eng = get_engine()
+                now = time.time()
+                self._default = LeagueRuntime(
+                    league_id=self.default_league_id,
+                    name=eng.config.name,
+                    engine=eng,
+                    league_info={"id": self.default_league_id, "name": eng.config.name},
+                    created_at=now,
+                    last_used_at=now,
+                )
+            self._default.last_used_at = time.time()
+            return self._default
+
+    def _build_runtime(self, league_id: int) -> LeagueRuntime:
+        bootstrap = self.client.bootstrap()
+        league_info, managers, debug = self.client.league_managers(league_id)
+        if not managers:
+            detail = "; ".join(str(item) for item in (debug.get("errors") or []) if item)
+            raise ValueError(detail or "Fant ingen managere i ligaen. Kontroller liga-ID-en.")
+
+        info = dict(league_info or {})
+        name = str(info.get("name") or f"FPL-liga {league_id}").strip()
+        season = season_label(bootstrap)
+        config = LeagueConfig(
+            league_id=league_id,
+            name=name,
+            season_fallback=season,
+            data_dir=self._tenant_data_dir(league_id),
+            expected_managers=None,
+        )
+        engine = AppEngine(config=config, client=self.client, eager=False, refresh_seconds=20)
+        # Prime shell/live work. live_state() starts the expensive pick build in a
+        # worker and returns quickly on a cold tenant instead of blocking onboarding.
+        engine.load_shell()
+        try:
+            engine.live_state()
+            engine.histories()
+        except Exception:
+            pass
+
+        platform_store.upsert_league(
+            league_id,
+            name=name,
+            season=season,
+            manager_count=len(managers),
+            is_default=False,
+            metadata={"source": "fpl-classic", "validation_errors": debug.get("errors") or []},
+        )
         return LeagueRuntime(
-            league_id=self.default_league_id,
-            name=eng.config.name,
-            engine=eng,
-            league_info={"id": self.default_league_id, "name": eng.config.name},
-            created_at=now,
-            last_used_at=now,
+            league_id=league_id,
+            name=name,
+            engine=engine,
+            league_info=info,
+            created_at=time.time(),
+            last_used_at=time.time(),
         )
 
     def get(self, league_id: int) -> LeagueRuntime:
@@ -86,65 +153,62 @@ class LeagueRuntimeRegistry:
             return self._default_runtime()
 
         with self._lock:
-            self._prune()
+            self._prune_locked()
             cached = self._items.get(league_id)
             if cached is not None:
                 cached.last_used_at = time.time()
                 self._items.move_to_end(league_id)
                 return cached
+            event = self._creating.get(league_id)
+            if event is None:
+                event = threading.Event()
+                self._creating[league_id] = event
+                self._creation_errors.pop(league_id, None)
+                creator = True
+            else:
+                creator = False
 
-        bootstrap = self.client.bootstrap()
-        league_info, managers, debug = self.client.league_managers(league_id)
-        if not managers:
-            detail = "; ".join(str(item) for item in (debug.get("errors") or []) if item)
-            raise ValueError(detail or "Fant ingen managere i ligaen. Kontroller liga-ID-en.")
+        if not creator:
+            event.wait(timeout=60)
+            with self._lock:
+                cached = self._items.get(league_id)
+                if cached is not None:
+                    cached.last_used_at = time.time()
+                    self._items.move_to_end(league_id)
+                    return cached
+                error = self._creation_errors.get(league_id)
+            raise ValueError(error or "Ligaen brukte for lang tid på å koble til. Prøv igjen.")
 
-        info = dict(league_info or {})
-        name = str(info.get("name") or f"FPL-liga {league_id}").strip()
-        config = LeagueConfig(
-            league_id=league_id,
-            name=name,
-            season_fallback=season_label(bootstrap),
-            data_dir=self._tenant_data_dir(league_id),
-            expected_managers=None,
-        )
-        engine = AppEngine(config=config, client=self.client, eager=False, refresh_seconds=15)
-        # load_shell will reuse the shared client's hot cache from the validation
-        # call above. Starting live_state here primes the expensive picks build in
-        # the background without making onboarding wait for every manager.
+        runtime: LeagueRuntime | None = None
         try:
-            engine.live_state()
-        except Exception:
-            pass
-
-        runtime = LeagueRuntime(
-            league_id=league_id,
-            name=name,
-            engine=engine,
-            league_info=info,
-            created_at=time.time(),
-            last_used_at=time.time(),
-        )
-        with self._lock:
-            existing = self._items.get(league_id)
-            if existing is not None:
-                try:
-                    engine.close()
-                except Exception:
-                    pass
-                existing.last_used_at = time.time()
+            runtime = self._build_runtime(league_id)
+            with self._lock:
+                self._prune_locked()
+                self._items[league_id] = runtime
                 self._items.move_to_end(league_id)
-                return existing
-            self._items[league_id] = runtime
-            self._items.move_to_end(league_id)
-        return runtime
+                self._created_total += 1
+            return runtime
+        except Exception as exc:
+            if runtime is not None:
+                self._close_runtime(runtime)
+            with self._lock:
+                self._creation_errors[league_id] = str(exc)[:500]
+            if isinstance(exc, ValueError):
+                raise
+            raise ValueError(f"Kunne ikke koble til ligaen: {exc}") from exc
+        finally:
+            with self._lock:
+                waiter = self._creating.pop(league_id, None)
+                if waiter is not None:
+                    waiter.set()
 
     def connect_payload(self, league_id: int) -> dict[str, Any]:
         runtime = self.get(league_id)
         eng = runtime.engine
         bootstrap, managers, errors = eng.load_shell()
         state = eng.live_state()
-        by_entry = {m.entry: m for m in eng.manager_states()}
+        snap = eng.snapshot()
+        by_entry = {m.entry: m for m in eng.manager_states(snap)}
         rows: list[dict[str, Any]] = []
         for raw in managers:
             try:
@@ -167,18 +231,54 @@ class LeagueRuntimeRegistry:
                 }
             )
         rows.sort(key=lambda row: (row.get("rank") or 10**9, str(row.get("manager") or "").casefold()))
+        season = season_label(bootstrap) if bootstrap else eng.config.season_fallback
+        platform_store.upsert_league(
+            runtime.league_id,
+            name=runtime.name,
+            season=season,
+            manager_count=len(rows),
+            is_default=runtime.league_id == self.default_league_id,
+        )
         return {
             "ok": True,
             "league": {
                 "id": runtime.league_id,
                 "name": runtime.name,
                 "size": len(rows),
-                "season": season_label(bootstrap) if bootstrap else eng.config.season_fallback,
+                "season": season,
                 "is_default": runtime.league_id == self.default_league_id,
             },
             "managers": rows,
             "live_ready": state is not None,
+            "warming": state is None,
+            "snapshot_id": snap.snapshot_id,
             "errors": list(errors or []),
+        }
+
+    def diagnostics(self) -> dict[str, Any]:
+        with self._lock:
+            self._prune_locked()
+            now = time.time()
+            tenants = [
+                {
+                    "league_id": league_id,
+                    "name": runtime.name,
+                    "age_seconds": round(now - runtime.created_at, 1),
+                    "idle_seconds": round(now - runtime.last_used_at, 1),
+                }
+                for league_id, runtime in self._items.items()
+            ]
+            creating = sorted(self._creating)
+        return {
+            "default_league_id": self.default_league_id,
+            "active_tenants": len(tenants),
+            "max_tenants": self.max_leagues,
+            "idle_ttl_seconds": self.idle_ttl_seconds,
+            "created_total": self._created_total,
+            "evicted_total": self._evicted_total,
+            "creating": creating,
+            "tenants": tenants,
+            "shared_fpl_client": self.client.diagnostics(),
         }
 
 
