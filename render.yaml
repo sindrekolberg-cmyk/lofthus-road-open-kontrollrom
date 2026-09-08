@@ -3,10 +3,10 @@ services:
     name: lofthus-road-open-api
     runtime: python
     region: frankfurt
-    plan: 0.5c-512mb
+    plan: free
     branch: integration-v2
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn api.push_app:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn api.app:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
     autoDeployTrigger: commit
     envVars:
@@ -18,6 +18,31 @@ services:
         value: https://([a-z0-9-]+\.)*vercel\.app
       - key: LRO_CORS_ORIGINS
         value: http://localhost:3000,http://127.0.0.1:3000,https://lofthus-road-open-kontrollrom-uvvh.vercel.app,https://lofthus-road-open-kontrollrom-uvvh-git-integration-v2-genetic1.vercel.app
+
+  - type: web
+    name: lofthus-road-open-push
+    runtime: python
+    region: frankfurt
+    plan: free
+    branch: integration-v2
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api.push_app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/push/status
+    autoDeployTrigger: commit
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.8"
+      - key: LRO_API_WARMUP
+        value: "1"
+      - key: LRO_PUSH_MONITOR
+        value: "1"
+      - key: LRO_MAIN_API_URL
+        value: https://lofthus-road-open-api.onrender.com
+      - key: LRO_CORS_ORIGIN_REGEX
+        value: https://([a-z0-9-]+\.)*vercel\.app
+      - key: LRO_CORS_ORIGINS
+        value: http://localhost:3000,http://127.0.0.1:3000,https://lofthus-road-open-kontrollrom-uvvh.vercel.app,https://lofthus-road-open-kontrollrom-uvvh-git-integration-v2-genetic1.vercel.app
+
   - type: web
     name: lofthus-road-open
     runtime: python
