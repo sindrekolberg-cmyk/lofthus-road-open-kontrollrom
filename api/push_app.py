@@ -7,8 +7,10 @@ from typing import Any
 from fastapi import Header, HTTPException
 
 from api.app import app
+from api.engine import get_engine
 from api.push import PushStore, is_expo_push_token, send_expo_push
 from api.push_monitor import PushMonitor
+from lro_odds import build_preseason_odds
 
 push_store = PushStore()
 push_monitor = PushMonitor(push_store)
@@ -21,6 +23,50 @@ def _token_from(payload: dict[str, Any]) -> str:
     if not is_expo_push_token(token):
         raise HTTPException(status_code=400, detail="Ugyldig Expo push-token.")
     return token
+
+
+@app.get("/api/preseason-tip")
+def preseason_tip() -> dict[str, Any]:
+    eng = get_engine()
+    snap = eng.snapshot()
+    manager_states = list(eng.manager_states(snap))
+    managers = [
+        {
+            "entry": m.entry,
+            "player_name": m.manager,
+            "rank": m.live_rank,
+            "total": m.live_total_points,
+        }
+        for m in manager_states
+    ]
+    try:
+        table = build_preseason_odds(managers, snap.histories or {}, eng.history)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Tabelltipset kunne ikke bygges: {exc}") from exc
+
+    if table is None or table.empty:
+        return {"ready": False, "rows": [], "note": "Tabelltipset er ikke klart."}
+
+    team_by_entry = {m.entry: m.team for m in manager_states}
+    rows: list[dict[str, Any]] = []
+    for raw in table.to_dict("records"):
+        entry = int(raw.get("entry") or 0)
+        odds = float(raw.get("winner_odds") or 251.0)
+        rows.append(
+            {
+                "entry": entry,
+                "manager": str(raw.get("manager") or ""),
+                "team": team_by_entry.get(entry, ""),
+                "rank": int(raw.get("preseason_rank") or len(rows) + 1),
+                "win_pct": round(100.0 / max(1.01, odds), 1),
+                "odds": round(odds, 2),
+                "preseason_odds": round(odds, 2),
+                "note": "Fryst før sesongstart",
+            }
+        )
+
+    rows.sort(key=lambda row: (row["rank"], row["manager"].casefold()))
+    return {"ready": True, "rows": rows, "count": len(rows), "frozen": True}
 
 
 @app.get("/api/push/status")
