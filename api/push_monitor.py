@@ -10,7 +10,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from api.league_registry import league_registry
-from api.push import DEFAULT_LEAGUE_ID, PushStore, send_expo_push
+from api.push import DEFAULT_LEAGUE_ID, PushStore
+from api.push_delivery import send_expo_messages
 from api.serialize import analysis_from_state, squad_payload
 
 MAIN_API = os.getenv("LRO_MAIN_API_URL", "https://lofthus-road-open-api.onrender.com").rstrip("/")
@@ -169,6 +170,9 @@ class PushMonitor:
             "last_event_id": 0,
             "last_changes": 0,
             "last_sent": 0,
+            "last_failed": 0,
+            "last_http_batches": 0,
+            "invalid_tokens_removed": 0,
             "leagues_checked": 0,
         }
 
@@ -207,7 +211,16 @@ class PushMonitor:
             and bool((row.get("prefs") or {}).get("live_events", True))
         ]
         if not subscribers:
-            self._set_status(last_poll=_now(), last_error=None, last_changes=0, last_sent=0, leagues_checked=0)
+            self._set_status(
+                last_poll=_now(),
+                last_error=None,
+                last_changes=0,
+                last_sent=0,
+                last_failed=0,
+                last_http_batches=0,
+                invalid_tokens_removed=0,
+                leagues_checked=0,
+            )
             return self.status()
 
         # FPL's event clock is global, so one lightweight status call is enough to
@@ -225,6 +238,9 @@ class PushMonitor:
                 last_event_id=event_id,
                 last_changes=0,
                 last_sent=0,
+                last_failed=0,
+                last_http_batches=0,
+                invalid_tokens_removed=0,
                 leagues_checked=0,
             )
             return self.status()
@@ -241,6 +257,9 @@ class PushMonitor:
                 last_event_id=event_id,
                 last_changes=0,
                 last_sent=0,
+                last_failed=0,
+                last_http_batches=0,
+                invalid_tokens_removed=0,
                 leagues_checked=0,
             )
             return self.status()
@@ -254,10 +273,10 @@ class PushMonitor:
                 if delta > 0:
                     changes.append((element, field, delta, point_delta))
 
-        sent = 0
         league_cache: dict[int, tuple[dict[int, dict[str, Any]], int, Any | None]] = {}
         picks_cache: dict[tuple[int, int], dict[int, dict[str, Any]]] = {}
         leagues_checked: set[int] = set()
+        messages: list[dict[str, Any]] = []
 
         if changes:
             for sub in subscribers:
@@ -309,12 +328,12 @@ class PushMonitor:
                         league_size=league_size,
                         relative_swing=relative_swing,
                     )
-                    try:
-                        send_expo_push(
-                            [token],
-                            title=title,
-                            body=body,
-                            data={
+                    messages.append(
+                        {
+                            "to": token,
+                            "title": title,
+                            "body": body,
+                            "data": {
                                 "path": "/intel",
                                 "league_id": league_id,
                                 "entry_id": entry_id,
@@ -323,10 +342,22 @@ class PushMonitor:
                                 "event_type": field,
                                 "relative_swing": round(relative_swing, 2),
                             },
-                        )
-                        sent += 1
-                    except RuntimeError:
-                        continue
+                        }
+                    )
+
+        delivery = send_expo_messages(messages) if messages else {
+            "accepted": 0,
+            "failed": 0,
+            "http_batches": 0,
+            "invalid_tokens": [],
+        }
+        removed = 0
+        for token in delivery.get("invalid_tokens") or []:
+            try:
+                if self.store.remove(str(token)):
+                    removed += 1
+            except Exception:
+                continue
 
         self._stats = current
         self._set_status(
@@ -334,7 +365,10 @@ class PushMonitor:
             last_error=None,
             last_event_id=event_id,
             last_changes=len(changes),
-            last_sent=sent,
+            last_sent=_nint(delivery.get("accepted")),
+            last_failed=_nint(delivery.get("failed")),
+            last_http_batches=_nint(delivery.get("http_batches")),
+            invalid_tokens_removed=removed,
             leagues_checked=len(leagues_checked),
         )
         return self.status()
