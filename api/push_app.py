@@ -9,15 +9,17 @@ from fastapi import Header, HTTPException, Query
 from api.app import app
 from api.deep_analysis import build_deep_transfer_analysis
 from api.engine import get_engine
-from api.league_intelligence import build_league_intelligence
-from api.push import PushStore, is_expo_push_token, send_expo_push
+from api.league_intelligence_v2 import build_league_intelligence_v2
+from api.push import DEFAULT_LEAGUE_ID, PushStore, is_expo_push_token, send_expo_push
 from api.push_monitor import PushMonitor
 from api.serialize import analysis_from_state
+from api.tenant_api import register_tenant_routes
 from api.wildcard import build_wildcard_analysis
 from lro_odds import build_preseason_odds
 
 push_store = PushStore()
 push_monitor = PushMonitor(push_store)
+register_tenant_routes(app)
 if os.getenv("LRO_PUSH_MONITOR", "1") == "1":
     push_monitor.start()
 
@@ -85,7 +87,7 @@ def league_intelligence(
     entry_id: int = Query(...),
     goal: str = Query("auto"),
 ) -> dict[str, Any]:
-    body = build_league_intelligence(entry_id=entry_id, goal=goal)
+    body = build_league_intelligence_v2(entry_id=entry_id, goal=goal)
     if not body.get("ok"):
         raise HTTPException(status_code=404, detail=body.get("error") or "Liga-analysen kunne ikke bygges.")
     return body
@@ -205,8 +207,9 @@ def push_status() -> dict[str, Any]:
     return {
         "ok": True,
         "subscribers": push_store.count(),
-        "storage": "local-json",
-        "durable": False,
+        "storage": push_store.backend,
+        "durable": push_store.durable,
+        "database_error": push_store.last_db_error or None,
         "monitor": push_monitor.status(),
     }
 
@@ -215,16 +218,21 @@ def push_status() -> dict[str, Any]:
 def push_subscribe(payload: dict[str, Any]) -> dict[str, Any]:
     token = _token_from(payload)
     entry_raw = payload.get("entry_id")
-    entry_id: int | None
+    league_raw = payload.get("league_id")
     try:
         entry_id = int(entry_raw) if entry_raw is not None else None
     except (TypeError, ValueError):
         entry_id = None
+    try:
+        league_id = int(league_raw) if league_raw is not None else DEFAULT_LEAGUE_ID
+    except (TypeError, ValueError):
+        league_id = DEFAULT_LEAGUE_ID
 
     record = push_store.upsert(
         token,
         platform=str(payload.get("platform") or ""),
         entry_id=entry_id,
+        league_id=league_id,
         prefs=payload.get("prefs") if isinstance(payload.get("prefs"), dict) else {},
     )
     return {
@@ -233,6 +241,7 @@ def push_subscribe(payload: dict[str, Any]) -> dict[str, Any]:
         "subscription": {
             "platform": record.get("platform"),
             "entry_id": record.get("entry_id"),
+            "league_id": record.get("league_id"),
             "prefs": record.get("prefs"),
             "updated_at": record.get("updated_at"),
         },
@@ -256,7 +265,7 @@ def push_test(payload: dict[str, Any]) -> dict[str, Any]:
         receipts = send_expo_push(
             [token],
             title="Lofthus Road Open",
-            body="Testvarselet fra Lofthus Road Open ble sendt.",
+            body="Testvarselet fra serveren ble sendt.",
             data={"path": "/"},
         )
     except RuntimeError as exc:
