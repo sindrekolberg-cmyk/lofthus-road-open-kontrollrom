@@ -11,9 +11,10 @@ from typing import Any
 
 from api.engine import AppEngine, RequestSnapshot, get_engine
 from api.platform_store import platform_store
+from api.shared_fpl import SharedFPLClient
 from lro_analysis import canonical_managers
 from lro_config import LeagueConfig, load_config
-from lro_fpl import FPLClient, season_label
+from lro_fpl import season_label
 
 
 @dataclass
@@ -52,7 +53,7 @@ class LeagueRuntimeRegistry:
             10,
             int(error_ttl_seconds or os.getenv("LRO_TENANT_ERROR_TTL_SECONDS", "90") or 90),
         )
-        self.client = FPLClient(timeout=15)
+        self.client = SharedFPLClient(timeout=15)
         self._lock = threading.RLock()
         self._items: OrderedDict[int, LeagueRuntime] = OrderedDict()
         self._creating: dict[int, threading.Event] = {}
