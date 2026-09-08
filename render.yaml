@@ -27,7 +27,7 @@ services:
     branch: integration-v2
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn api.push_app:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /api/push/status
+    healthCheckPath: /api/health
     autoDeployTrigger: commit
     envVars:
       - key: PYTHON_VERSION
