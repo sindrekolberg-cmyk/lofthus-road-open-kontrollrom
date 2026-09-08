@@ -32,7 +32,7 @@ def _get_json(url: str, timeout: int = 12) -> dict[str, Any]:
         url,
         headers={
             "Accept": "application/json",
-            "User-Agent": "Lofthus-Road-Open-Push/1.0",
+            "User-Agent": "Lofthus-Road-Open-Push/2.0",
         },
         method="GET",
     )
@@ -55,6 +55,13 @@ def _nint(value: Any) -> int:
         return 0
 
 
+def _nfloat(value: Any) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _player_stats(payload: dict[str, Any]) -> dict[int, dict[str, int]]:
     out: dict[int, dict[str, int]] = {}
     for row in payload.get("elements") or []:
@@ -64,7 +71,9 @@ def _player_stats(payload: dict[str, Any]) -> dict[int, dict[str, int]]:
         stats = row.get("stats") if isinstance(row.get("stats"), dict) else {}
         if not element:
             continue
-        out[element] = {field: _nint(stats.get(field)) for field, _, _ in EVENT_FIELDS}
+        values = {field: _nint(stats.get(field)) for field, _, _ in EVENT_FIELDS}
+        values["total_points"] = _nint(stats.get("total_points"))
+        out[element] = values
     return out
 
 
@@ -88,18 +97,50 @@ def _active_picks(profile: dict[str, Any]) -> dict[int, dict[str, Any]]:
     return out
 
 
-def _event_message(player: str, field: str, delta: int, multiplier: int) -> tuple[str, str]:
-    meta = next((row for row in EVENT_FIELDS if row[0] == field), None)
-    icon, phrase = (meta[1], meta[2]) if meta else ("🔔", "ga ny utvikling")
-    count = f" {delta} ganger" if delta > 1 else ""
-    mult = ""
-    if multiplier == 3:
-        mult = " Han teller x3 for deg."
+def _ownership_index(payload: dict[str, Any]) -> tuple[dict[int, dict[str, Any]], int]:
+    league_size = max(1, _nint(payload.get("league_size")))
+    out: dict[int, dict[str, Any]] = {}
+    for row in payload.get("players") or []:
+        if not isinstance(row, dict):
+            continue
+        element = _nint(row.get("element"))
+        if element:
+            out[element] = row
+    return out, league_size
+
+
+def _event_meta(field: str) -> tuple[str, str]:
+    row = next((item for item in EVENT_FIELDS if item[0] == field), None)
+    return (row[1], row[2]) if row else ("🔔", "ga ny utvikling")
+
+
+def _impact_message(
+    *,
+    player: str,
+    field: str,
+    event_delta: int,
+    multiplier: int,
+    ownership_count: int,
+    league_size: int,
+    relative_swing: float,
+) -> tuple[str, str]:
+    icon, phrase = _event_meta(field)
+    count = f" {event_delta} ganger" if event_delta > 1 else ""
+    ownership = f"{ownership_count} av {league_size} i ligaen eier ham."
+    if multiplier >= 3:
+        own = " Han teller x3 for deg."
     elif multiplier == 2:
-        mult = " Han teller x2 for deg."
-    title = f"{icon} {player}"
-    body = f"{player} {phrase}{count}.{mult}"
-    return title, body
+        own = " Han teller x2 for deg."
+    elif multiplier == 1:
+        own = " Han teller for deg."
+    else:
+        own = " Du eier ham ikke."
+    if abs(relative_swing) >= 0.05:
+        sign = "+" if relative_swing > 0 else "−"
+        impact = f" Relativt utslag: {sign}{abs(relative_swing):.1f} poeng mot ligaen."
+    else:
+        impact = ""
+    return f"{icon} {player}", f"{player} {phrase}{count}. {ownership}{own}{impact}"
 
 
 class PushMonitor:
@@ -188,18 +229,28 @@ class PushMonitor:
             )
             return self.status()
 
-        changes: list[tuple[int, str, int]] = []
+        changes: list[tuple[int, str, int, int]] = []
         for element, now_stats in current.items():
             before = self._stats.get(element, {})
+            point_delta = _nint(now_stats.get("total_points")) - _nint(before.get("total_points"))
             for field, _, _ in EVENT_FIELDS:
                 delta = _nint(now_stats.get(field)) - _nint(before.get(field))
                 if delta > 0:
-                    changes.append((element, field, delta))
+                    changes.append((element, field, delta, point_delta))
 
         sent = 0
         profile_cache: dict[int, dict[str, Any]] = {}
         picks_cache: dict[int, dict[int, dict[str, Any]]] = {}
+        ownership_by_element: dict[int, dict[str, Any]] = {}
+        league_size = 1
         if changes:
+            try:
+                ownership_payload = _get_json(f"{MAIN_API}/api/analysis/ownership")
+                ownership_by_element, league_size = _ownership_index(ownership_payload)
+            except RuntimeError:
+                ownership_by_element = {}
+                league_size = 1
+
             for sub in subscribers:
                 entry_id = _nint(sub.get("entry_id"))
                 token = str(sub.get("expo_push_token") or "")
@@ -213,24 +264,42 @@ class PushMonitor:
                 except RuntimeError:
                     continue
 
-                for element, field, delta in changes:
+                for element, field, delta, point_delta in changes:
+                    ownership = ownership_by_element.get(element, {})
                     pick = picks.get(element)
-                    if not pick:
+                    multiplier = _nint((pick or {}).get("multiplier"))
+                    player = str((pick or {}).get("player") or ownership.get("player") or f"Spiller {element}")
+                    ownership_count = _nint(ownership.get("ownership_count"))
+                    effective_ownership = _nfloat(ownership.get("effective_ownership_pct")) / 100.0
+                    relative_swing = point_delta * (multiplier - effective_ownership)
+
+                    # Always surface events involving the user's active players. For players
+                    # the user does not own, only notify when the event materially changes
+                    # their position relative to the league.
+                    if multiplier <= 0 and abs(relative_swing) < 0.9:
                         continue
-                    player = str(pick.get("player") or f"Spiller {element}")
-                    multiplier = _nint(pick.get("multiplier")) or 1
-                    title, body = _event_message(player, field, delta, multiplier)
+
+                    title, body = _impact_message(
+                        player=player,
+                        field=field,
+                        event_delta=delta,
+                        multiplier=multiplier,
+                        ownership_count=ownership_count,
+                        league_size=league_size,
+                        relative_swing=relative_swing,
+                    )
                     try:
                         send_expo_push(
                             [token],
                             title=title,
                             body=body,
                             data={
-                                "path": f"/manager/{entry_id}",
+                                "path": "/intel",
                                 "entry_id": entry_id,
                                 "element": element,
                                 "event_id": event_id,
                                 "event_type": field,
+                                "relative_swing": round(relative_swing, 2),
                             },
                         )
                         sent += 1
