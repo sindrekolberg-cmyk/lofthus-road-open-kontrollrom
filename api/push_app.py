@@ -4,9 +4,10 @@ import os
 import secrets
 from typing import Any
 
-from fastapi import Header, HTTPException
+from fastapi import Header, HTTPException, Query
 
 from api.app import app
+from api.deep_analysis import build_deep_transfer_analysis
 from api.engine import get_engine
 from api.push import PushStore, is_expo_push_token, send_expo_push
 from api.push_monitor import PushMonitor
@@ -69,6 +70,30 @@ def preseason_tip() -> dict[str, Any]:
     return {"ready": True, "rows": rows, "count": len(rows), "frozen": True}
 
 
+@app.get("/api/deep-analysis/transfers")
+def deep_analysis_transfers(
+    entry_id: int = Query(...),
+    strategy: str = Query("balanced"),
+    risk: int = Query(50),
+    horizon: int = Query(5),
+    target: str = Query(""),
+    rival_id: int = Query(0),
+    position: str = Query("all"),
+) -> dict[str, Any]:
+    body = build_deep_transfer_analysis(
+        entry_id=entry_id,
+        strategy=strategy,
+        risk=risk,
+        horizon=horizon,
+        target=target,
+        rival_id=rival_id,
+        position=position,
+    )
+    if not body.get("ok"):
+        raise HTTPException(status_code=404, detail=body.get("error") or "Analysen kunne ikke bygges.")
+    return body
+
+
 @app.get("/api/push/status")
 def push_status() -> dict[str, Any]:
     return {
@@ -125,7 +150,7 @@ def push_test(payload: dict[str, Any]) -> dict[str, Any]:
         receipts = send_expo_push(
             [token],
             title="Lofthus Road Open",
-            body="Push fra Lofthus-serveren virker. Nå begynner det å ligne noe.",
+            body="Testvarselet fra Lofthus Road Open ble sendt.",
             data={"path": "/"},
         )
     except RuntimeError as exc:
