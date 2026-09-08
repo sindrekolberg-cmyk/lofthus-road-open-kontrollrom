@@ -10,6 +10,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      LRO_API_WARMUP: '0'
+      LRO_PUSH_MONITOR: '0'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -21,7 +25,4 @@ jobs:
       - name: Compile backend
         run: python -m compileall -q api lro_*.py
       - name: Run tests
-        env:
-          LRO_API_WARMUP: '0'
-          LRO_PUSH_MONITOR: '0'
-        run: pytest -q
+        run: python -m pytest -q
