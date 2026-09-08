@@ -11,6 +11,7 @@ from typing import Any
 
 from api.engine import AppEngine, RequestSnapshot, get_engine
 from api.platform_store import platform_store
+from lro_analysis import canonical_managers
 from lro_config import LeagueConfig, load_config
 from lro_fpl import FPLClient, season_label
 
@@ -64,6 +65,13 @@ class LeagueRuntimeRegistry:
             pass
 
     def _prune_locked(self) -> None:
+        """Remove only genuinely idle runtimes.
+
+        Capacity eviction must not happen on ordinary reads or diagnostics. The
+        old implementation evicted an LRU tenant whenever the registry merely
+        *reached* max capacity, so reading an already-cached league could kick a
+        different league out and cause a needless cold rebuild.
+        """
         now = time.time()
         expired = [
             league_id
@@ -75,6 +83,9 @@ class LeagueRuntimeRegistry:
             if runtime is not None:
                 self._close_runtime(runtime)
                 self._evicted_total += 1
+
+    def _make_room_locked(self) -> None:
+        """Evict LRU tenants only immediately before inserting a new runtime."""
         while len(self._items) >= self.max_leagues:
             _league_id, runtime = self._items.popitem(last=False)
             self._close_runtime(runtime)
@@ -119,6 +130,20 @@ class LeagueRuntimeRegistry:
             seq=seq,
         )
 
+    @staticmethod
+    def _prime_engine_shell(
+        engine: AppEngine,
+        bootstrap: dict[str, Any],
+        managers: list[dict[str, Any]],
+        errors: list[str],
+    ) -> None:
+        """Reuse onboarding data instead of immediately fetching it a second time."""
+        with engine._lock:
+            engine._bootstrap = dict(bootstrap or {})
+            engine._managers = canonical_managers(list(managers or []), engine.history)
+            engine._shell_errors = list(errors or [])
+            engine._shell_at = time.time()
+
     def _build_runtime(self, league_id: int) -> LeagueRuntime:
         bootstrap = self.client.bootstrap()
         league_info, managers, debug = self.client.league_managers(league_id)
@@ -137,7 +162,8 @@ class LeagueRuntimeRegistry:
             expected_managers=None,
         )
         engine = AppEngine(config=config, client=self.client, eager=False, refresh_seconds=20)
-        engine.load_shell()
+        validation_errors = [str(item) for item in (debug.get("errors") or []) if item]
+        self._prime_engine_shell(engine, bootstrap, managers, validation_errors)
         try:
             # Start the expensive picks/live build only. Histories are deliberately
             # lazy and are first requested by features that actually need them.
@@ -151,7 +177,7 @@ class LeagueRuntimeRegistry:
             season=season,
             manager_count=len(managers),
             is_default=False,
-            metadata={"source": "fpl-classic", "validation_errors": debug.get("errors") or []},
+            metadata={"source": "fpl-classic", "validation_errors": validation_errors},
         )
         return LeagueRuntime(
             league_id=league_id,
@@ -201,6 +227,7 @@ class LeagueRuntimeRegistry:
             runtime = self._build_runtime(league_id)
             with self._lock:
                 self._prune_locked()
+                self._make_room_locked()
                 self._items[league_id] = runtime
                 self._items.move_to_end(league_id)
                 self._created_total += 1
