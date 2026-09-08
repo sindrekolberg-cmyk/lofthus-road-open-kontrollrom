@@ -1,33 +1,60 @@
 from __future__ import annotations
 
+import json
 import os
 import secrets
+import urllib.error
+import urllib.request
+from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Header, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
-from api.app import app
-from api.deep_analysis import build_deep_transfer_analysis
 from api.durable_push_monitor import DurablePushMonitor
-from api.engine import get_engine
-from api.league_experience_v2 import build_league_experience_v2
-from api.league_intelligence_v2 import build_league_intelligence_v2
-from api.league_registry import league_registry
 from api.platform_middleware import install_platform_middleware, middleware_diagnostics
 from api.platform_store import platform_store
 from api.push import DEFAULT_LEAGUE_ID, PushStore, is_expo_push_token, send_expo_push
-from api.serialize import analysis_from_state
-from api.service_cache import analysis_cache
-from api.tenant_api import register_tenant_routes
-from api.wildcard import build_wildcard_analysis
-from lro_odds import build_preseason_odds
+
+MAIN_API = os.getenv("LRO_MAIN_API_URL", "https://lofthus-road-open-api.onrender.com").rstrip("/")
 
 push_store = PushStore()
 push_monitor = DurablePushMonitor(push_store)
-register_tenant_routes(app)
+
+
+def _cors_origins() -> list[str]:
+    raw = os.getenv(
+        "LRO_CORS_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://localhost:3002,http://127.0.0.1:3002",
+    )
+    origins = [part.strip() for part in raw.split(",") if part.strip()]
+    extra = os.getenv("LRO_FRONTEND_ORIGIN", "").strip()
+    if extra and extra not in origins:
+        origins.append(extra)
+    return origins
+
+
+def _cors_regex() -> str:
+    return os.getenv("LRO_CORS_ORIGIN_REGEX", r"https://([a-z0-9-]+\.)*vercel\.app").strip()
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    if os.getenv("LRO_PUSH_MONITOR", "1") == "1":
+        push_monitor.start()
+    yield
+
+
+app = FastAPI(title="Lofthus Road Open Push", version="2.0.0", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins(),
+    allow_origin_regex=_cors_regex() or None,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
 install_platform_middleware(app)
-if os.getenv("LRO_PUSH_MONITOR", "1") == "1":
-    push_monitor.start()
 
 
 def _token_from(payload: dict[str, Any]) -> str:
@@ -37,220 +64,43 @@ def _token_from(payload: dict[str, Any]) -> str:
     return token
 
 
-def _float(value: Any, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
+def _manager_url(league_id: int, entry_id: int) -> str:
+    if int(league_id) == DEFAULT_LEAGUE_ID:
+        return f"{MAIN_API}/api/managers/{int(entry_id)}"
+    return f"{MAIN_API}/api/tenant/{int(league_id)}/managers/{int(entry_id)}"
 
 
 def _validate_subscription(league_id: int, entry_id: int | None) -> None:
     if not entry_id:
         return
+    url = _manager_url(league_id, entry_id)
+    req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "Lofthus-Push-Subscribe/2.0"})
     try:
-        runtime = league_registry.get(league_id)
-        snap = runtime.engine.snapshot()
-        entries = {int(row.get("entry") or 0) for row in snap.managers}
-        if int(entry_id) not in entries:
+        with urllib.request.urlopen(req, timeout=20) as response:
+            if response.status != 200:
+                raise HTTPException(status_code=400, detail="Manageren finnes ikke i den valgte ligaen.")
+            payload = json.loads(response.read().decode("utf-8"))
+        manager = payload.get("manager") if isinstance(payload, dict) else None
+        if not isinstance(manager, dict) or int(manager.get("entry") or 0) != int(entry_id):
             raise HTTPException(status_code=400, detail="Manageren finnes ikke i den valgte ligaen.")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            raise HTTPException(status_code=400, detail="Manageren finnes ikke i den valgte ligaen.") from exc
+        raise HTTPException(status_code=503, detail="Kunne ikke validere manageren akkurat nå.") from exc
     except HTTPException:
         raise
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-
-@app.get("/api/preseason-tip")
-def preseason_tip() -> dict[str, Any]:
-    eng = get_engine()
-    snap = eng.snapshot()
-    manager_states = list(eng.manager_states(snap))
-    managers = [
-        {
-            "entry": m.entry,
-            "player_name": m.manager,
-            "rank": m.live_rank,
-            "total": m.live_total_points,
-        }
-        for m in manager_states
-    ]
-    try:
-        table = build_preseason_odds(managers, snap.histories or {}, eng.history)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Tabelltipset kunne ikke bygges: {exc}") from exc
-    if table is None or table.empty:
-        return {"ready": False, "rows": [], "note": "Tabelltipset er ikke klart."}
-
-    team_by_entry = {m.entry: m.team for m in manager_states}
-    rows: list[dict[str, Any]] = []
-    for raw in table.to_dict("records"):
-        entry = int(raw.get("entry") or 0)
-        odds = float(raw.get("winner_odds") or 251.0)
-        rows.append(
-            {
-                "entry": entry,
-                "manager": str(raw.get("manager") or ""),
-                "team": team_by_entry.get(entry, ""),
-                "rank": int(raw.get("preseason_rank") or len(rows) + 1),
-                "win_pct": round(100.0 / max(1.01, odds), 1),
-                "odds": round(odds, 2),
-                "preseason_odds": round(odds, 2),
-                "note": "Fryst før sesongstart",
-            }
-        )
-    rows.sort(key=lambda row: (row["rank"], row["manager"].casefold()))
-    return {"ready": True, "rows": rows, "count": len(rows), "frozen": True}
+        raise HTTPException(status_code=503, detail="Kunne ikke validere manageren akkurat nå.") from exc
 
 
-@app.get("/api/league-intelligence")
-def league_intelligence(
-    entry_id: int = Query(...),
-    goal: str = Query("auto"),
-) -> dict[str, Any]:
-    eng = get_engine()
-    snap = eng.snapshot()
-    key = (DEFAULT_LEAGUE_ID, snap.snapshot_id, "intelligence-v2", entry_id, goal)
-    body = analysis_cache.get_or_build(
-        key,
-        lambda: build_league_intelligence_v2(entry_id=entry_id, goal=goal, engine=eng),
-        35 if snap.state and snap.state.is_live else 300,
-    )
-    if not body.get("ok"):
-        raise HTTPException(status_code=404, detail=body.get("error") or "Liga-analysen kunne ikke bygges.")
-    return body
+@app.get("/")
+def root() -> dict[str, Any]:
+    return {"ok": True, "service": "lofthus-road-open-push", "health": "/api/health"}
 
 
-@app.get("/api/league-experience")
-def league_experience(
-    entry_id: int = Query(...),
-    goal: str = Query("auto"),
-) -> dict[str, Any]:
-    eng = get_engine()
-    snap = eng.snapshot()
-    key = (DEFAULT_LEAGUE_ID, snap.snapshot_id, "experience-v2", entry_id, goal)
-    body = analysis_cache.get_or_build(
-        key,
-        lambda: build_league_experience_v2(entry_id=entry_id, goal=goal, engine=eng),
-        35 if snap.state and snap.state.is_live else 300,
-    )
-    if not body.get("ok"):
-        raise HTTPException(status_code=404, detail=body.get("error") or "Ligaopplevelsen kunne ikke bygges.")
-    return body
-
-
-@app.get("/api/deep-analysis/transfers")
-def deep_analysis_transfers(
-    entry_id: int = Query(...),
-    strategy: str = Query("balanced"),
-    risk: int = Query(50, ge=0, le=100),
-    horizon: int = Query(5, ge=5, le=10),
-    target: str = Query(""),
-    rival_id: int = Query(0),
-    position: str = Query("all"),
-) -> dict[str, Any]:
-    eng = get_engine()
-    snap = eng.snapshot()
-    key = (DEFAULT_LEAGUE_ID, snap.snapshot_id, "transfer", entry_id, strategy, risk, horizon, target, rival_id, position)
-    body = analysis_cache.get_or_build(
-        key,
-        lambda: build_deep_transfer_analysis(
-            entry_id=entry_id,
-            strategy=strategy,
-            risk=risk,
-            horizon=horizon,
-            target=target,
-            rival_id=rival_id,
-            position=position,
-        ),
-        45 if snap.state and snap.state.is_live else 300,
-    )
-    if not body.get("ok"):
-        raise HTTPException(status_code=404, detail=body.get("error") or "Analysen kunne ikke bygges.")
-    ranked = list(body.get("ranked") or [])
-    if ranked:
-        body["recommendations"] = ranked[:5]
-    return body
-
-
-@app.get("/api/deep-analysis/wildcard")
-def deep_analysis_wildcard(
-    entry_id: int = Query(...),
-    strategy: str = Query("balanced"),
-    risk: int = Query(50, ge=0, le=100),
-    horizon: int = Query(5, ge=5, le=10),
-) -> dict[str, Any]:
-    eng = get_engine()
-    snap = eng.snapshot()
-    key = (DEFAULT_LEAGUE_ID, snap.snapshot_id, "wildcard", entry_id, strategy, risk, horizon)
-    body = analysis_cache.get_or_build(
-        key,
-        lambda: build_wildcard_analysis(
-            entry_id=entry_id,
-            strategy=strategy,
-            risk=risk,
-            horizon=horizon,
-        ),
-        45 if snap.state and snap.state.is_live else 300,
-    )
-    if not body.get("ok"):
-        raise HTTPException(status_code=404, detail=body.get("error") or "Wildcard-analysen kunne ikke bygges.")
-    return body
-
-
-@app.get("/api/deep-analysis/ownership")
-def deep_analysis_ownership() -> dict[str, Any]:
-    eng = get_engine()
-    snap = eng.snapshot()
-    if not snap.state:
-        raise HTTPException(status_code=503, detail="Live-data er ikke klare ennå.")
-
-    payload = analysis_from_state(snap.state)
-    by_element = {
-        int(row.get("id") or 0): row
-        for row in (snap.bootstrap.get("elements") or [])
-        if int(row.get("id") or 0)
-    }
-    rows: list[dict[str, Any]] = []
-    for source in payload.get("ownership") or []:
-        row = dict(source)
-        meta = by_element.get(int(row.get("element") or 0), {})
-        league_pct = _float(row.get("ownership_pct"))
-        global_pct = _float(meta.get("selected_by_percent"))
-        form = _float(meta.get("form"))
-        ppg = _float(meta.get("points_per_game"))
-        total_points = int(_float(meta.get("total_points")))
-        minutes = int(_float(meta.get("minutes")))
-        xgi90 = _float(meta.get("expected_goal_involvements_per_90"))
-        status = str(meta.get("status") or "a")
-
-        rarity = max(0.0, 100.0 - league_pct) / 100.0
-        form_signal = min(max(form / 10.0, 0.0), 1.0)
-        ppg_signal = min(max(ppg / 8.0, 0.0), 1.0)
-        xgi_signal = min(max(xgi90 / 0.9, 0.0), 1.0)
-        availability = 1.0 if status == "a" else 0.55
-        differential_score = 100.0 * availability * (
-            0.48 * rarity + 0.19 * form_signal + 0.17 * ppg_signal + 0.16 * xgi_signal
-        )
-        row.update(
-            {
-                "global_ownership_pct": round(global_pct, 1),
-                "ownership_gap_pct": round(league_pct - global_pct, 1),
-                "form": round(form, 1),
-                "points_per_game": round(ppg, 1),
-                "season_points": total_points,
-                "season_minutes": minutes,
-                "xgi_per90": round(xgi90, 3),
-                "status": status,
-                "differential_score": round(differential_score, 1),
-            }
-        )
-        rows.append(row)
-    return {
-        "players": rows,
-        "league_size": payload.get("league_size"),
-        "loaded_managers": payload.get("loaded_managers"),
-        "complete": payload.get("complete", True),
-        "sources": ["Mini-ligaens live eierskap", "Fantasy Premier League bootstrap"],
-    }
+@app.get("/api/health")
+def health() -> dict[str, Any]:
+    return {"ok": True, "service": "lofthus-road-open-push"}
 
 
 @app.get("/api/push/status")
@@ -262,25 +112,25 @@ def push_status() -> dict[str, Any]:
         "durable": push_store.durable,
         "database_error": push_store.last_db_error or None,
         "platform_persistence": platform_store.diagnostics(),
-        "analysis_cache": analysis_cache.diagnostics(),
         "middleware": middleware_diagnostics(),
         "monitor": push_monitor.status(),
+        "main_api": MAIN_API,
     }
 
 
 @app.post("/api/push/subscribe")
 def push_subscribe(payload: dict[str, Any]) -> dict[str, Any]:
     token = _token_from(payload)
-    entry_raw = payload.get("entry_id")
-    league_raw = payload.get("league_id")
     try:
-        entry_id = int(entry_raw) if entry_raw is not None else None
+        entry_id = int(payload.get("entry_id")) if payload.get("entry_id") is not None else None
     except (TypeError, ValueError):
         entry_id = None
     try:
-        league_id = int(league_raw) if league_raw is not None else DEFAULT_LEAGUE_ID
+        league_id = int(payload.get("league_id")) if payload.get("league_id") is not None else DEFAULT_LEAGUE_ID
     except (TypeError, ValueError):
         league_id = DEFAULT_LEAGUE_ID
+    if league_id <= 0:
+        raise HTTPException(status_code=400, detail="Ugyldig liga-ID.")
     _validate_subscription(league_id, entry_id)
 
     record = push_store.upsert(
@@ -307,8 +157,7 @@ def push_subscribe(payload: dict[str, Any]) -> dict[str, Any]:
 @app.post("/api/push/unsubscribe")
 def push_unsubscribe(payload: dict[str, Any]) -> dict[str, Any]:
     token = _token_from(payload)
-    removed = push_store.remove(token)
-    return {"ok": True, "removed": removed}
+    return {"ok": True, "removed": push_store.remove(token)}
 
 
 @app.post("/api/push/test")
@@ -343,7 +192,10 @@ def push_broadcast(
     body = str(payload.get("body") or "").strip()
     if not body:
         raise HTTPException(status_code=400, detail="Mangler meldingstekst.")
-    league_filter = int(payload.get("league_id") or 0)
+    try:
+        league_filter = int(payload.get("league_id") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Ugyldig liga-ID.")
     rows = [row for row in push_store.list() if row.get("enabled", True)]
     if league_filter:
         rows = [row for row in rows if int(row.get("league_id") or DEFAULT_LEAGUE_ID) == league_filter]
