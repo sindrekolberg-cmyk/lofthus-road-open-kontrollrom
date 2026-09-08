@@ -34,7 +34,13 @@ class LeagueRuntimeRegistry:
     runtimes before they turn a small service into a thread farm.
     """
 
-    def __init__(self, *, max_leagues: int | None = None, idle_ttl_seconds: int | None = None):
+    def __init__(
+        self,
+        *,
+        max_leagues: int | None = None,
+        idle_ttl_seconds: int | None = None,
+        error_ttl_seconds: int | None = None,
+    ):
         self.default_config = load_config()
         self.default_league_id = int(self.default_config.league_id)
         self.max_leagues = max(2, int(max_leagues or os.getenv("LRO_TENANT_MAX_LEAGUES", "12") or 12))
@@ -42,11 +48,15 @@ class LeagueRuntimeRegistry:
             300,
             int(idle_ttl_seconds or os.getenv("LRO_TENANT_IDLE_TTL_SECONDS", "3600") or 3600),
         )
+        self.error_ttl_seconds = max(
+            10,
+            int(error_ttl_seconds or os.getenv("LRO_TENANT_ERROR_TTL_SECONDS", "90") or 90),
+        )
         self.client = FPLClient(timeout=15)
         self._lock = threading.RLock()
         self._items: OrderedDict[int, LeagueRuntime] = OrderedDict()
         self._creating: dict[int, threading.Event] = {}
-        self._creation_errors: dict[int, str] = {}
+        self._creation_errors: dict[int, tuple[str, float]] = {}
         self._created_total = 0
         self._evicted_total = 0
         self._default: LeagueRuntime | None = None
@@ -65,13 +75,7 @@ class LeagueRuntimeRegistry:
             pass
 
     def _prune_locked(self) -> None:
-        """Remove only genuinely idle runtimes.
-
-        Capacity eviction must not happen on ordinary reads or diagnostics. The
-        old implementation evicted an LRU tenant whenever the registry merely
-        *reached* max capacity, so reading an already-cached league could kick a
-        different league out and cause a needless cold rebuild.
-        """
+        """Remove genuinely idle runtimes and expired negative-cache entries."""
         now = time.time()
         expired = [
             league_id
@@ -83,6 +87,13 @@ class LeagueRuntimeRegistry:
             if runtime is not None:
                 self._close_runtime(runtime)
                 self._evicted_total += 1
+        expired_errors = [
+            league_id
+            for league_id, (_message, created_at) in self._creation_errors.items()
+            if now - created_at >= self.error_ttl_seconds
+        ]
+        for league_id in expired_errors:
+            self._creation_errors.pop(league_id, None)
 
     def _make_room_locked(self) -> None:
         """Evict LRU tenants only immediately before inserting a new runtime."""
@@ -202,11 +213,16 @@ class LeagueRuntimeRegistry:
                 cached.last_used_at = time.time()
                 self._items.move_to_end(league_id)
                 return cached
+            failure = self._creation_errors.get(league_id)
+            if failure is not None:
+                message, created_at = failure
+                if time.time() - created_at < self.error_ttl_seconds:
+                    raise ValueError(message)
+                self._creation_errors.pop(league_id, None)
             event = self._creating.get(league_id)
             if event is None:
                 event = threading.Event()
                 self._creating[league_id] = event
-                self._creation_errors.pop(league_id, None)
                 creator = True
             else:
                 creator = False
@@ -219,7 +235,8 @@ class LeagueRuntimeRegistry:
                     cached.last_used_at = time.time()
                     self._items.move_to_end(league_id)
                     return cached
-                error = self._creation_errors.get(league_id)
+                failure = self._creation_errors.get(league_id)
+                error = failure[0] if failure else None
             raise ValueError(error or "Ligaen brukte for lang tid på å koble til. Prøv igjen.")
 
         runtime: LeagueRuntime | None = None
@@ -230,13 +247,15 @@ class LeagueRuntimeRegistry:
                 self._make_room_locked()
                 self._items[league_id] = runtime
                 self._items.move_to_end(league_id)
+                self._creation_errors.pop(league_id, None)
                 self._created_total += 1
             return runtime
         except Exception as exc:
             if runtime is not None:
                 self._close_runtime(runtime)
+            message = str(exc)[:500]
             with self._lock:
-                self._creation_errors[league_id] = str(exc)[:500]
+                self._creation_errors[league_id] = (message, time.time())
             if isinstance(exc, ValueError):
                 raise
             raise ValueError(f"Kunne ikke koble til ligaen: {exc}") from exc
@@ -313,13 +332,16 @@ class LeagueRuntimeRegistry:
                 for league_id, runtime in self._items.items()
             ]
             creating = sorted(self._creating)
+            recent_failures = len(self._creation_errors)
         return {
             "default_league_id": self.default_league_id,
             "active_tenants": len(tenants),
             "max_tenants": self.max_leagues,
             "idle_ttl_seconds": self.idle_ttl_seconds,
+            "error_ttl_seconds": self.error_ttl_seconds,
             "created_total": self._created_total,
             "evicted_total": self._evicted_total,
+            "recent_failures": recent_failures,
             "creating": creating,
             "tenants": tenants,
             "shared_fpl_client": self.client.diagnostics(),
