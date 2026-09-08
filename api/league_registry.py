@@ -5,10 +5,11 @@ import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from api.engine import AppEngine, get_engine
+from api.engine import AppEngine, RequestSnapshot, get_engine
 from api.platform_store import platform_store
 from lro_config import LeagueConfig, load_config
 from lro_fpl import FPLClient, season_label
@@ -27,18 +28,15 @@ class LeagueRuntime:
 class LeagueRuntimeRegistry:
     """Process-local tenant manager for arbitrary FPL classic mini-leagues.
 
-    The registry shares immutable/global FPL calls across tenants, keeps each
-    mini-league's live ownership isolated, suppresses duplicate cold starts and
-    evicts idle runtimes before they turn a small service into a thread farm.
+    The registry shares global FPL calls across tenants, keeps each mini-league's
+    live ownership isolated, suppresses duplicate cold starts and evicts idle
+    runtimes before they turn a small service into a thread farm.
     """
 
     def __init__(self, *, max_leagues: int | None = None, idle_ttl_seconds: int | None = None):
         self.default_config = load_config()
         self.default_league_id = int(self.default_config.league_id)
-        self.max_leagues = max(
-            2,
-            int(max_leagues or os.getenv("LRO_TENANT_MAX_LEAGUES", "12") or 12),
-        )
+        self.max_leagues = max(2, int(max_leagues or os.getenv("LRO_TENANT_MAX_LEAGUES", "12") or 12))
         self.idle_ttl_seconds = max(
             300,
             int(idle_ttl_seconds or os.getenv("LRO_TENANT_IDLE_TTL_SECONDS", "3600") or 3600),
@@ -58,8 +56,6 @@ class LeagueRuntimeRegistry:
 
     @staticmethod
     def _close_runtime(runtime: LeagueRuntime) -> None:
-        # Tenant engines do not start their own endless pulse thread. Shutting
-        # down the worker pool is therefore enough to release futures/threads.
         try:
             pool = getattr(runtime.engine, "_pool", None)
             if pool is not None:
@@ -79,7 +75,6 @@ class LeagueRuntimeRegistry:
             if runtime is not None:
                 self._close_runtime(runtime)
                 self._evicted_total += 1
-
         while len(self._items) >= self.max_leagues:
             _league_id, runtime = self._items.popitem(last=False)
             self._close_runtime(runtime)
@@ -101,6 +96,29 @@ class LeagueRuntimeRegistry:
             self._default.last_used_at = time.time()
             return self._default
 
+    @staticmethod
+    def _light_snapshot(
+        eng: AppEngine,
+        bootstrap: dict[str, Any],
+        managers: list[dict[str, Any]],
+        errors: list[str],
+        state: Any,
+    ) -> RequestSnapshot:
+        """Build an onboarding snapshot without fetching every manager history."""
+        generated = datetime.now(timezone.utc).isoformat()
+        stamp = state.fetched_at.isoformat() if state else "none"
+        seq = eng.pulse.seq
+        return RequestSnapshot(
+            bootstrap=bootstrap,
+            managers=managers,
+            errors=list(errors),
+            state=state,
+            histories=None,
+            snapshot_id=f"{stamp}:{len(managers)}:{state.event_id if state else 0}:{seq}",
+            generated_at=generated,
+            seq=seq,
+        )
+
     def _build_runtime(self, league_id: int) -> LeagueRuntime:
         bootstrap = self.client.bootstrap()
         league_info, managers, debug = self.client.league_managers(league_id)
@@ -119,12 +137,11 @@ class LeagueRuntimeRegistry:
             expected_managers=None,
         )
         engine = AppEngine(config=config, client=self.client, eager=False, refresh_seconds=20)
-        # Prime shell/live work. live_state() starts the expensive pick build in a
-        # worker and returns quickly on a cold tenant instead of blocking onboarding.
         engine.load_shell()
         try:
+            # Start the expensive picks/live build only. Histories are deliberately
+            # lazy and are first requested by features that actually need them.
             engine.live_state()
-            engine.histories()
         except Exception:
             pass
 
@@ -207,7 +224,7 @@ class LeagueRuntimeRegistry:
         eng = runtime.engine
         bootstrap, managers, errors = eng.load_shell()
         state = eng.live_state()
-        snap = eng.snapshot()
+        snap = self._light_snapshot(eng, bootstrap, managers, errors, state)
         by_entry = {m.entry: m for m in eng.manager_states(snap)}
         rows: list[dict[str, Any]] = []
         for raw in managers:
