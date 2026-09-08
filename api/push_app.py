@@ -9,6 +9,7 @@ from fastapi import Header, HTTPException, Query
 from api.app import app
 from api.deep_analysis import build_deep_transfer_analysis
 from api.engine import get_engine
+from api.league_intelligence import build_league_intelligence
 from api.push import PushStore, is_expo_push_token, send_expo_push
 from api.push_monitor import PushMonitor
 from api.serialize import analysis_from_state
@@ -77,6 +78,17 @@ def preseason_tip() -> dict[str, Any]:
 
     rows.sort(key=lambda row: (row["rank"], row["manager"].casefold()))
     return {"ready": True, "rows": rows, "count": len(rows), "frozen": True}
+
+
+@app.get("/api/league-intelligence")
+def league_intelligence(
+    entry_id: int = Query(...),
+    goal: str = Query("auto"),
+) -> dict[str, Any]:
+    body = build_league_intelligence(entry_id=entry_id, goal=goal)
+    if not body.get("ok"):
+        raise HTTPException(status_code=404, detail=body.get("error") or "Liga-analysen kunne ikke bygges.")
+    return body
 
 
 @app.get("/api/deep-analysis/transfers")
