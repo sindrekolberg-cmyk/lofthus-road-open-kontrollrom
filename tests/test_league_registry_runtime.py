@@ -1,5 +1,7 @@
 import time
 
+import pytest
+
 from api.league_registry import LeagueRuntime, LeagueRuntimeRegistry
 
 
@@ -41,3 +43,23 @@ def test_diagnostics_at_capacity_is_read_only_for_fresh_tenants():
     assert diagnostics["active_tenants"] == 2
     assert set(registry._items) == {101, 102}
     assert registry._evicted_total == 0
+
+
+def test_failed_league_lookup_is_cached_for_cooldown(monkeypatch):
+    registry = LeagueRuntimeRegistry(error_ttl_seconds=60)
+    calls = 0
+
+    def fail(_league_id: int):
+        nonlocal calls
+        calls += 1
+        raise ValueError("Fant ingen managere i ligaen.")
+
+    monkeypatch.setattr(registry, "_build_runtime", fail)
+
+    with pytest.raises(ValueError, match="Fant ingen managere"):
+        registry.get(999001)
+    with pytest.raises(ValueError, match="Fant ingen managere"):
+        registry.get(999001)
+
+    assert calls == 1
+    assert registry.diagnostics()["recent_failures"] == 1
