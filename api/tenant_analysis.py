@@ -15,7 +15,6 @@ from api.engine import AppEngine
 from api.wildcard import (
     POSITION_ORDERINGS,
     POSITION_REQUIREMENTS,
-    _annotate,
     _available_budget,
     _best_xi,
     _build_one,
@@ -25,6 +24,19 @@ from api.wildcard import (
 )
 from lro_analysis import nfloat, nint
 from lro_transfer_strategy import build_transfer_strategy
+
+
+def _neutralize(row: dict[str, Any]) -> dict[str, Any]:
+    item = dict(row)
+    for key in ("why", "evidence"):
+        if isinstance(item.get(key), list):
+            item[key] = [
+                str(value)
+                .replace("Lofthus-eierskap", "Ligaeierskap")
+                .replace("Lofthus", "ligaen")
+                for value in item[key]
+            ]
+    return item
 
 
 def build_tenant_transfer_analysis(
@@ -46,6 +58,7 @@ def build_tenant_transfer_analysis(
     except Exception:
         fixtures = list(snap.state.fixtures or [])
 
+    horizon = max(5, int(horizon or 5))
     projection_bootstrap, first_event_id = _future_projection_bootstrap(snap.bootstrap)
     provider = DeepFPLProjectionProvider(snap.bootstrap)
     body = build_transfer_strategy(
@@ -55,7 +68,7 @@ def build_tenant_transfer_analysis(
         entry_id=int(entry_id),
         strategy=strategy,
         risk=int(risk),
-        horizon=max(5, int(horizon or 5)),
+        horizon=horizon,
         target=target,
         rival_id=int(rival_id or 0),
         position=position,
@@ -76,7 +89,7 @@ def build_tenant_transfer_analysis(
         feasibility = _transfer_feasibility(row, squad, bank)
         row["transfer_feasibility"] = feasibility
         if feasibility.get("legal"):
-            legal_ranked.append(row)
+            legal_ranked.append(_neutralize(row))
     body["ranked"] = legal_ranked[:12]
     body["recommendations"] = legal_ranked[:5]
 
@@ -87,12 +100,12 @@ def build_tenant_transfer_analysis(
             feasibility = _transfer_feasibility(row, squad, bank)
             row["transfer_feasibility"] = feasibility
             if feasibility.get("legal"):
-                kept.append(row)
+                kept.append(_neutralize(row))
         body[key] = kept[:3]
 
     body["projection_source"] = provider.source
     body["analysis_horizon"] = {
-        "matches": max(5, int(horizon or 5)),
+        "matches": horizon,
         "first_event_id": first_event_id,
         "starts_after_current_deadline": True,
     }
@@ -110,8 +123,36 @@ def build_tenant_transfer_analysis(
         "set_piece_role": True,
         "recent_match_history": True,
         "event_level_situational_matchups": False,
+        "note": "Situasjonsspesifikk motstanderanalyse krever en ekstern event-datakilde. Modellen markerer dette eksplisitt i stedet for å gjette.",
     }
+    body["data_sources"] = [
+        "Fantasy Premier League bootstrap",
+        "Fantasy Premier League fixtures",
+        "Fantasy Premier League element history",
+        "Mini-ligaens live eierskap",
+    ]
     return body
+
+
+def _annotate_neutral(
+    row: dict[str, Any],
+    current_ids: set[int],
+    xi_ids: set[int],
+    captain_id: int,
+    vice_id: int,
+) -> dict[str, Any]:
+    item = _neutralize(dict(row))
+    evidence = list(item.get("evidence") or [])
+    evidence.append(
+        f"Ligaeierskap {nfloat(item.get('league_ownership_pct')):.0f} % · globalt {nfloat(item.get('global_ownership_pct')):.0f} %"
+    )
+    item["evidence"] = evidence[:7]
+    element = nint(item.get("element"))
+    item["currently_owned"] = element in current_ids
+    item["starting_xi"] = element in xi_ids
+    item["captain"] = element == captain_id
+    item["vice_captain"] = element == vice_id
+    return item
 
 
 def build_tenant_wildcard_analysis(
@@ -134,6 +175,7 @@ def build_tenant_wildcard_analysis(
     except Exception:
         fixtures = list(state.fixtures or [])
 
+    horizon = max(5, int(horizon or 5))
     budget, exact_budget, current_squad = _available_budget(state, int(entry_id))
     rows, _provider, event_ids, cohort_label = _candidate_rows(
         bootstrap=snap.bootstrap,
@@ -142,8 +184,9 @@ def build_tenant_wildcard_analysis(
         entry_id=int(entry_id),
         strategy=strategy,
         risk=int(risk),
-        horizon=max(5, int(horizon or 5)),
+        horizon=horizon,
     )
+    rows = [_neutralize(row) for row in rows]
     candidates_by_pos = {
         position: sorted(
             [row for row in rows if nint(row.get("position_id")) == position],
@@ -165,14 +208,21 @@ def build_tenant_wildcard_analysis(
     squad_cost = round(sum(nfloat(row.get("price")) for row in squad), 1)
     xi, bench = _best_xi(squad)
     xi.sort(key=lambda row: (nint(row.get("position_id")), -nfloat(row.get("squad_score"))))
-    captain_order = sorted(xi, key=lambda row: (-nfloat(row.get("captain_score")), -nfloat(row.get("squad_score"))))
+    captain_order = sorted(
+        xi,
+        key=lambda row: (-nfloat(row.get("captain_score")), -nfloat(row.get("squad_score"))),
+    )
     captain_id = nint(captain_order[0].get("element")) if captain_order else 0
     vice_id = nint(captain_order[1].get("element")) if len(captain_order) > 1 else 0
     xi_ids = {nint(row.get("element")) for row in xi}
     current_ids = {nint(row.get("element")) for row in current_squad}
     squad_ids = {nint(row.get("element")) for row in squad}
 
-    incoming = [_annotate(row, current_ids, xi_ids, captain_id, vice_id) for row in squad if nint(row.get("element")) not in current_ids]
+    incoming = [
+        _annotate_neutral(row, current_ids, xi_ids, captain_id, vice_id)
+        for row in squad
+        if nint(row.get("element")) not in current_ids
+    ]
     outgoing = [
         {
             "element": nint(row.get("element")),
@@ -184,19 +234,26 @@ def build_tenant_wildcard_analysis(
         if nint(row.get("element")) not in squad_ids
     ]
 
+    annotated_xi = [_annotate_neutral(row, current_ids, xi_ids, captain_id, vice_id) for row in xi]
+    annotated_bench = [_annotate_neutral(row, current_ids, xi_ids, captain_id, vice_id) for row in bench]
+    annotated_squad = [
+        _annotate_neutral(row, current_ids, xi_ids, captain_id, vice_id)
+        for row in sorted(squad, key=lambda r: (nint(r.get("position_id")), -nfloat(r.get("squad_score"))))
+    ]
+
     return {
         "ok": True,
         "manager": {"entry": manager.entry, "manager": manager.manager, "team": manager.team, "rank": manager.live_rank},
-        "strategy": {"id": strategy, "risk": int(risk), "horizon": max(5, int(horizon or 5)), "cohort": cohort_label},
+        "strategy": {"id": strategy, "risk": int(risk), "horizon": horizon, "cohort": cohort_label},
         "budget": {"available": budget, "used": squad_cost, "remaining": round(budget - squad_cost, 1), "exact": exact_budget},
-        "starting_xi": [_annotate(row, current_ids, xi_ids, captain_id, vice_id) for row in xi],
-        "bench": [_annotate(row, current_ids, xi_ids, captain_id, vice_id) for row in bench],
-        "squad": [_annotate(row, current_ids, xi_ids, captain_id, vice_id) for row in sorted(squad, key=lambda r: (nint(r.get("position_id")), -nfloat(r.get("squad_score"))))],
-        "captain": next((_annotate(row, current_ids, xi_ids, captain_id, vice_id) for row in xi if nint(row.get("element")) == captain_id), None),
-        "vice_captain": next((_annotate(row, current_ids, xi_ids, captain_id, vice_id) for row in xi if nint(row.get("element")) == vice_id), None),
+        "starting_xi": annotated_xi,
+        "bench": annotated_bench,
+        "squad": annotated_squad,
+        "captain": next((row for row in annotated_xi if row.get("captain")), None),
+        "vice_captain": next((row for row in annotated_xi if row.get("vice_captain")), None),
         "transfers_in": sorted(incoming, key=lambda row: (nint(row.get("position_id")), -nfloat(row.get("squad_score")))),
         "transfers_out": outgoing,
-        "analysis_horizon": {"event_ids": event_ids, "matches": max(5, int(horizon or 5)), "starts_after_current_deadline": True},
+        "analysis_horizon": {"event_ids": event_ids, "matches": horizon, "starts_after_current_deadline": True},
         "quality_control": {
             "squad_size": len(squad),
             "position_rules_checked": True,
