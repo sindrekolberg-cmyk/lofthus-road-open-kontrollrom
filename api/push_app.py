@@ -13,6 +13,7 @@ from api.engine import get_engine
 from api.league_experience_v2 import build_league_experience_v2
 from api.league_intelligence_v2 import build_league_intelligence_v2
 from api.league_registry import league_registry
+from api.platform_middleware import install_platform_middleware, middleware_diagnostics
 from api.platform_store import platform_store
 from api.push import DEFAULT_LEAGUE_ID, PushStore, is_expo_push_token, send_expo_push
 from api.serialize import analysis_from_state
@@ -24,6 +25,7 @@ from lro_odds import build_preseason_odds
 push_store = PushStore()
 push_monitor = DurablePushMonitor(push_store)
 register_tenant_routes(app)
+install_platform_middleware(app)
 if os.getenv("LRO_PUSH_MONITOR", "1") == "1":
     push_monitor.start()
 
@@ -40,11 +42,6 @@ def _float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
-
-
-def _default_analysis_key(kind: str, *parts: Any) -> tuple[Any, ...]:
-    snap = get_engine().snapshot()
-    return (DEFAULT_LEAGUE_ID, snap.snapshot_id, kind, *parts)
 
 
 def _validate_subscription(league_id: int, entry_id: int | None) -> None:
@@ -80,7 +77,6 @@ def preseason_tip() -> dict[str, Any]:
         table = build_preseason_odds(managers, snap.histories or {}, eng.history)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Tabelltipset kunne ikke bygges: {exc}") from exc
-
     if table is None or table.empty:
         return {"ready": False, "rows": [], "note": "Tabelltipset er ikke klart."}
 
@@ -101,7 +97,6 @@ def preseason_tip() -> dict[str, Any]:
                 "note": "Fryst før sesongstart",
             }
         )
-
     rows.sort(key=lambda row: (row["rank"], row["manager"].casefold()))
     return {"ready": True, "rows": rows, "count": len(rows), "frozen": True}
 
@@ -214,7 +209,6 @@ def deep_analysis_ownership() -> dict[str, Any]:
         for row in (snap.bootstrap.get("elements") or [])
         if int(row.get("id") or 0)
     }
-
     rows: list[dict[str, Any]] = []
     for source in payload.get("ownership") or []:
         row = dict(source)
@@ -236,7 +230,6 @@ def deep_analysis_ownership() -> dict[str, Any]:
         differential_score = 100.0 * availability * (
             0.48 * rarity + 0.19 * form_signal + 0.17 * ppg_signal + 0.16 * xgi_signal
         )
-
         row.update(
             {
                 "global_ownership_pct": round(global_pct, 1),
@@ -251,7 +244,6 @@ def deep_analysis_ownership() -> dict[str, Any]:
             }
         )
         rows.append(row)
-
     return {
         "players": rows,
         "league_size": payload.get("league_size"),
@@ -271,6 +263,7 @@ def push_status() -> dict[str, Any]:
         "database_error": push_store.last_db_error or None,
         "platform_persistence": platform_store.diagnostics(),
         "analysis_cache": analysis_cache.diagnostics(),
+        "middleware": middleware_diagnostics(),
         "monitor": push_monitor.status(),
     }
 
