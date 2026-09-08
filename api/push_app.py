@@ -11,6 +11,7 @@ from api.deep_analysis import build_deep_transfer_analysis
 from api.engine import get_engine
 from api.push import PushStore, is_expo_push_token, send_expo_push
 from api.push_monitor import PushMonitor
+from api.serialize import analysis_from_state
 from lro_odds import build_preseason_odds
 
 push_store = PushStore()
@@ -24,6 +25,13 @@ def _token_from(payload: dict[str, Any]) -> str:
     if not is_expo_push_token(token):
         raise HTTPException(status_code=400, detail="Ugyldig Expo push-token.")
     return token
+
+
+def _float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 @app.get("/api/preseason-tip")
@@ -95,6 +103,72 @@ def deep_analysis_transfers(
     if ranked:
         body["recommendations"] = ranked[:5]
     return body
+
+
+@app.get("/api/deep-analysis/ownership")
+def deep_analysis_ownership() -> dict[str, Any]:
+    """Combine Lofthus ownership with the global FPL market and free FPL stats."""
+    eng = get_engine()
+    snap = eng.snapshot()
+    if not snap.state:
+        raise HTTPException(status_code=503, detail="Live-data er ikke klare ennå.")
+
+    payload = analysis_from_state(snap.state)
+    by_element = {
+        int(row.get("id") or 0): row
+        for row in (snap.bootstrap.get("elements") or [])
+        if int(row.get("id") or 0)
+    }
+
+    rows: list[dict[str, Any]] = []
+    for source in payload.get("ownership") or []:
+        row = dict(source)
+        meta = by_element.get(int(row.get("element") or 0), {})
+        lofthus_pct = _float(row.get("ownership_pct"))
+        global_pct = _float(meta.get("selected_by_percent"))
+        form = _float(meta.get("form"))
+        ppg = _float(meta.get("points_per_game"))
+        total_points = int(_float(meta.get("total_points")))
+        minutes = int(_float(meta.get("minutes")))
+        xgi90 = _float(meta.get("expected_goal_involvements_per_90"))
+        status = str(meta.get("status") or "a")
+
+        # League differential score: low Lofthus ownership is the main factor,
+        # but a player must also have a credible current FPL signal.
+        rarity = max(0.0, 100.0 - lofthus_pct) / 100.0
+        form_signal = min(max(form / 10.0, 0.0), 1.0)
+        ppg_signal = min(max(ppg / 8.0, 0.0), 1.0)
+        xgi_signal = min(max(xgi90 / 0.9, 0.0), 1.0)
+        availability = 1.0 if status == "a" else 0.55
+        differential_score = 100.0 * availability * (
+            0.48 * rarity + 0.19 * form_signal + 0.17 * ppg_signal + 0.16 * xgi_signal
+        )
+
+        row.update(
+            {
+                "global_ownership_pct": round(global_pct, 1),
+                "ownership_gap_pct": round(lofthus_pct - global_pct, 1),
+                "form": round(form, 1),
+                "points_per_game": round(ppg, 1),
+                "season_points": total_points,
+                "season_minutes": minutes,
+                "xgi_per90": round(xgi90, 3),
+                "status": status,
+                "differential_score": round(differential_score, 1),
+            }
+        )
+        rows.append(row)
+
+    return {
+        "players": rows,
+        "league_size": payload.get("league_size"),
+        "loaded_managers": payload.get("loaded_managers"),
+        "complete": payload.get("complete", True),
+        "sources": [
+            "Lofthus Road Open live ownership",
+            "Fantasy Premier League bootstrap",
+        ],
+    }
 
 
 @app.get("/api/push/status")
