@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -8,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from api.league_journal import league_journal
 from lro_analysis import canonical_managers, nint
 from lro_archive import SnapshotStore
 from lro_config import LeagueConfig, load_config
@@ -79,6 +81,7 @@ class AppEngine:
         self._newsroom: list[dict[str, Any]] = []
         self._month_rows: list[dict] | None = None
         self._month_rows_key: tuple | None = None
+        self._journal_marked: set[tuple[int, str]] = set()
         self.pulse = PulseHub()
         self._pulse_thread: threading.Thread | None = None
 
@@ -187,6 +190,41 @@ class AppEngine:
         )
         return (state.event_id, state.event_status, managers, players, fixtures)
 
+    @staticmethod
+    def _journal_kind(state: LiveState) -> str | None:
+        if state.is_finished:
+            return "verdict"
+        # Picks are public after the deadline. `reveal` is first-write-wins in
+        # LeagueJournal, so the first state adopted after deadline becomes the
+        # frozen lineup reveal even as later live refreshes keep arriving.
+        if state.is_live or state.event_status == "between_matches":
+            return "reveal"
+        return None
+
+    def _schedule_journal(self, state: LiveState) -> None:
+        kind = self._journal_kind(state)
+        event_id = int(state.event_id or 0)
+        if not kind or not event_id:
+            return
+        key = (event_id, kind)
+        if key in self._journal_marked:
+            return
+        self._journal_marked.add(key)
+
+        def write() -> None:
+            try:
+                league_journal.record(self, state, kind)
+            except Exception:
+                # Journal memory is useful but must never take the live engine
+                # down. LeagueJournal itself already falls back to local JSON.
+                pass
+
+        threading.Thread(
+            target=write,
+            name=f"lro-journal-{self.config.league_id}-{event_id}-{kind}",
+            daemon=True,
+        ).start()
+
     def _adopt_live(self, state: LiveState | None) -> None:
         if state is None:
             return
@@ -198,6 +236,7 @@ class AppEngine:
         snapshot_id = f"{stamp}:{len(state.manager_live)}:{state.event_id}:{self.pulse.seq + 1}"
         events = diff_live_states(old, state, snapshot_id)
         self._live_state = state
+        self._schedule_journal(state)
         self.pulse.publish(
             {
                 "type": "snapshot_updated",
@@ -312,10 +351,10 @@ class AppEngine:
             self._month_rows_key = key
         return rows
 
-    def snapshot(self) -> RequestSnapshot:
+    def snapshot(self, *, include_histories: bool = True) -> RequestSnapshot:
         bootstrap, managers, errors = self.load_shell()
         state = self.live_state()
-        histories = self.histories()
+        histories = self.histories() if include_histories else self._histories
         generated = datetime.now(timezone.utc).isoformat()
         stamp = state.fetched_at.isoformat() if state else "none"
         seq = self.pulse.seq
@@ -329,6 +368,10 @@ class AppEngine:
             generated_at=generated,
             seq=seq,
         )
+
+    def light_snapshot(self) -> RequestSnapshot:
+        """Snapshot for routes that do not need a full manager-history sweep."""
+        return self.snapshot(include_histories=False)
 
     def manager_states(self, snap: RequestSnapshot | None = None):
         if snap is None:
@@ -371,6 +414,7 @@ class AppEngine:
             self._histories = histories if histories is not None else {}
             self._month_rows = None
             self._month_rows_key = None
+            self._journal_marked = set()
             self.eager = True
             self.pulse = PulseHub()
 
@@ -378,7 +422,8 @@ class AppEngine:
         self.load_shell()
         if not self.eager:
             self.live_state()
-            self.histories()
+            if os.getenv("LRO_WARM_HISTORIES", "0") == "1":
+                self.histories()
         self.start_pulse()
 
 
