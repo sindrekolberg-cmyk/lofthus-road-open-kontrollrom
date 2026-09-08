@@ -12,6 +12,7 @@ from api.engine import get_engine
 from api.push import PushStore, is_expo_push_token, send_expo_push
 from api.push_monitor import PushMonitor
 from api.serialize import analysis_from_state
+from api.wildcard import build_wildcard_analysis
 from lro_odds import build_preseason_odds
 
 push_store = PushStore()
@@ -105,6 +106,24 @@ def deep_analysis_transfers(
     return body
 
 
+@app.get("/api/deep-analysis/wildcard")
+def deep_analysis_wildcard(
+    entry_id: int = Query(...),
+    strategy: str = Query("balanced"),
+    risk: int = Query(50),
+    horizon: int = Query(5),
+) -> dict[str, Any]:
+    body = build_wildcard_analysis(
+        entry_id=entry_id,
+        strategy=strategy,
+        risk=risk,
+        horizon=max(5, horizon),
+    )
+    if not body.get("ok"):
+        raise HTTPException(status_code=404, detail=body.get("error") or "Wildcard-analysen kunne ikke bygges.")
+    return body
+
+
 @app.get("/api/deep-analysis/ownership")
 def deep_analysis_ownership() -> dict[str, Any]:
     """Combine Lofthus ownership with the global FPL market and free FPL stats."""
@@ -133,8 +152,6 @@ def deep_analysis_ownership() -> dict[str, Any]:
         xgi90 = _float(meta.get("expected_goal_involvements_per_90"))
         status = str(meta.get("status") or "a")
 
-        # League differential score: low Lofthus ownership is the main factor,
-        # but a player must also have a credible current FPL signal.
         rarity = max(0.0, 100.0 - lofthus_pct) / 100.0
         form_signal = min(max(form / 10.0, 0.0), 1.0)
         ppg_signal = min(max(ppg / 8.0, 0.0), 1.0)
