@@ -22,6 +22,36 @@ class ErrorEntry:
     expires_at: float
 
 
+def _semantic_snapshot_id(value: Any) -> Any:
+    """Drop the fetch timestamp from RequestSnapshot IDs used in analysis keys.
+
+    RequestSnapshot currently uses `<fetched_at>:<league-size>:<gw>:<seq>`. The
+    fetched_at portion changes on a harmless refresh even when the live semantic
+    signature did not change, which used to make a 300-second analysis TTL act
+    like an 8-second cache. `seq` already advances when the engine adopts a real
+    state change, so league-size + GW + seq is the correct cache generation.
+    """
+    if not isinstance(value, str):
+        return value
+    parts = value.rsplit(":", 3)
+    if len(parts) != 4:
+        return value
+    league_size, event_id, seq = parts[1:]
+    if not all(part.lstrip("-").isdigit() for part in (league_size, event_id, seq)):
+        return value
+    return f"snapshot:{league_size}:{event_id}:{seq}"
+
+
+def _normalize_key(key: Hashable) -> Hashable:
+    # Analysis keys in this project start with league_id and snapshot_id. Keep
+    # arbitrary keys untouched so the cache remains useful as a small generic.
+    if isinstance(key, tuple) and len(key) >= 2 and isinstance(key[0], int):
+        normalized_snapshot = _semantic_snapshot_id(key[1])
+        if normalized_snapshot != key[1]:
+            return (key[0], normalized_snapshot, *key[2:])
+    return key
+
+
 class SingleFlightTTLCache:
     """Small process-local cache with duplicate-work suppression.
 
@@ -53,6 +83,13 @@ class SingleFlightTTLCache:
         self.evictions = 0
         self.failures = 0
         self.wait_timeouts = 0
+        self.semantic_key_collapses = 0
+
+    def _key(self, key: Hashable) -> Hashable:
+        normalized = _normalize_key(key)
+        if normalized != key:
+            self.semantic_key_collapses += 1
+        return normalized
 
     def _prune(self) -> None:
         now = time.monotonic()
@@ -75,6 +112,7 @@ class SingleFlightTTLCache:
 
     def get(self, key: Hashable) -> Any | None:
         with self._lock:
+            key = self._key(key)
             self._prune()
             entry = self._entries.get(key)
             if entry is None:
@@ -88,6 +126,7 @@ class SingleFlightTTLCache:
         ttl = max(1.0, float(ttl_seconds))
         now = time.monotonic()
         with self._lock:
+            key = self._key(key)
             self._entries[key] = CacheEntry(deepcopy(value), now + ttl, now)
             self._entries.move_to_end(key)
             self._errors.pop(key, None)
@@ -104,6 +143,7 @@ class SingleFlightTTLCache:
 
     def get_or_build(self, key: Hashable, builder: Callable[[], Any], ttl_seconds: float) -> Any:
         with self._lock:
+            key = self._key(key)
             self._prune()
             entry = self._entries.get(key)
             if entry is not None:
@@ -176,6 +216,7 @@ class SingleFlightTTLCache:
                 "evictions": self.evictions,
                 "failures": self.failures,
                 "wait_timeouts": self.wait_timeouts,
+                "semantic_key_collapses": self.semantic_key_collapses,
             }
 
 
