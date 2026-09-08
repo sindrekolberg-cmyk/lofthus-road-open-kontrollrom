@@ -9,10 +9,8 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any
 
-from api.league_registry import league_registry
 from api.push import DEFAULT_LEAGUE_ID, PushStore
 from api.push_delivery import send_expo_messages
-from api.serialize import analysis_from_state, squad_payload
 
 MAIN_API = os.getenv("LRO_MAIN_API_URL", "https://lofthus-road-open-api.onrender.com").rstrip("/")
 FPL_LIVE_URL = "https://fantasy.premierleague.com/api/event/{event_id}/live/"
@@ -33,10 +31,7 @@ def _now() -> str:
 def _get_json(url: str, timeout: int = 12) -> dict[str, Any]:
     req = urllib.request.Request(
         url,
-        headers={
-            "Accept": "application/json",
-            "User-Agent": "Lofthus-Road-Open-Push/3.0",
-        },
+        headers={"Accept": "application/json", "User-Agent": "Lofthus-Road-Open-Push/4.0"},
         method="GET",
     )
     try:
@@ -94,8 +89,6 @@ def _active_picks(profile: dict[str, Any]) -> dict[int, dict[str, Any]]:
         out[element] = {
             "player": str(row.get("player") or row.get("full_name") or f"Spiller {element}"),
             "multiplier": multiplier,
-            "is_captain": bool(row.get("is_captain")),
-            "is_triple_captain": bool(row.get("is_triple_captain")),
         }
     return out
 
@@ -104,11 +97,8 @@ def _ownership_index(payload: dict[str, Any]) -> tuple[dict[int, dict[str, Any]]
     league_size = max(1, _nint(payload.get("league_size")))
     out: dict[int, dict[str, Any]] = {}
     for row in payload.get("players") or []:
-        if not isinstance(row, dict):
-            continue
-        element = _nint(row.get("element"))
-        if element:
-            out[element] = row
+        if isinstance(row, dict) and _nint(row.get("element")):
+            out[_nint(row.get("element"))] = row
     return out, league_size
 
 
@@ -146,16 +136,25 @@ def _impact_message(
     return f"{icon} {player}", f"{player} {phrase}{count}. {ownership}{own}{impact}"
 
 
-def _league_snapshot(league_id: int) -> tuple[dict[int, dict[str, Any]], int, Any | None]:
-    runtime = league_registry.get(int(league_id))
-    snap = runtime.engine.snapshot()
-    if not snap.state:
-        return {}, len(snap.managers) or 1, None
-    ownership, size = _ownership_index(analysis_from_state(snap.state))
-    return ownership, size, snap.state
+def _ownership_url(league_id: int) -> str:
+    if int(league_id) == DEFAULT_LEAGUE_ID:
+        return f"{MAIN_API}/api/analysis/ownership"
+    return f"{MAIN_API}/api/tenant/{int(league_id)}/analysis/ownership"
+
+
+def _manager_url(league_id: int, entry_id: int) -> str:
+    if int(league_id) == DEFAULT_LEAGUE_ID:
+        return f"{MAIN_API}/api/managers/{int(entry_id)}"
+    return f"{MAIN_API}/api/tenant/{int(league_id)}/managers/{int(entry_id)}"
 
 
 class PushMonitor:
+    """Near-live event worker backed by the main API's league state.
+
+    Keeping tenant engines out of the push process avoids duplicating every
+    league's picks, histories and FPL caches in two Render services.
+    """
+
     def __init__(self, store: PushStore):
         self.store = store
         self.interval = max(15, _nint(os.getenv("LRO_PUSH_POLL_SECONDS", "25")) or 25)
@@ -174,6 +173,7 @@ class PushMonitor:
             "last_http_batches": 0,
             "invalid_tokens_removed": 0,
             "leagues_checked": 0,
+            "league_context_source": "main-api",
         }
 
     def status(self) -> dict[str, Any]:
@@ -197,7 +197,7 @@ class PushMonitor:
         while True:
             try:
                 self.poll_once()
-            except Exception as exc:  # pragma: no cover - network guard
+            except Exception as exc:  # pragma: no cover
                 self._set_status(last_poll=_now(), last_error=str(exc)[:500])
             time.sleep(self.interval)
 
@@ -211,20 +211,9 @@ class PushMonitor:
             and bool((row.get("prefs") or {}).get("live_events", True))
         ]
         if not subscribers:
-            self._set_status(
-                last_poll=_now(),
-                last_error=None,
-                last_changes=0,
-                last_sent=0,
-                last_failed=0,
-                last_http_batches=0,
-                invalid_tokens_removed=0,
-                leagues_checked=0,
-            )
+            self._set_status(last_poll=_now(), last_error=None, last_changes=0, last_sent=0, last_failed=0, last_http_batches=0, invalid_tokens_removed=0, leagues_checked=0)
             return self.status()
 
-        # FPL's event clock is global, so one lightweight status call is enough to
-        # decide whether player-live polling is necessary for every mini-league.
         status = _get_json(f"{MAIN_API}/api/status")
         event_id = _nint(status.get("event_id"))
         is_live = bool(status.get("is_live"))
@@ -232,36 +221,14 @@ class PushMonitor:
             if event_id and event_id != self._last_event_id:
                 self._last_event_id = event_id
                 self._stats = {}
-            self._set_status(
-                last_poll=_now(),
-                last_error=None,
-                last_event_id=event_id,
-                last_changes=0,
-                last_sent=0,
-                last_failed=0,
-                last_http_batches=0,
-                invalid_tokens_removed=0,
-                leagues_checked=0,
-            )
+            self._set_status(last_poll=_now(), last_error=None, last_event_id=event_id, last_changes=0, last_sent=0, last_failed=0, last_http_batches=0, invalid_tokens_removed=0, leagues_checked=0)
             return self.status()
 
-        live = _get_json(FPL_LIVE_URL.format(event_id=event_id))
-        current = _player_stats(live)
-
+        current = _player_stats(_get_json(FPL_LIVE_URL.format(event_id=event_id)))
         if event_id != self._last_event_id or not self._stats:
             self._last_event_id = event_id
             self._stats = current
-            self._set_status(
-                last_poll=_now(),
-                last_error=None,
-                last_event_id=event_id,
-                last_changes=0,
-                last_sent=0,
-                last_failed=0,
-                last_http_batches=0,
-                invalid_tokens_removed=0,
-                leagues_checked=0,
-            )
+            self._set_status(last_poll=_now(), last_error=None, last_event_id=event_id, last_changes=0, last_sent=0, last_failed=0, last_http_batches=0, invalid_tokens_removed=0, leagues_checked=0)
             return self.status()
 
         changes: list[tuple[int, str, int, int]] = []
@@ -273,7 +240,7 @@ class PushMonitor:
                 if delta > 0:
                     changes.append((element, field, delta, point_delta))
 
-        league_cache: dict[int, tuple[dict[int, dict[str, Any]], int, Any | None]] = {}
+        league_cache: dict[int, tuple[dict[int, dict[str, Any]], int] | None] = {}
         picks_cache: dict[tuple[int, int], dict[int, dict[str, Any]]] = {}
         leagues_checked: set[int] = set()
         messages: list[dict[str, Any]] = []
@@ -288,18 +255,19 @@ class PushMonitor:
 
                 if league_id not in league_cache:
                     try:
-                        league_cache[league_id] = _league_snapshot(league_id)
+                        league_cache[league_id] = _ownership_index(_get_json(_ownership_url(league_id), timeout=20))
                         leagues_checked.add(league_id)
                     except Exception:
-                        league_cache[league_id] = ({}, 1, None)
-                ownership_by_element, league_size, state = league_cache[league_id]
-                if state is None:
+                        league_cache[league_id] = None
+                context = league_cache[league_id]
+                if context is None:
                     continue
+                ownership_by_element, league_size = context
 
                 cache_key = (league_id, entry_id)
                 if cache_key not in picks_cache:
                     try:
-                        picks_cache[cache_key] = _active_picks({"squad": squad_payload(state, entry_id)})
+                        picks_cache[cache_key] = _active_picks(_get_json(_manager_url(league_id, entry_id), timeout=20))
                     except Exception:
                         picks_cache[cache_key] = {}
                 picks = picks_cache[cache_key]
@@ -308,17 +276,15 @@ class PushMonitor:
                     ownership = ownership_by_element.get(element, {})
                     pick = picks.get(element)
                     multiplier = _nint((pick or {}).get("multiplier"))
-                    impact = state.player(element)
-                    player = str((pick or {}).get("player") or ownership.get("player") or getattr(impact, "player", "") or f"Spiller {element}")
+                    player = str((pick or {}).get("player") or ownership.get("player") or f"Spiller {element}")
                     ownership_count = _nint(ownership.get("ownership_count"))
-                    effective_ownership = _nfloat(ownership.get("effective_ownership_pct")) / 100.0
-                    relative_swing = point_delta * (multiplier - effective_ownership)
+                    effective_pct = _nfloat(ownership.get("effective_ownership_pct"))
+                    if effective_pct <= 0:
+                        effective_pct = _nfloat(ownership.get("ownership_pct"))
+                    relative_swing = point_delta * (multiplier - effective_pct / 100.0)
 
-                    # Own active players always matter. Non-owned players are only
-                    # sent when the event has a material league impact for the user.
                     if multiplier <= 0 and abs(relative_swing) < 0.9:
                         continue
-
                     title, body = _impact_message(
                         player=player,
                         field=field,
@@ -345,19 +311,9 @@ class PushMonitor:
                         }
                     )
 
-        delivery = send_expo_messages(messages) if messages else {
-            "accepted": 0,
-            "failed": 0,
-            "http_batches": 0,
-            "invalid_tokens": [],
-        }
-        removed = 0
-        for token in delivery.get("invalid_tokens") or []:
-            try:
-                if self.store.remove(str(token)):
-                    removed += 1
-            except Exception:
-                continue
+        delivery = send_expo_messages(messages) if messages else {"accepted": 0, "failed": 0, "http_batches": 0, "invalid_tokens": []}
+        invalid = [str(token) for token in delivery.get("invalid_tokens") or []]
+        removed = self.store.remove_many(invalid) if invalid else 0
 
         self._stats = current
         self._set_status(
