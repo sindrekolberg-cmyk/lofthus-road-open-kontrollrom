@@ -4,8 +4,10 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 
+from api.league_experience_v2 import build_league_experience_v2
 from api.league_intelligence_v2 import build_league_intelligence_v2
 from api.league_registry import league_registry
+from api.platform_store import platform_store
 from api.serialize import (
     analysis_from_state,
     live_events_payload,
@@ -19,8 +21,9 @@ from api.serialize import (
     status_payload,
     talkers_payload,
 )
+from api.service_cache import analysis_cache
 from api.tenant_analysis import build_tenant_transfer_analysis, build_tenant_wildcard_analysis
-from lro_analysis import nint
+from lro_analysis import nfloat, nint
 from lro_rival import compare_managers
 
 
@@ -44,6 +47,7 @@ def _status(runtime, snap) -> dict[str, Any]:
     )
     body.update(snap.meta())
     body["league_id"] = runtime.league_id
+    body["tenant"] = True
     return body
 
 
@@ -93,7 +97,6 @@ def _form_rows(histories: dict[int, dict] | None, entry: int) -> list[dict[str, 
     mine = list((_history_payload(histories, entry).get("current") or []))
     if not mine:
         return []
-
     per_event: dict[int, list[tuple[int, int, int]]] = {}
     for raw_entry, payload in (histories or {}).items():
         try:
@@ -130,7 +133,111 @@ def _form_rows(histories: dict[int, dict] | None, entry: int) -> list[dict[str, 
     return out[-10:]
 
 
+def _analysis_ttl(snap, *, slow: bool = False) -> int:
+    if snap.state and snap.state.is_live:
+        return 35 if slow else 20
+    return 300 if slow else 90
+
+
+def _analysis_key(runtime, snap, kind: str, *parts: Any) -> tuple[Any, ...]:
+    return (runtime.league_id, snap.snapshot_id, kind, *parts)
+
+
+def _ownership_payload(snap) -> dict[str, Any]:
+    if not snap.state:
+        return {"players": [], "league_size": len(snap.managers), "complete": False}
+    payload = analysis_from_state(snap.state)
+    by_element = {
+        nint(row.get("id")): row
+        for row in (snap.bootstrap.get("elements") or [])
+        if nint(row.get("id"))
+    }
+    rows: list[dict[str, Any]] = []
+    for source in payload.get("ownership") or []:
+        row = dict(source)
+        meta = by_element.get(nint(row.get("element")), {})
+        league_pct = nfloat(row.get("ownership_pct"))
+        global_pct = nfloat(meta.get("selected_by_percent"))
+        form = nfloat(meta.get("form"))
+        ppg = nfloat(meta.get("points_per_game"))
+        xgi90 = nfloat(meta.get("expected_goal_involvements_per_90"))
+        status = str(meta.get("status") or "a")
+        rarity = max(0.0, 100.0 - league_pct) / 100.0
+        differential = 100.0 * (1.0 if status == "a" else 0.55) * (
+            0.48 * rarity
+            + 0.19 * min(max(form / 10.0, 0.0), 1.0)
+            + 0.17 * min(max(ppg / 8.0, 0.0), 1.0)
+            + 0.16 * min(max(xgi90 / 0.9, 0.0), 1.0)
+        )
+        row.update(
+            {
+                "global_ownership_pct": round(global_pct, 1),
+                "ownership_gap_pct": round(league_pct - global_pct, 1),
+                "form": round(form, 1),
+                "points_per_game": round(ppg, 1),
+                "season_points": nint(meta.get("total_points")),
+                "season_minutes": nint(meta.get("minutes")),
+                "xgi_per90": round(xgi90, 3),
+                "status": status,
+                "differential_score": round(differential, 1),
+            }
+        )
+        rows.append(row)
+    return {
+        "players": rows,
+        "league_size": payload.get("league_size"),
+        "loaded_managers": payload.get("loaded_managers"),
+        "complete": payload.get("complete", True),
+        "sources": ["Mini-ligaens live eierskap", "Fantasy Premier League bootstrap"],
+    }
+
+
 def register_tenant_routes(app: FastAPI) -> None:
+    if getattr(app.state, "tenant_routes_registered", False):
+        return
+    app.state.tenant_routes_registered = True
+
+    @app.get("/api/platform/status")
+    def platform_status() -> dict[str, Any]:
+        return {
+            "ok": True,
+            "registry": league_registry.diagnostics(),
+            "analysis_cache": analysis_cache.diagnostics(),
+            "persistence": platform_store.diagnostics(),
+        }
+
+    @app.post("/api/profile")
+    def save_profile(payload: dict[str, Any]) -> dict[str, Any]:
+        installation_id = str(payload.get("installation_id") or "").strip()
+        league_id = nint(payload.get("league_id"))
+        entry_id = nint(payload.get("entry_id"))
+        if not installation_id or not league_id or not entry_id:
+            raise HTTPException(status_code=400, detail="Mangler installation_id, league_id eller entry_id.")
+        runtime = _runtime(league_id)
+        snap = runtime.engine.snapshot()
+        valid_entries = {row["entry"] for row in _manager_options(runtime, snap)}
+        if entry_id not in valid_entries:
+            raise HTTPException(status_code=400, detail="Manageren finnes ikke i denne ligaen.")
+        try:
+            record = platform_store.upsert_profile(
+                installation_id,
+                league_id=league_id,
+                entry_id=entry_id,
+                goal=str(payload.get("goal") or "auto"),
+                app_version=str(payload.get("app_version") or ""),
+                metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "profile": record, "durable": platform_store.durable}
+
+    @app.get("/api/profile/{installation_id}")
+    def get_profile(installation_id: str) -> dict[str, Any]:
+        profile = platform_store.get_profile(installation_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail="Profilen finnes ikke.")
+        return {"ok": True, "profile": profile, "durable": platform_store.durable}
+
     @app.get("/api/tenant/connect")
     def tenant_connect(league_id: int = Query(..., gt=0)) -> dict[str, Any]:
         try:
@@ -247,15 +354,22 @@ def register_tenant_routes(app: FastAPI) -> None:
     def tenant_ownership(league_id: int) -> dict[str, Any]:
         runtime = _runtime(league_id)
         snap = runtime.engine.snapshot()
-        if not snap.state:
-            return {"players": [], "league_size": len(snap.managers), "complete": False}
-        payload = analysis_from_state(snap.state)
-        return {
-            "players": payload["ownership"],
-            "league_size": payload["league_size"],
-            "loaded_managers": payload.get("loaded_managers"),
-            "complete": payload.get("complete", True),
-        }
+        key = _analysis_key(runtime, snap, "ownership")
+        return analysis_cache.get_or_build(key, lambda: _ownership_payload(snap), _analysis_ttl(snap))
+
+    @app.get("/api/tenant/{league_id}/analysis/differentials")
+    def tenant_differentials(league_id: int) -> dict[str, Any]:
+        runtime = _runtime(league_id)
+        snap = runtime.engine.snapshot()
+        key = _analysis_key(runtime, snap, "differentials")
+        def build() -> dict[str, Any]:
+            payload = _ownership_payload(snap)
+            players = sorted(
+                payload.get("players") or [],
+                key=lambda row: (-nfloat(row.get("differential_score")), -nfloat(row.get("xgi_per90")), str(row.get("player") or "")),
+            )
+            return {"players": players[:30], "league_size": payload.get("league_size"), "sources": payload.get("sources")}
+        return analysis_cache.get_or_build(key, build, _analysis_ttl(snap))
 
     @app.get("/api/tenant/{league_id}/analysis/captain")
     def tenant_captain(league_id: int) -> dict[str, Any]:
@@ -270,22 +384,28 @@ def register_tenant_routes(app: FastAPI) -> None:
         league_id: int,
         entry_id: int = Query(...),
         strategy: str = Query("balanced"),
-        risk: int = Query(50),
-        horizon: int = Query(5),
+        risk: int = Query(50, ge=0, le=100),
+        horizon: int = Query(5, ge=5, le=10),
         target: str = Query(""),
         rival_id: int = Query(0),
         position: str = Query("all"),
     ) -> dict[str, Any]:
         runtime = _runtime(league_id)
-        body = build_tenant_transfer_analysis(
-            engine=runtime.engine,
-            entry_id=entry_id,
-            strategy=strategy,
-            risk=risk,
-            horizon=max(5, horizon),
-            target=target,
-            rival_id=rival_id,
-            position=position,
+        snap = runtime.engine.snapshot()
+        key = _analysis_key(runtime, snap, "transfers", entry_id, strategy, risk, horizon, target, rival_id, position)
+        body = analysis_cache.get_or_build(
+            key,
+            lambda: build_tenant_transfer_analysis(
+                engine=runtime.engine,
+                entry_id=entry_id,
+                strategy=strategy,
+                risk=risk,
+                horizon=horizon,
+                target=target,
+                rival_id=rival_id,
+                position=position,
+            ),
+            _analysis_ttl(snap, slow=True),
         )
         if not body.get("ok"):
             raise HTTPException(status_code=404, detail=body.get("error") or "Analysen kunne ikke bygges.")
@@ -296,16 +416,22 @@ def register_tenant_routes(app: FastAPI) -> None:
         league_id: int,
         entry_id: int = Query(...),
         strategy: str = Query("balanced"),
-        risk: int = Query(50),
-        horizon: int = Query(5),
+        risk: int = Query(50, ge=0, le=100),
+        horizon: int = Query(5, ge=5, le=10),
     ) -> dict[str, Any]:
         runtime = _runtime(league_id)
-        body = build_tenant_wildcard_analysis(
-            engine=runtime.engine,
-            entry_id=entry_id,
-            strategy=strategy,
-            risk=risk,
-            horizon=max(5, horizon),
+        snap = runtime.engine.snapshot()
+        key = _analysis_key(runtime, snap, "wildcard", entry_id, strategy, risk, horizon)
+        body = analysis_cache.get_or_build(
+            key,
+            lambda: build_tenant_wildcard_analysis(
+                engine=runtime.engine,
+                entry_id=entry_id,
+                strategy=strategy,
+                risk=risk,
+                horizon=horizon,
+            ),
+            _analysis_ttl(snap, slow=True),
         )
         if not body.get("ok"):
             raise HTTPException(status_code=404, detail=body.get("error") or "Wildcard-analysen kunne ikke bygges.")
@@ -318,7 +444,31 @@ def register_tenant_routes(app: FastAPI) -> None:
         goal: str = Query("auto"),
     ) -> dict[str, Any]:
         runtime = _runtime(league_id)
-        body = build_league_intelligence_v2(entry_id=entry_id, goal=goal, engine=runtime.engine)
+        snap = runtime.engine.snapshot()
+        key = _analysis_key(runtime, snap, "intelligence-v2", entry_id, goal)
+        body = analysis_cache.get_or_build(
+            key,
+            lambda: build_league_intelligence_v2(entry_id=entry_id, goal=goal, engine=runtime.engine),
+            _analysis_ttl(snap, slow=True),
+        )
         if not body.get("ok"):
             raise HTTPException(status_code=404, detail=body.get("error") or "Liga-analysen kunne ikke bygges.")
+        return body
+
+    @app.get("/api/tenant/{league_id}/experience")
+    def tenant_experience(
+        league_id: int,
+        entry_id: int = Query(...),
+        goal: str = Query("auto"),
+    ) -> dict[str, Any]:
+        runtime = _runtime(league_id)
+        snap = runtime.engine.snapshot()
+        key = _analysis_key(runtime, snap, "experience-v2", entry_id, goal)
+        body = analysis_cache.get_or_build(
+            key,
+            lambda: build_league_experience_v2(entry_id=entry_id, goal=goal, engine=runtime.engine),
+            _analysis_ttl(snap, slow=True),
+        )
+        if not body.get("ok"):
+            raise HTTPException(status_code=404, detail=body.get("error") or "Ligaopplevelsen kunne ikke bygges.")
         return body
