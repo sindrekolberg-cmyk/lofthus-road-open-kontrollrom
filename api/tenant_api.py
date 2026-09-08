@@ -4,7 +4,6 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 
-from api.deep_analysis import build_deep_transfer_analysis
 from api.league_intelligence_v2 import build_league_intelligence_v2
 from api.league_registry import league_registry
 from api.serialize import (
@@ -20,7 +19,7 @@ from api.serialize import (
     status_payload,
     talkers_payload,
 )
-from api.wildcard import build_wildcard_analysis
+from api.tenant_analysis import build_tenant_transfer_analysis, build_tenant_wildcard_analysis
 from lro_analysis import nint
 from lro_rival import compare_managers
 
@@ -278,7 +277,8 @@ def register_tenant_routes(app: FastAPI) -> None:
         position: str = Query("all"),
     ) -> dict[str, Any]:
         runtime = _runtime(league_id)
-        body = build_deep_transfer_analysis(
+        body = build_tenant_transfer_analysis(
+            engine=runtime.engine,
             entry_id=entry_id,
             strategy=strategy,
             risk=risk,
@@ -286,7 +286,6 @@ def register_tenant_routes(app: FastAPI) -> None:
             target=target,
             rival_id=rival_id,
             position=position,
-            engine=runtime.engine,
         )
         if not body.get("ok"):
             raise HTTPException(status_code=404, detail=body.get("error") or "Analysen kunne ikke bygges.")
@@ -301,12 +300,12 @@ def register_tenant_routes(app: FastAPI) -> None:
         horizon: int = Query(5),
     ) -> dict[str, Any]:
         runtime = _runtime(league_id)
-        body = build_wildcard_analysis(
+        body = build_tenant_wildcard_analysis(
+            engine=runtime.engine,
             entry_id=entry_id,
             strategy=strategy,
             risk=risk,
             horizon=max(5, horizon),
-            engine=runtime.engine,
         )
         if not body.get("ok"):
             raise HTTPException(status_code=404, detail=body.get("error") or "Wildcard-analysen kunne ikke bygges.")
