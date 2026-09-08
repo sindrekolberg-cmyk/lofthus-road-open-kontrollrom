@@ -9,7 +9,9 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any
 
-from api.push import PushStore, send_expo_push
+from api.league_registry import league_registry
+from api.push import DEFAULT_LEAGUE_ID, PushStore, send_expo_push
+from api.serialize import analysis_from_state, squad_payload
 
 MAIN_API = os.getenv("LRO_MAIN_API_URL", "https://lofthus-road-open-api.onrender.com").rstrip("/")
 FPL_LIVE_URL = "https://fantasy.premierleague.com/api/event/{event_id}/live/"
@@ -32,7 +34,7 @@ def _get_json(url: str, timeout: int = 12) -> dict[str, Any]:
         url,
         headers={
             "Accept": "application/json",
-            "User-Agent": "Lofthus-Road-Open-Push/2.0",
+            "User-Agent": "Lofthus-Road-Open-Push/3.0",
         },
         method="GET",
     )
@@ -143,6 +145,15 @@ def _impact_message(
     return f"{icon} {player}", f"{player} {phrase}{count}. {ownership}{own}{impact}"
 
 
+def _league_snapshot(league_id: int) -> tuple[dict[int, dict[str, Any]], int, Any | None]:
+    runtime = league_registry.get(int(league_id))
+    snap = runtime.engine.snapshot()
+    if not snap.state:
+        return {}, len(snap.managers) or 1, None
+    ownership, size = _ownership_index(analysis_from_state(snap.state))
+    return ownership, size, snap.state
+
+
 class PushMonitor:
     def __init__(self, store: PushStore):
         self.store = store
@@ -158,6 +169,7 @@ class PushMonitor:
             "last_event_id": 0,
             "last_changes": 0,
             "last_sent": 0,
+            "leagues_checked": 0,
         }
 
     def status(self) -> dict[str, Any]:
@@ -195,9 +207,11 @@ class PushMonitor:
             and bool((row.get("prefs") or {}).get("live_events", True))
         ]
         if not subscribers:
-            self._set_status(last_poll=_now(), last_error=None, last_changes=0, last_sent=0)
+            self._set_status(last_poll=_now(), last_error=None, last_changes=0, last_sent=0, leagues_checked=0)
             return self.status()
 
+        # FPL's event clock is global, so one lightweight status call is enough to
+        # decide whether player-live polling is necessary for every mini-league.
         status = _get_json(f"{MAIN_API}/api/status")
         event_id = _nint(status.get("event_id"))
         is_live = bool(status.get("is_live"))
@@ -211,6 +225,7 @@ class PushMonitor:
                 last_event_id=event_id,
                 last_changes=0,
                 last_sent=0,
+                leagues_checked=0,
             )
             return self.status()
 
@@ -226,6 +241,7 @@ class PushMonitor:
                 last_event_id=event_id,
                 last_changes=0,
                 last_sent=0,
+                leagues_checked=0,
             )
             return self.status()
 
@@ -239,43 +255,48 @@ class PushMonitor:
                     changes.append((element, field, delta, point_delta))
 
         sent = 0
-        profile_cache: dict[int, dict[str, Any]] = {}
-        picks_cache: dict[int, dict[int, dict[str, Any]]] = {}
-        ownership_by_element: dict[int, dict[str, Any]] = {}
-        league_size = 1
-        if changes:
-            try:
-                ownership_payload = _get_json(f"{MAIN_API}/api/analysis/ownership")
-                ownership_by_element, league_size = _ownership_index(ownership_payload)
-            except RuntimeError:
-                ownership_by_element = {}
-                league_size = 1
+        league_cache: dict[int, tuple[dict[int, dict[str, Any]], int, Any | None]] = {}
+        picks_cache: dict[tuple[int, int], dict[int, dict[str, Any]]] = {}
+        leagues_checked: set[int] = set()
 
+        if changes:
             for sub in subscribers:
                 entry_id = _nint(sub.get("entry_id"))
+                league_id = _nint(sub.get("league_id")) or DEFAULT_LEAGUE_ID
                 token = str(sub.get("expo_push_token") or "")
                 if not entry_id or not token:
                     continue
-                try:
-                    if entry_id not in profile_cache:
-                        profile_cache[entry_id] = _get_json(f"{MAIN_API}/api/managers/{entry_id}")
-                        picks_cache[entry_id] = _active_picks(profile_cache[entry_id])
-                    picks = picks_cache.get(entry_id, {})
-                except RuntimeError:
+
+                if league_id not in league_cache:
+                    try:
+                        league_cache[league_id] = _league_snapshot(league_id)
+                        leagues_checked.add(league_id)
+                    except Exception:
+                        league_cache[league_id] = ({}, 1, None)
+                ownership_by_element, league_size, state = league_cache[league_id]
+                if state is None:
                     continue
+
+                cache_key = (league_id, entry_id)
+                if cache_key not in picks_cache:
+                    try:
+                        picks_cache[cache_key] = _active_picks({"squad": squad_payload(state, entry_id)})
+                    except Exception:
+                        picks_cache[cache_key] = {}
+                picks = picks_cache[cache_key]
 
                 for element, field, delta, point_delta in changes:
                     ownership = ownership_by_element.get(element, {})
                     pick = picks.get(element)
                     multiplier = _nint((pick or {}).get("multiplier"))
-                    player = str((pick or {}).get("player") or ownership.get("player") or f"Spiller {element}")
+                    impact = state.player(element)
+                    player = str((pick or {}).get("player") or ownership.get("player") or getattr(impact, "player", "") or f"Spiller {element}")
                     ownership_count = _nint(ownership.get("ownership_count"))
                     effective_ownership = _nfloat(ownership.get("effective_ownership_pct")) / 100.0
                     relative_swing = point_delta * (multiplier - effective_ownership)
 
-                    # Always surface events involving the user's active players. For players
-                    # the user does not own, only notify when the event materially changes
-                    # their position relative to the league.
+                    # Own active players always matter. Non-owned players are only
+                    # sent when the event has a material league impact for the user.
                     if multiplier <= 0 and abs(relative_swing) < 0.9:
                         continue
 
@@ -295,6 +316,7 @@ class PushMonitor:
                             body=body,
                             data={
                                 "path": "/intel",
+                                "league_id": league_id,
                                 "entry_id": entry_id,
                                 "element": element,
                                 "event_id": event_id,
@@ -313,5 +335,6 @@ class PushMonitor:
             last_event_id=event_id,
             last_changes=len(changes),
             last_sent=sent,
+            leagues_checked=len(leagues_checked),
         )
         return self.status()
