@@ -78,7 +78,7 @@ def test_deep_projection_uses_role_fixture_and_set_pieces():
     score = provider.score(player(), fixtures, 5)
     detail = provider.details[99]
 
-    assert score["source"] == "fpl_deep_v1"
+    assert score["source"] == "fpl_deep_v2"
     assert score["projection"] > 0.55
     assert detail["stats"]["xgi_per90"] == 0.75
     assert detail["stats"]["next_fixture_count"] == 5
