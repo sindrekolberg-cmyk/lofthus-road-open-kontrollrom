@@ -80,6 +80,7 @@ class PushStore:
                     "league": bool((prefs or {}).get("league", True)),
                     "deadline": bool((prefs or {}).get("deadline", True)),
                     "personal": bool((prefs or {}).get("personal", True)),
+                    "live_events": bool((prefs or {}).get("live_events", True)),
                 },
                 "enabled": True,
                 "updated_at": now,
