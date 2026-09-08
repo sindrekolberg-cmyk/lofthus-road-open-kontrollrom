@@ -91,6 +91,9 @@ def deep_analysis_transfers(
     )
     if not body.get("ok"):
         raise HTTPException(status_code=404, detail=body.get("error") or "Analysen kunne ikke bygges.")
+    ranked = list(body.get("ranked") or [])
+    if ranked:
+        body["recommendations"] = ranked[:5]
     return body
 
 
