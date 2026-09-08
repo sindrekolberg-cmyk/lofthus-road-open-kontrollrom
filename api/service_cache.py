@@ -43,8 +43,6 @@ def _semantic_snapshot_id(value: Any) -> Any:
 
 
 def _normalize_key(key: Hashable) -> Hashable:
-    # Analysis keys in this project start with league_id and snapshot_id. Keep
-    # arbitrary keys untouched so the cache remains useful as a small generic.
     if isinstance(key, tuple) and len(key) >= 2 and isinstance(key[0], int):
         normalized_snapshot = _semantic_snapshot_id(key[1])
         if normalized_snapshot != key[1]:
@@ -53,14 +51,7 @@ def _normalize_key(key: Hashable) -> Hashable:
 
 
 class SingleFlightTTLCache:
-    """Small process-local cache with duplicate-work suppression.
-
-    Expensive analysis endpoints are easy to hammer accidentally from mobile
-    rerenders, pull-to-refresh and several users in the same league. One builder
-    runs per key; concurrent callers wait for that result instead of recomputing
-    the same projection workload. Failed builders are cached briefly so a broken
-    upstream does not cause an immediate retry storm.
-    """
+    """Small process-local cache with duplicate-work suppression."""
 
     def __init__(
         self,
@@ -70,8 +61,10 @@ class SingleFlightTTLCache:
         error_ttl_seconds: float = 12.0,
     ):
         self.max_items = max(16, int(max_items))
-        self.wait_timeout_seconds = max(1.0, float(wait_timeout_seconds))
-        self.error_ttl_seconds = max(1.0, float(error_ttl_seconds))
+        # Keep production values sane while still allowing deterministic,
+        # sub-second unit tests. Clamping this to 1s hid waiter-timeout bugs.
+        self.wait_timeout_seconds = max(0.01, float(wait_timeout_seconds))
+        self.error_ttl_seconds = max(0.01, float(error_ttl_seconds))
         self._lock = threading.RLock()
         self._entries: OrderedDict[Hashable, CacheEntry] = OrderedDict()
         self._inflight: dict[Hashable, threading.Event] = {}
@@ -123,7 +116,7 @@ class SingleFlightTTLCache:
             return deepcopy(entry.value)
 
     def set(self, key: Hashable, value: Any, ttl_seconds: float) -> Any:
-        ttl = max(1.0, float(ttl_seconds))
+        ttl = max(0.01, float(ttl_seconds))
         now = time.monotonic()
         with self._lock:
             key = self._key(key)
@@ -168,9 +161,6 @@ class SingleFlightTTLCache:
             if not completed:
                 with self._lock:
                     self.wait_timeouts += 1
-                # Never turn a timed-out waiter into another expensive builder.
-                # That old behavior could multiply one wedged analysis into a
-                # stampede of unique retry keys.
                 raise TimeoutError("Analyseberegningen brukte for lang tid. Prøv igjen om litt.")
             with self._lock:
                 self._prune()
